@@ -3,7 +3,7 @@ import { useStore } from "./store";
 import { Rail } from "./Rail";
 import { SessionPane } from "./Session";
 import { Preview } from "./Preview";
-import { NewSiteDialog, PublishDialog, SettingsDialog } from "./Dialogs";
+import { DiffDialog, NewSiteDialog, PublishDialog, SettingsDialog } from "./Dialogs";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 
 export default function App() {
@@ -22,8 +22,15 @@ export default function App() {
         if (dev?.status === "ready") { e.preventDefault(); st.setPicking(!st.picking); }
         return;
       }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
+        const st = useStore.getState();
+        if (st.currentSiteId) { e.preventDefault(); st.newSession(); }
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); useStore.getState().setSettingsOpen(true); return; }
       if (e.key === "Escape") {
         const st = useStore.getState();
+        if (st.diff.open) { st.closeDiff(); return; }
         if (st.picking) { st.setPicking(false); return; }
         if (st.publish.open && !st.publish.running) st.setPublishOpen(false);
         if (st.newSite.open && !st.newSite.running) st.openNewSite(false);
@@ -51,6 +58,7 @@ export default function App() {
       <ErrorBoundary label="preview"><Preview /></ErrorBoundary>
       <NewSiteDialog />
       <PublishDialog />
+      <DiffDialog />
       <SettingsDialog />
       {toast && <div className="toast">{toast}</div>}
     </div>

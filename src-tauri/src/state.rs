@@ -19,6 +19,8 @@ pub struct AppState {
     pub file: PathBuf,
     pub agents: agent::claude::Registry,
     pub dev: devserver::Registry,
+    /// Running publish commands by site id (process-group leader pid), so they can be cancelled.
+    pub publishes: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
     /// PATH as seen by the user's login shell, so spawned tools resolve like in a terminal.
     pub path_env: String,
 }
@@ -35,8 +37,9 @@ impl AppState {
         Ok(Self {
             persisted: Mutex::new(persisted),
             file,
-            agents: agent::claude::Registry::default(),
+            agents: agent::claude::Registry::new(dir.join("agent-pids.json")),
             dev: devserver::Registry::new(dir.join("dev-pids.json")),
+            publishes: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             path_env: login_shell_path(),
         })
     }

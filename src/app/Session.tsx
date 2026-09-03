@@ -159,14 +159,16 @@ function Entry({ item, sessionId }: { item: Item; sessionId: string | null }) {
 
 function TurnEnd({ item, sessionId }: { item: Extract<Item, { kind: "result" }>; sessionId: string | null }) {
   const undoTurn = useStore((s) => s.undoTurn);
+  const openDiff = useStore((s) => s.openDiff);
   const root = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId)?.path ?? "");
   const n = item.files.length;
   const label = item.isError
     ? item.text
-    : [item.stopped ? "Stopped" : "Done", item.durationMs != null && fmtDuration(item.durationMs), n > 0 && `${n} file${n === 1 ? "" : "s"} changed`, item.costUsd != null && item.costUsd > 0 && `$${item.costUsd.toFixed(3)}`].filter(Boolean).join(" · ");
+    : [item.stopped ? "Stopped" : "Done", item.durationMs != null && fmtDuration(item.durationMs), item.costUsd != null && item.costUsd > 0 && `$${item.costUsd.toFixed(3)}`].filter(Boolean).join(" · ");
   return (
     <div className={cx("turn-end", item.isError && "error")} title={item.files.map((f) => relPath(f, root)).join("\n")}>
       <span>{label}</span>
+      {n > 0 && !item.isError && <button className="link-btn" onClick={() => void openDiff(item.files)} title="Show what changed">· {n} file{n === 1 ? "" : "s"} changed</button>}
       {n > 0 && sessionId && !item.undone && (
         <button className="link-btn" onClick={() => { if (confirm(`Put ${n === 1 ? "this file" : `these ${n} files`} back the way ${n === 1 ? "it" : "they"} ${n === 1 ? "was" : "were"} before this turn?\n\n${item.files.map((f) => relPath(f, root)).join("\n")}`)) void undoTurn(sessionId, item.id); }}>Undo</button>
       )}
@@ -228,8 +230,11 @@ function StepDetail({ item, root }: { item: Extract<Item, { kind: "tool" }>; roo
   );
 }
 
+const plainClass = (classes: string[]) => classes.find((c) => /^[a-zA-Z][\w-]{1,17}$/.test(c));
+
 export function SelectionChip({ sel, onClear }: { sel: Selection; onClear?: () => void }) {
-  const label = sel.tag + (sel.id ? "#" + sel.id : "") + (sel.classes[0] ? "." + sel.classes[0] : "");
+  const cls = sel.id ? "" : plainClass(sel.classes) ?? "";
+  const label = sel.tag + (sel.id ? "#" + sel.id : "") + (cls ? "." + cls : "");
   const src = sel.source?.file ? sel.source.file.split("/").slice(-2).join("/") + (sel.source.loc ? ":" + sel.source.loc.split(":")[0] : "") : sel.react?.components?.[0];
   return (
     <span className="sel-chip" title={sel.selector}>

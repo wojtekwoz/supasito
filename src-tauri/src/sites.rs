@@ -12,7 +12,10 @@ pub struct Site {
     pub name: String,
     /// Dev command. May contain `{port}`; otherwise Open appends a port flag it infers.
     pub dev: Option<String>,
+    /// Production publish command.
     pub publish: Option<String>,
+    /// Preview (staging) publish command: a shareable deployment that is not the live site.
+    pub preview: Option<String>,
     pub last_session_id: Option<String>,
     pub last_port: Option<u16>,
     pub package_manager: Option<String>,
@@ -23,7 +26,7 @@ pub struct Site {
 
 impl Default for Site {
     fn default() -> Self {
-        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false }
+        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false }
     }
 }
 
@@ -31,6 +34,7 @@ impl Default for Site {
 struct OpenJson {
     dev: Option<String>,
     publish: Option<String>,
+    preview: Option<String>,
     name: Option<String>,
 }
 
@@ -98,11 +102,21 @@ impl Site {
 
         self.needs_install = root.join("package.json").exists() && !root.join("node_modules").exists();
 
-        self.publish = open_json.publish.or_else(|| {
-            if root.join("vercel.json").exists() || root.join(".vercel").exists() { Some("vercel deploy --prod --yes".into()) }
-            else if root.join("wrangler.toml").exists() || root.join("wrangler.jsonc").exists() || root.join("wrangler.json").exists() { Some("wrangler deploy".into()) }
-            else if root.join("netlify.toml").exists() { Some("netlify deploy --prod".into()) }
-            else { None }
+        let host = if root.join("vercel.json").exists() || root.join(".vercel").exists() { Some("vercel") }
+            else if root.join("wrangler.toml").exists() || root.join("wrangler.jsonc").exists() || root.join("wrangler.json").exists() { Some("cloudflare") }
+            else if root.join("netlify.toml").exists() { Some("netlify") }
+            else { None };
+        self.publish = open_json.publish.or_else(|| match host {
+            Some("vercel") => Some("vercel deploy --prod --yes".into()),
+            Some("cloudflare") => Some("wrangler deploy".into()),
+            Some("netlify") => Some("netlify deploy --prod".into()),
+            _ => None,
+        });
+        self.preview = open_json.preview.or_else(|| match host {
+            Some("vercel") => Some("vercel deploy --yes".into()),
+            Some("cloudflare") => Some("wrangler versions upload".into()),
+            Some("netlify") => Some("netlify deploy".into()),
+            _ => None,
         });
         self.is_git = root.join(".git").exists();
         Ok(())
@@ -116,11 +130,13 @@ pub struct GitStatus {
     pub changed: usize,
     pub files: Vec<String>,
     pub branch: Option<String>,
+    /// URL of the `origin` remote, when one is configured.
+    pub remote: Option<String>,
 }
 
 pub fn git_status(path: &str, path_env: &str) -> Result<GitStatus, String> {
     if !Path::new(path).join(".git").exists() {
-        return Ok(GitStatus { is_git: false, changed: 0, files: vec![], branch: None });
+        return Ok(GitStatus { is_git: false, changed: 0, files: vec![], branch: None, remote: None });
     }
     let out = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "status", "--porcelain"]).output().map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
@@ -128,7 +144,65 @@ pub fn git_status(path: &str, path_env: &str) -> Result<GitStatus, String> {
     let branch = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    Ok(GitStatus { is_git: true, changed: files.len(), files, branch })
+    let remote = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "remote", "get-url", "origin"]).output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    Ok(GitStatus { is_git: true, changed: files.len(), files, branch, remote })
+}
+
+/// Push the current branch to origin, setting upstream if needed.
+pub fn git_push(path: &str, path_env: &str) -> Result<String, String> {
+    let out = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "push", "-u", "origin", "HEAD"]).output().map_err(|e| e.to_string())?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() { return Err(text.trim().lines().last().unwrap_or("git push failed").to_string()); }
+    Ok(text.trim().to_string())
+}
+
+/// Stage everything and commit. Returns the new status.
+pub fn git_commit(path: &str, message: &str, path_env: &str) -> Result<GitStatus, String> {
+    let msg = message.trim();
+    if msg.is_empty() { return Err("Give the commit a message.".into()); }
+    let run = |args: &[&str]| -> Result<std::process::Output, String> {
+        std::process::Command::new("git").env("PATH", path_env).args(["-C", path]).args(args).output().map_err(|e| e.to_string())
+    };
+    let add = run(&["add", "-A"])?;
+    if !add.status.success() { return Err(String::from_utf8_lossy(&add.stderr).trim().to_string()); }
+    let commit = run(&["commit", "-q", "-m", msg])?;
+    if !commit.status.success() {
+        let err = String::from_utf8_lossy(&commit.stderr).trim().to_string();
+        if err.contains("Please tell me who you are") || err.contains("user.email") {
+            return Err("Git doesn't know who you are yet. In Terminal, run: git config --global user.name \"Your Name\" && git config --global user.email you@example.com".into());
+        }
+        return Err(if err.is_empty() { "git commit failed".into() } else { err });
+    }
+    git_status(path, path_env)
+}
+
+/// Unified diff of the working tree against HEAD for the given files (untracked files shown as
+/// additions). Capped so a huge change cannot flood the UI.
+pub fn git_diff(path: &str, files: &[String], path_env: &str) -> Result<String, String> {
+    let root = Path::new(path);
+    let rel: Vec<String> = files.iter().map(|f| f.strip_prefix(path).map(|r| r.trim_start_matches('/').to_string()).unwrap_or_else(|| f.clone())).filter(|r| !r.is_empty() && !r.starts_with("..")).collect();
+    if rel.is_empty() { return Ok(String::new()); }
+    let mut out = String::new();
+    let tracked: Vec<String> = rel.iter().filter(|r| std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "ls-files", "--error-unmatch", "--", r]).output().map(|o| o.status.success()).unwrap_or(false)).cloned().collect();
+    if !tracked.is_empty() {
+        let mut cmd = std::process::Command::new("git");
+        cmd.env("PATH", path_env).args(["-C", path, "diff", "--no-color", "HEAD", "--"]).args(&tracked);
+        let o = cmd.output().map_err(|e| e.to_string())?;
+        out.push_str(&String::from_utf8_lossy(&o.stdout));
+    }
+    for r in rel.iter().filter(|r| !tracked.contains(r)) {
+        let full = root.join(r);
+        if let Ok(text) = std::fs::read_to_string(&full) {
+            out.push_str(&format!("diff --git a/{r} b/{r}\nnew file\n--- /dev/null\n+++ b/{r}\n"));
+            for line in text.lines().take(200) { out.push('+'); out.push_str(line); out.push('\n'); }
+        }
+    }
+    let mut lines: Vec<&str> = out.lines().collect();
+    if lines.len() > 800 { lines.truncate(800); lines.push("… (diff truncated)"); }
+    Ok(lines.join("\n"))
 }
 
 pub fn git_init(path: &str, path_env: &str) -> Result<(), String> {
@@ -187,16 +261,22 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 pub async fn run_publish(app: AppHandle, site: &Site, cmd: &str, path_env: &str) -> Result<Value, String> {
+    use tauri::Manager;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let mut child = tokio::process::Command::new(&shell)
+    let mut command = tokio::process::Command::new(&shell);
+    command
         .args(["-lc", cmd])
         .env("PATH", path_env)
         .env("CI", "1")
         .current_dir(&site.path)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn().map_err(|e| e.to_string())?;
+        .stderr(std::process::Stdio::piped());
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
     let site_id = site.id.clone();
+    if let Some(pid) = child.id() {
+        app.state::<crate::state::AppState>().publishes.lock().await.insert(site_id.clone(), pid);
+    }
     let mut lines: Vec<String> = Vec::new();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
@@ -209,6 +289,7 @@ pub async fn run_publish(app: AppHandle, site: &Site, cmd: &str, path_env: &str)
         lines.push(l);
     }
     let status = child.wait().await.map_err(|e| e.to_string())?;
+    app.state::<crate::state::AppState>().publishes.lock().await.remove(&site_id);
     let url = lines.iter().rev().find_map(|l| l.split_whitespace().find(|w| w.starts_with("https://")).map(|w| w.trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/').to_string()));
     Ok(json!({ "ok": status.success(), "code": status.code(), "url": url, "log": lines }))
 }

@@ -132,10 +132,12 @@ fn preview_event(kind: String, detail: String) {
     eprintln!("[preview] {kind}: {detail}");
 }
 
+/// `key` is "publish" (production) or "preview".
 #[tauri::command]
-fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String) -> Result<sites::Site, String> {
+fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String, key: Option<String>) -> Result<sites::Site, String> {
     let site = state.site(&site_id)?;
-    sites::write_open_json(&site.path, "publish", &command)?;
+    let key = match key.as_deref() { Some("preview") => "preview", _ => "publish" };
+    sites::write_open_json(&site.path, key, &command)?;
     let mut p = state.persisted.lock().unwrap();
     let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
     s.refresh()?;
@@ -143,6 +145,36 @@ fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String
     drop(p);
     state.save()?;
     Ok(out)
+}
+
+#[tauri::command]
+fn site_git_commit(state: State<'_, AppState>, site_id: String, message: String) -> Result<sites::GitStatus, String> {
+    let site = state.site(&site_id)?;
+    sites::git_commit(&site.path, &message, &state.path_env)
+}
+
+#[tauri::command]
+fn site_git_diff(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<String, String> {
+    let site = state.site(&site_id)?;
+    sites::git_diff(&site.path, &files, &state.path_env)
+}
+
+/// Dock badge with the number of approvals waiting (macOS); None clears it.
+#[tauri::command]
+fn set_badge(app: AppHandle, count: i64) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.set_badge_count(if count > 0 { Some(count) } else { None }).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Bounce the Dock icon once when something needs the user and the window is in the background.
+#[tauri::command]
+fn request_attention(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.request_user_attention(Some(tauri::UserAttentionType::Informational)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -206,11 +238,29 @@ async fn dev_log(state: State<'_, AppState>, site_id: String) -> Result<Vec<Stri
 
 // ---------- publish ----------
 
+/// `target` is "production" (default) or "preview".
 #[tauri::command]
-async fn publish_run(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<Value, String> {
+async fn publish_run(app: AppHandle, state: State<'_, AppState>, site_id: String, target: Option<String>) -> Result<Value, String> {
     let site = state.site(&site_id)?;
-    let cmd = site.publish.clone().ok_or("No publish command set for this site. Add one in open.json, e.g. {\"publish\": \"vercel deploy --prod --yes\"}")?;
+    let preview = target.as_deref() == Some("preview");
+    let cmd = if preview { site.preview.clone().ok_or("No preview command set for this site.")? } else { site.publish.clone().ok_or("No publish command set for this site.")? };
     sites::run_publish(app, &site, &cmd, &state.path_env).await
+}
+
+#[tauri::command]
+fn site_git_push(state: State<'_, AppState>, site_id: String) -> Result<String, String> {
+    let site = state.site(&site_id)?;
+    sites::git_push(&site.path, &state.path_env)
+}
+
+#[tauri::command]
+async fn publish_cancel(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+    let pid = state.publishes.lock().await.get(&site_id).copied().ok_or("no publish is running")?;
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGTERM);
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    Ok(())
 }
 
 // ---------- agent ----------
@@ -319,9 +369,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings_get, settings_set, claude_check,
-            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_undo_files, preview_event, site_set_publish, site_set_last_session, site_new,
+            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, site_set_last_session, site_new,
             dev_start, dev_stop, dev_status, dev_log,
-            publish_run,
+            publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_interrupt, agent_stop, agent_running,
             sessions_list, session_transcript
         ])

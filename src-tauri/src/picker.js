@@ -125,7 +125,7 @@
     if (!el || el === document.documentElement || el === document.body) { box.style.display = 'none'; return; }
     const r = el.getBoundingClientRect();
     Object.assign(box.style, { display: 'block', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-    const cls = Array.from(el.classList || []).filter(c => !c.startsWith('astro-')).slice(0, 2).join('.');
+    const cls = Array.from(el.classList || []).filter(c => /^[a-zA-Z][\w-]{1,17}$/.test(c)).slice(0, 2).join('.');
     label.textContent = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '') + '  ' + Math.round(r.width) + '×' + Math.round(r.height);
     label.style.top = r.top < 24 ? '-1.5px' : '-22px';
   }

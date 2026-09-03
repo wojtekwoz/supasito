@@ -10,7 +10,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const site: Site = {
   id: "site-demo", path: "/Users/you/Sites/clarityops", name: "ClarityOps", dev: "node_modules/.bin/next dev -p {port}",
-  publish: "vercel deploy --prod --yes", lastSessionId: "sess-1", isGit: true, needsInstall: false, framework: "next", packageManager: "pnpm",
+  publish: "vercel deploy --prod --yes", preview: "vercel deploy --yes", lastSessionId: "sess-1", isGit: true, needsInstall: false, framework: "next", packageManager: "pnpm",
 };
 const sessions: SessionInfo[] = [
   { id: "sess-1", title: "Roll out the new elevated Card style", lastModified: Date.now() - 3600e3, messageCount: 6 },
@@ -26,6 +26,8 @@ export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title
 <script>${pickerSource}</script></body></html>`;
 
 const running = new Set<string>();
+let mockPublishCancelled = false;
+let mockChanged = 5;
 (window as any).__openMockDoc = demoHtml;
 
 async function fakeTurn(sessionId: string, text: string) {
@@ -72,7 +74,12 @@ export function mockBackend(): Backend {
     siteRemove: async () => {},
     siteRefresh: async () => site,
     siteInstall: async () => site,
-    siteGitStatus: async () => ({ isGit: true, changed: 5, files: ["components/hero.tsx", "app/page.tsx"], branch: "main" }),
+    siteGitStatus: async () => ({ isGit: true, changed: mockChanged, files: ["components/hero.tsx", "app/page.tsx"], branch: "main", remote: "git@github.com:you/clarityops.git" }),
+    siteGitCommit: async (_siteId, message) => { await wait(400); console.debug("[commit]", message); mockChanged = 0; return { isGit: true, changed: 0, files: [], branch: "main", remote: "git@github.com:you/clarityops.git" }; },
+    siteGitPush: async () => { await wait(600); return "To github.com:you/clarityops.git\n   1a2b3c4..5d6e7f8  main -> main"; },
+    siteGitDiff: async (_siteId, files) => files.map((f) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -12,7 +12,7 @@ export function Hero() {\n       <p className="text-[11px] font-semibold uppercase">Decision intelligence</p>\n-      <h1 className="mx-auto mt-4 max-w-3xl font-display text-6xl">Decisions, made durable</h1>\n+      <h1 className="mx-auto mt-4 max-w-3xl font-display text-6xl">Decisions, made durable, together</h1>\n       <p className="mx-auto mt-6 max-w-xl text-lg">ClarityOps gives leadership teams one durable operating record.</p>`).join("\n"),
+    setBadge: async (count) => { console.debug("[badge]", count); },
+    requestAttention: async () => { console.debug("[attention]"); },
     siteGitInit: async () => {},
     siteUndoFiles: async (_siteId, files) => files.map((f) => f.replace(site.path + "/", "")),
     previewEvent: async (kind, detail) => { console.debug("[preview]", kind, detail); },
@@ -82,13 +89,16 @@ export function mockBackend(): Backend {
     devStop: async () => { dev = { ...dev, status: "stopped" }; emit("dev://status", dev); },
     devStatus: async () => dev,
     devLog: async () => ["▲ Next.js 16.3.4", "- Local: http://localhost:3000", "✓ Ready in 1.2s"],
-    publishRun: async (siteId) => {
-      for (const l of ["Vercel CLI 59", "Uploading [====] 1.2MB", "Production: https://your-site.vercel.app"]) { await wait(300); emit("publish://log", { siteId, line: l }); }
-      return { ok: true, code: 0, url: "https://your-site.vercel.app", log: [] };
+    publishRun: async (siteId, target) => {
+      mockPublishCancelled = false;
+      const url = target === "preview" ? "https://your-site-git-main-you.vercel.app" : "https://your-site.vercel.app";
+      for (const l of ["Vercel CLI 59", "Uploading [====] 1.2MB", "Building…", `${target === "preview" ? "Preview" : "Production"}: ${url}`]) { await wait(900); if (mockPublishCancelled) return { ok: false, code: null, url: null, log: [] }; emit("publish://log", { siteId, line: l }); }
+      return { ok: true, code: 0, url, log: [] };
     },
+    publishCancel: async () => { mockPublishCancelled = true; },
     agentStart: async (_siteId, resume) => { const id = resume ?? "sess-" + Math.random().toString(36).slice(2); running.add(id); return id; },
     agentSend: async (sessionId, text) => { void fakeTurn(sessionId, text); },
-    siteSetPublish: async (_siteId, command) => ({ ...site, publish: command || null }),
+    siteSetPublish: async (_siteId, command, key) => ({ ...site, [key]: command || null }),
     agentRespond: async (sessionId, _requestId, response: any) => {
       await wait(200);
       const denied = response?.behavior === "deny";

@@ -33,7 +33,10 @@ Add `--bundles dmg` from an interactive terminal session if you want a disk imag
 - **Undo a turn** puts the files that turn wrote back to their committed state (and deletes files it created). Git is the history; there is no separate undo stack.
 - **Images:** paste or drop a screenshot into the composer and Claude receives it with your message ("make it look like this").
 - **Queueing:** you can keep typing while Claude works; Enter queues the message and it is sent when the current turn ends. Escape stops the current turn.
-- **Publish command** is set from the Publish dialog (presets for Vercel, Cloudflare, Netlify, git push) and saved to `open.json`.
+- **Publish** offers two targets: **Preview** (a shareable test link; the live site doesn't change) and **Production**. Each is one command in `open.json` (`preview`, `publish`), with presets for Vercel, Cloudflare, Netlify and git push. The dialog can commit the pending changes first (message prefilled from your last request) and push to `origin`, so publishing doubles as a backup. A running publish can be cancelled.
+- **What changed:** "N files changed" on a turn's completion line opens the diff for that turn.
+- **Getting called back:** the Dock badge shows how many approvals are waiting, and the Dock icon bounces when Claude needs you or finishes while Open is in the background.
+- **Model:** Settings offers your Claude Code default, Sonnet, Opus, Haiku, or a custom model name. It applies to sessions started after saving; the chip in the session header shows the model in use.
 - **The preview follows the work:** when Claude edits a page file (`app/pricing/page.tsx`, `src/pages/pricing.astro`, `src/routes/pricing/+page.svelte`, `pages/pricing.vue`), the preview switches to that page.
 - **Plan usage** from Claude Code's rate-limit events shows as a chip in the session header once it passes 50%.
 
@@ -49,7 +52,7 @@ starters/next/  the bundled "New site" starter (Next.js 16 + Tailwind 4)
 
 - Enter sends (or queues while Claude works), Shift+Enter inserts a newline.
 - Escape cancels picking, or stops the current turn.
-- ⌘⇧E toggles the element picker.
+- ⌘⇧E toggles the element picker; ⌘N starts a new session; ⌘, opens Settings.
 
 ## Debug smoke tests
 

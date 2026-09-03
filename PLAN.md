@@ -212,3 +212,13 @@ Verified against the real Claude Code (2.1.257, haiku) with new smoke scenarios 
 - **Setup card** replaces the banner when Claude Code isn't found: install link, sign-in step, "Check again", "Set the path manually".
 - **Reveal in Finder** on each site row; **error boundaries** around the three panes so a render error shows a retry card instead of a blank window.
 - Mock preview reports `/` instead of `srcdoc` as its path.
+
+### Session 6 (2026-09-03, user testing)
+From the first hands-on round: pointing worked on a real site. Fixed: the user bubble lost its accent left border and the selection chip no longer wraps (it prefers a short plain class name, or none, and truncates); Publish now confirms first (command + changed-file count) and a running publish can be cancelled (the command runs in its own process group; `publish_cancel` stops it); Settings has a model dropdown (default / Sonnet / Opus / Haiku / custom). Also added: claude processes are recorded in `agent-pids.json` and reaped on the next launch, like dev servers, so an app relaunch during a turn leaves nothing running.
+
+### Session 7 (2026-09-04)
+- **Preview and production publish targets.** `open.json` gains `preview` next to `publish`; both are inferred per host (Vercel `vercel deploy --yes` vs `--prod`, Netlify `netlify deploy` vs `--prod`, Cloudflare `wrangler versions upload` vs `deploy`) and editable in the Publish dialog. The dialog is a two-card choice with the command shown under each.
+- **Commit and push on publish.** Optional steps in the same dialog: commit all pending changes (message prefilled from the last request) and push to `origin` when a remote exists. Git identity missing → a plain-language error with the exact commands. Answers "does it back up to GitHub?": only when you tick push; nothing is pushed silently.
+- **Diff per turn:** "N files changed" opens a unified diff (working tree vs HEAD, untracked files shown as additions, capped at 800 lines).
+- **Dock badge and attention:** badge = pending approvals across sessions; the Dock bounces on a new approval request or a finished turn while the window is unfocused. No notification plugin.
+- ⌘N new session, ⌘, settings.

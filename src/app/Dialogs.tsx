@@ -28,11 +28,11 @@ export function NewSiteDialog() {
   );
 }
 
-const PRESETS: { label: string; cmd: string }[] = [
-  { label: "Vercel", cmd: "vercel deploy --prod --yes" },
-  { label: "Cloudflare", cmd: "wrangler deploy" },
-  { label: "Netlify", cmd: "netlify deploy --prod" },
-  { label: "Git push", cmd: "git push origin HEAD" },
+const PRESETS: { label: string; production: string; preview: string }[] = [
+  { label: "Vercel", production: "vercel deploy --prod --yes", preview: "vercel deploy --yes" },
+  { label: "Cloudflare", production: "wrangler deploy", preview: "wrangler versions upload" },
+  { label: "Netlify", production: "netlify deploy --prod", preview: "netlify deploy" },
+  { label: "Git push", production: "git push origin HEAD:main", preview: "git push origin HEAD:staging" },
 ];
 
 export function PublishDialog() {
@@ -40,43 +40,99 @@ export function PublishDialog() {
   const setPublishOpen = useStore((s) => s.setPublishOpen);
   const site = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId) ?? null);
   const git = useStore((s) => (s.currentSiteId ? s.git[s.currentSiteId] : null));
+  const session = useStore((s) => (s.currentSessionId ? s.transcripts[s.currentSessionId] ?? null : null));
   const setPublishCommand = useStore((s) => s.setPublishCommand);
   const runPublish = useStore((s) => s.runPublish);
+  const cancelPublish = useStore((s) => s.cancelPublish);
   const [editing, setEditing] = useState(false);
-  const [cmd, setCmd] = useState("");
-  useEffect(() => { if (p.open) { setEditing(!site?.publish); setCmd(site?.publish ?? ""); } }, [p.open, site?.publish]);
+  const [prod, setProd] = useState("");
+  const [prev, setPrev] = useState("");
+  const [target, setTarget] = useState<"preview" | "production">("production");
+  const [commit, setCommit] = useState(true);
+  const [push, setPush] = useState(true);
+  const [message, setMessage] = useState("");
+  const lastPrompt = session ? [...session.items].reverse().find((i) => i.kind === "user")?.text ?? "" : "";
+  useEffect(() => {
+    if (!p.open) return;
+    setEditing(!site?.publish && !site?.preview);
+    setProd(site?.publish ?? "");
+    setPrev(site?.preview ?? "");
+    setTarget(site?.preview ? p.target : "production");
+    setMessage(lastPrompt.split("\n")[0].slice(0, 72) || "Update site");
+  }, [p.open, site?.publish, site?.preview]);
   if (!p.open) return null;
-  const save = async (run: boolean) => {
-    await setPublishCommand(cmd);
+  const changed = git?.changed ?? 0;
+  const canCommit = !!git?.isGit && changed > 0;
+  const canPush = !!git?.remote;
+  const save = async () => {
+    await setPublishCommand(prod, "publish");
+    await setPublishCommand(prev, "preview");
     setEditing(false);
-    if (run && cmd.trim()) await runPublish();
   };
-  const title = p.running ? "Publishing…" : editing ? (site?.publish ? "Change the publish command" : "How should this site be published?") : p.url ? "Published" : p.error ? "Publish failed" : "Publish";
+  const go = () => void runPublish(target, { commit: canCommit && commit, message, push: canPush && push && (commit || changed === 0) });
+  const phase = p.running ? "running" : editing ? "editing" : p.cancelled ? "cancelled" : p.url ? "done" : p.error ? "failed" : "ready";
+  const title = { running: p.step === "commit" ? "Committing…" : p.step === "push" ? "Pushing to origin…" : p.target === "preview" ? "Publishing a preview…" : "Publishing to production…", editing: "How should this site be published?", cancelled: "Publish cancelled", done: p.target === "preview" ? "Preview is up" : "Published", failed: "Publish failed", ready: `Publish ${site?.name ?? ""}` }[phase];
+  const cmdFor = (t: "preview" | "production") => (t === "preview" ? site?.preview : site?.publish);
   return (
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !p.running) setPublishOpen(false); }}>
       <div className="modal">
         <h2>{title}</h2>
-        {editing ? (
+        {phase === "editing" && (
           <>
-            <p style={{ margin: 0, color: "var(--ink-2)" }}>Open runs one command from the site folder and shows you the result. It is saved in <code>open.json</code>.</p>
-            <div className="presets">{PRESETS.map((x) => <button key={x.cmd} className={"btn sm" + (cmd === x.cmd ? " primary" : "")} onClick={() => setCmd(x.cmd)}>{x.label}</button>)}</div>
-            <input className="text-input" autoFocus placeholder="e.g. vercel deploy --prod --yes" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && cmd.trim()) void save(true); }} />
+            <p style={{ margin: 0, color: "var(--ink-2)" }}>Open runs one command from the site folder for each target and shows you the result. Both are saved in <code>open.json</code>.</p>
+            <div className="presets">{PRESETS.map((x) => <button key={x.label} className={"btn sm" + (prod === x.production ? " primary" : "")} onClick={() => { setProd(x.production); setPrev(x.preview); }}>{x.label}</button>)}</div>
+            <div className="row2"><label>Production</label><input className="text-input" autoFocus placeholder="e.g. vercel deploy --prod --yes" value={prod} onChange={(e) => setProd(e.target.value)} /></div>
+            <div className="row2"><label>Preview</label><input className="text-input" placeholder="optional, e.g. vercel deploy --yes" value={prev} onChange={(e) => setPrev(e.target.value)} /></div>
             <div className="foot">
-              <button className="btn ghost" onClick={() => (site?.publish ? setEditing(false) : setPublishOpen(false))}>Cancel</button>
-              <button className="btn" disabled={!cmd.trim()} onClick={() => void save(false)}>Save</button>
-              <button className="btn primary" disabled={!cmd.trim()} onClick={() => void save(true)}>Save and publish</button>
+              <button className="btn ghost" onClick={() => (site?.publish || site?.preview ? setEditing(false) : setPublishOpen(false))}>Cancel</button>
+              <button className="btn primary" disabled={!prod.trim() && !prev.trim()} onClick={() => void save()}>Save</button>
             </div>
           </>
-        ) : (
+        )}
+        {phase === "ready" && (
           <>
-            {git && git.changed > 0 && !p.running && !p.url && <p style={{ margin: 0, color: "var(--ink-2)" }}>{git.changed} changed file{git.changed === 1 ? "" : "s"} since the last commit.</p>}
-            <div className="log">{p.log.length ? p.log.join("\n") : site?.publish}</div>
+            <div className="targets">
+              {(["preview", "production"] as const).map((t) => (
+                <button key={t} className={"target" + (target === t ? " on" : "") + (cmdFor(t) ? "" : " off")} disabled={!cmdFor(t)} onClick={() => setTarget(t)}>
+                  <b>{t === "preview" ? "Preview" : "Production"}</b>
+                  <span>{t === "preview" ? "A shareable test link. The live site doesn't change." : "Goes live for everyone."}</span>
+                  <code>{cmdFor(t) ?? "no command set"}</code>
+                </button>
+              ))}
+            </div>
+            {git?.isGit && (
+              <div className="opts">
+                <label className={canCommit ? "" : "muted"}><input type="checkbox" disabled={!canCommit} checked={canCommit && commit} onChange={(e) => setCommit(e.target.checked)} /> {canCommit ? `Commit ${changed} changed file${changed === 1 ? "" : "s"} first` : "Nothing to commit"}</label>
+                {canCommit && commit && <input className="text-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Commit message" />}
+                <label className={canPush ? "" : "muted"} title={git.remote ?? "No origin remote configured"}><input type="checkbox" disabled={!canPush} checked={canPush && push} onChange={(e) => setPush(e.target.checked)} /> {canPush ? `Push to origin (${git.remote?.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")})` : "Push to origin (no remote yet)"}</label>
+              </div>
+            )}
+            <div className="foot">
+              <button className="btn ghost" onClick={() => setEditing(true)} style={{ marginRight: "auto" }}>Change commands</button>
+              <button className="btn" onClick={() => setPublishOpen(false)}>Cancel</button>
+              <button className="btn primary" autoFocus disabled={!cmdFor(target)} onClick={go}>{target === "preview" ? "Publish preview" : "Publish to production"}</button>
+            </div>
+          </>
+        )}
+        {phase === "running" && (
+          <>
+            <div className="log">{p.log.join("\n")}</div>
+            <div className="foot">
+              <span className="spinner" style={{ marginRight: "auto", alignSelf: "center" }} />
+              <button className="btn" disabled={p.cancelled} onClick={() => void cancelPublish()}>{p.cancelled ? "Cancelling…" : "Cancel"}</button>
+            </div>
+          </>
+        )}
+        {(phase === "done" || phase === "failed" || phase === "cancelled") && (
+          <>
+            {p.log.length > 0 && <div className="log">{p.log.join("\n")}</div>}
             {p.url && <div className="url"><Check style={{ width: 14, height: 14, color: "var(--ok)", verticalAlign: -2 }} /> <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a></div>}
             {p.error && <div className="err">{p.error}</div>}
+            {phase === "cancelled" && <p style={{ margin: 0, color: "var(--ink-2)" }}>The publish command was stopped. Nothing was confirmed as live; check your hosting dashboard if it had already started uploading.</p>}
             <div className="foot">
-              {!p.running && <button className="btn ghost" onClick={() => setEditing(true)} style={{ marginRight: "auto" }}>Change command</button>}
-              <button className="btn" disabled={p.running} onClick={() => setPublishOpen(false)}>Close</button>
-              {!p.running && !p.url && <button className="btn primary" onClick={() => void runPublish()}>{p.error ? "Try again" : "Publish now"}</button>}
+              <button className="btn ghost" onClick={() => setEditing(true)} style={{ marginRight: "auto" }}>Change commands</button>
+              <button className="btn" onClick={() => setPublishOpen(false)}>Close</button>
+              {phase !== "done" && <button className="btn primary" onClick={go}>Try again</button>}
             </div>
           </>
         )}
@@ -84,6 +140,38 @@ export function PublishDialog() {
     </div>
   );
 }
+
+export function DiffDialog() {
+  const d = useStore((s) => s.diff);
+  const closeDiff = useStore((s) => s.closeDiff);
+  const root = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId)?.path ?? "");
+  if (!d.open) return null;
+  const lines = d.text.split("\n");
+  return (
+    <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) closeDiff(); }}>
+      <div className="modal wide">
+        <h2>What changed</h2>
+        <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 12.5 }}>{d.files.map((f) => f.replace(root + "/", "")).join(" · ")}</p>
+        {d.loading ? <div className="log">Loading…</div> : d.error ? <div className="err">{d.error}</div> : (
+          <div className="diffview">
+            {lines.length <= 1 && !d.text.trim() ? <div className="muted">No differences against the last commit (already committed or undone).</div> : lines.map((l, i) => {
+              const cls = l.startsWith("diff --git") ? "file" : l.startsWith("+++") || l.startsWith("---") || l.startsWith("index ") || l.startsWith("new file") ? "meta" : l.startsWith("@@") ? "hunk" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "";
+              return <div key={i} className={cls}>{cls === "file" ? l.replace(/^diff --git a\/(.*) b\/.*$/, "$1") : l}</div>;
+            })}
+          </div>
+        )}
+        <div className="foot"><button className="btn" onClick={closeDiff}>Close</button></div>
+      </div>
+    </div>
+  );
+}
+
+const MODELS: { value: string; label: string }[] = [
+  { value: "", label: "Your Claude Code default" },
+  { value: "sonnet", label: "Sonnet · fast and cheaper, good for most edits" },
+  { value: "opus", label: "Opus · strongest, costs more" },
+  { value: "haiku", label: "Haiku · cheapest, for small copy changes" },
+];
 
 export function SettingsDialog() {
   const open = useStore((s) => s.settingsOpen);
@@ -100,7 +188,15 @@ export function SettingsDialog() {
         <h2>Settings</h2>
         <div className="row2"><label>Claude Code</label><div style={{ color: "var(--ink-2)", fontSize: 12 }}>{claude?.ok ? `${claude.version} at ${claude.path}` : "Not found. Install from claude.com/claude-code, sign in once in a terminal."}</div></div>
         <div className="row2"><label>Path override</label><input className="text-input" placeholder="Leave empty to use PATH" value={form.claudePath} onChange={(e) => setForm({ ...form, claudePath: e.target.value })} /></div>
-        <div className="row2"><label>Model</label><input className="text-input" placeholder="Default (e.g. sonnet, opus)" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} /></div>
+        <div className="row2"><label>Model</label>
+          <div style={{ display: "grid", gap: 6 }}>
+            <select className="text-input" value={MODELS.some((m) => m.value === form.model) ? form.model : "custom"} onChange={(e) => setForm({ ...form, model: e.target.value === "custom" ? (MODELS.some((m) => m.value === form.model) ? "" : form.model) : e.target.value })}>
+              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              <option value="custom">Custom model name…</option>
+            </select>
+            {!MODELS.some((m) => m.value === form.model) && <input className="text-input" placeholder="e.g. claude-sonnet-5" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />}
+          </div>
+        </div>
         <div className="row2"><label>Permissions</label>
           <select className="text-input" value={form.permissionMode} onChange={(e) => setForm({ ...form, permissionMode: e.target.value })}>
             <option value="acceptEdits">Edit files freely, ask before commands (recommended)</option>
@@ -109,7 +205,7 @@ export function SettingsDialog() {
             <option value="bypassPermissions">Never ask (dangerous)</option>
           </select>
         </div>
-        <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Changes apply to sessions started after saving.</p>
+        <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Applies to sessions started after saving; an open session keeps its model. The chip in the session header shows which one is in use.</p>
         <div className="foot">
           <button className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
           <button className="btn primary" onClick={() => { void save(form).then(() => setOpen(false)); }}>Save</button>

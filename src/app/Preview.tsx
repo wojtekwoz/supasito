@@ -21,7 +21,7 @@ export function Preview() {
   const reloadPreview = useStore((s) => s.reloadPreview);
   const openInBrowser = useStore((s) => s.openInBrowser);
   const git = useStore((s) => (s.currentSiteId ? s.git[s.currentSiteId] : null));
-  const runPublish = useStore((s) => s.runPublish);
+  const openPublish = useStore((s) => s.openPublish);
   const devLogOpen = useStore((s) => s.devLogOpen);
   const toggleDevLog = useStore((s) => s.toggleDevLog);
   const devLog = useDevLogOfCurrentSite();
@@ -103,7 +103,7 @@ export function Preview() {
         <button className="icon-btn" title="Open in browser" disabled={!ready || isMock} onClick={() => void openInBrowser()}><External /></button>
         <button className={cx("icon-btn", devLogOpen && "on")} title="Dev server log" onClick={toggleDevLog}><Terminal /></button>
         <DevChip />
-        <button className="publish" onClick={() => void runPublish()} title={site.publish ? site.publish : "No publish command yet"}>
+        <button className="publish" onClick={openPublish} title={site.publish ? site.publish : "No publish command yet"}>
           Publish{git && git.changed > 0 && <span className="n">{git.changed}</span>}
         </button>
       </div>

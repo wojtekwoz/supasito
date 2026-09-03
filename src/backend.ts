@@ -1,5 +1,5 @@
 import type {
-  Attachment, ClaudeStatus, DevInfo, EventName, GitStatus, PublishResult, Selection, SessionInfo, Settings, Site,
+  Attachment, ClaudeStatus, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, Selection, SessionInfo, Settings, Site,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -24,10 +24,16 @@ export interface Backend {
   devStop(siteId: string): Promise<void>;
   devStatus(siteId: string): Promise<DevInfo | null>;
   devLog(siteId: string): Promise<string[]>;
-  publishRun(siteId: string): Promise<PublishResult>;
+  publishRun(siteId: string, target: PublishTarget): Promise<PublishResult>;
+  siteGitCommit(siteId: string, message: string): Promise<GitStatus>;
+  siteGitPush(siteId: string): Promise<string>;
+  siteGitDiff(siteId: string, files: string[]): Promise<string>;
+  setBadge(count: number): Promise<void>;
+  requestAttention(): Promise<void>;
+  publishCancel(siteId: string): Promise<void>;
   agentStart(siteId: string, resume: string | null): Promise<string>;
   agentSend(sessionId: string, text: string, selection: Selection | null, images: Attachment[]): Promise<void>;
-  siteSetPublish(siteId: string, command: string): Promise<Site>;
+  siteSetPublish(siteId: string, command: string, key: "publish" | "preview"): Promise<Site>;
   agentRespond(sessionId: string, requestId: string, response: unknown): Promise<void>;
   agentInterrupt(sessionId: string): Promise<void>;
   agentStop(sessionId: string): Promise<void>;
@@ -65,10 +71,16 @@ async function tauriBackend(): Promise<Backend> {
     devStop: (siteId) => invoke("dev_stop", { siteId }),
     devStatus: (siteId) => invoke("dev_status", { siteId }),
     devLog: (siteId) => invoke("dev_log", { siteId }),
-    publishRun: (siteId) => invoke("publish_run", { siteId }),
+    publishRun: (siteId, target) => invoke("publish_run", { siteId, target }),
+    siteGitCommit: (siteId, message) => invoke("site_git_commit", { siteId, message }),
+    siteGitPush: (siteId) => invoke("site_git_push", { siteId }),
+    siteGitDiff: (siteId, files) => invoke("site_git_diff", { siteId, files }),
+    setBadge: (count) => invoke("set_badge", { count }),
+    requestAttention: () => invoke("request_attention"),
+    publishCancel: (siteId) => invoke("publish_cancel", { siteId }),
     agentStart: (siteId, resume) => invoke("agent_start", { siteId, resume }),
     agentSend: (sessionId, text, selection, images) => invoke("agent_send", { sessionId, text, selection, images: images.map((i) => ({ mediaType: i.mediaType, data: i.data })) }),
-    siteSetPublish: (siteId, command) => invoke("site_set_publish", { siteId, command }),
+    siteSetPublish: (siteId, command, key) => invoke("site_set_publish", { siteId, command, key }),
     agentRespond: (sessionId, requestId, response) => invoke("agent_respond", { sessionId, requestId, response }),
     agentInterrupt: (sessionId) => invoke("agent_interrupt", { sessionId }),
     agentStop: (sessionId) => invoke("agent_stop", { sessionId }),

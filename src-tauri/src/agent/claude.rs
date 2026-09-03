@@ -89,12 +89,42 @@ impl Handle {
     }
 }
 
-#[derive(Default)]
 pub struct Registry {
     inner: Mutex<HashMap<String, Arc<Handle>>>,
+    /// Pids of claude processes we started, so a later launch can stop any that outlived an app
+    /// instance that died without cleaning up.
+    pids_file: std::path::PathBuf,
+}
+
+/// Stop claude processes recorded by a previous app instance if they are still running.
+fn reap_orphans(file: &std::path::Path) {
+    let Ok(text) = std::fs::read_to_string(file) else { return };
+    let Ok(entries) = serde_json::from_str::<Vec<Value>>(&text) else { return };
+    for e in entries {
+        let (Some(pid), Some(sid)) = (e["pid"].as_u64(), e["sessionId"].as_str()) else { continue };
+        let Ok(out) = std::process::Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()]).output() else { continue };
+        let cmdline = String::from_utf8_lossy(&out.stdout);
+        if cmdline.contains("claude") && cmdline.contains(sid) {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGINT);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(file);
 }
 
 impl Registry {
+    pub fn new(pids_file: std::path::PathBuf) -> Self {
+        reap_orphans(&pids_file);
+        Self { inner: Mutex::new(HashMap::new()), pids_file }
+    }
+
+    async fn persist(&self) {
+        let map = self.inner.lock().await;
+        let entries: Vec<Value> = map.values().map(|h| json!({ "sessionId": h.session_id, "pid": h.pid })).collect();
+        let _ = std::fs::write(&self.pids_file, serde_json::to_string(&entries).unwrap_or_default());
+    }
+
     pub async fn get(&self, session_id: &str) -> Option<Arc<Handle>> {
         self.inner.lock().await.get(session_id).cloned()
     }
@@ -150,6 +180,7 @@ impl Registry {
             tx: Mutex::new(Some(tx)),
         });
         self.inner.lock().await.insert(opts.session_id.clone(), handle.clone());
+        self.persist().await;
 
         tauri::async_runtime::spawn(writer(stdin, rx));
 
@@ -217,6 +248,7 @@ impl Registry {
                 let code = status.ok().and_then(|s| s.code());
                 let state = app.state::<crate::state::AppState>();
                 state.agents.inner.lock().await.remove(&sid);
+                state.agents.persist().await;
                 let _ = app.emit("agent://exit", json!({ "sessionId": sid, "code": code }));
             });
         }
@@ -249,6 +281,7 @@ impl Registry {
             tokio::time::sleep(Duration::from_millis(800)).await;
             for h in &all { h.signal(libc::SIGTERM); }
         }
+        let _ = std::fs::remove_file(&self.pids_file);
     }
 }
 

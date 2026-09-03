@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, Selection, SessionInfo, Settings, Site } from "../types";
+import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site } from "../types";
 import { addNotice, addPermission, addUser, applyMessage, emptySession, settlePermission, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
 export type Device = "desktop" | "tablet" | "phone";
 
-type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null };
+type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy" };
+type DiffState = { open: boolean; loading: boolean; files: string[]; text: string; error: string | null };
 type NewSiteState = { open: boolean; running: boolean; log: string[]; error: string | null };
 
 export type Store = {
@@ -36,6 +37,7 @@ export type Store = {
   /** Set to make the preview navigate; the Preview pane consumes it. */
   navigateRequest: { path: string; seq: number } | null;
   publish: PublishState;
+  diff: DiffState;
   newSite: NewSiteState;
   toast: string | null;
 
@@ -64,7 +66,7 @@ export type Store = {
   setSelection: (sel: Selection | null) => void;
   addAttachments: (files: File[]) => Promise<void>;
   removeAttachment: (id: string) => void;
-  setPublishCommand: (command: string) => Promise<void>;
+  setPublishCommand: (command: string, key: "publish" | "preview") => Promise<void>;
   setPreviewPath: (path: string) => void;
   setPreviewInfo: (path: string, title: string) => void;
   setDevice: (d: Device) => void;
@@ -72,7 +74,12 @@ export type Store = {
   revealSite: (siteId: string) => Promise<void>;
   recheckClaude: () => Promise<void>;
   openInBrowser: () => Promise<void>;
-  runPublish: () => Promise<void>;
+  openPublish: () => void;
+  runPublish: (target: PublishTarget, opts: { commit: boolean; message: string; push: boolean }) => Promise<void>;
+  cancelPublish: () => Promise<void>;
+  openDiff: (files: string[]) => Promise<void>;
+  closeDiff: () => void;
+  syncBadge: () => void;
   setPublishOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   saveSettings: (patch: Settings) => Promise<void>;
@@ -112,7 +119,8 @@ export const useStore = create<Store>((set, get) => ({
   device: "desktop",
   previewNonce: 0,
   navigateRequest: null,
-  publish: { open: false, running: false, log: [], url: null, error: null },
+  publish: { open: false, running: false, log: [], url: null, error: null, cancelled: false, target: "production", step: "" },
+  diff: { open: false, loading: false, files: [], text: "", error: null },
   newSite: { open: false, running: false, log: [], error: null },
   toast: null,
 
@@ -141,6 +149,7 @@ export const useStore = create<Store>((set, get) => ({
         if (message?.type === "result") {
           const siteId = st.sites.find((s) => (st.sessions[s.id] ?? []).some((x) => x.id === sessionId))?.id ?? st.currentSiteId;
           if (siteId) void get().refreshGit(siteId);
+          if (!document.hasFocus()) void api.requestAttention().catch(() => {});
         }
       });
       await api.on("agent://permission", (req: PermissionRequest) => {
@@ -149,6 +158,8 @@ export const useStore = create<Store>((set, get) => ({
         addPermission(cur, req);
         st.transcripts[req.sessionId] = cur;
         set({ transcripts: bump(st.transcripts, req.sessionId) });
+        get().syncBadge();
+        if (!document.hasFocus()) void api.requestAttention().catch(() => {});
       });
       await api.on("agent://exit", ({ sessionId, code }) => {
         const st = get();
@@ -318,6 +329,7 @@ export const useStore = create<Store>((set, get) => ({
   async respondPermission(sessionId, requestId, response, status) {
     const cur = get().transcripts[sessionId];
     if (cur) { settlePermission(cur, requestId, status); set({ transcripts: bump(get().transcripts, sessionId) }); }
+    get().syncBadge();
     try { await api.agentRespond(sessionId, requestId, response); } catch (e) { get().showToast(String(e)); }
   },
 
@@ -384,11 +396,11 @@ export const useStore = create<Store>((set, get) => ({
     if (out.length) set({ attachments: [...get().attachments, ...out].slice(0, 6) });
   },
   removeAttachment(id) { set({ attachments: get().attachments.filter((a) => a.id !== id) }); },
-  async setPublishCommand(command) {
+  async setPublishCommand(command, key) {
     const siteId = get().currentSiteId;
     if (!siteId) return;
     try {
-      const site = await api.siteSetPublish(siteId, command);
+      const site = await api.siteSetPublish(siteId, command, key);
       set({ sites: get().sites.map((s) => (s.id === siteId ? site : s)) });
     } catch (e) { get().showToast(String(e)); }
   },
@@ -413,19 +425,65 @@ export const useStore = create<Store>((set, get) => ({
     if (d?.url && d.url !== "mock:") await api.openExternal(d.url + st.previewPath);
   },
 
-  async runPublish() {
+  openPublish() {
+    set({ publish: { open: true, running: false, log: [], url: null, error: null, cancelled: false, target: get().publish.target, step: "" } });
+  },
+  async runPublish(target, opts) {
     const siteId = get().currentSiteId;
     if (!siteId) return;
     const site = get().sites.find((s) => s.id === siteId);
-    if (!site?.publish) { set({ publish: { open: true, running: false, log: [], url: null, error: null } }); return; }
-    set({ publish: { open: true, running: true, log: [], url: null, error: null } });
+    const cmd = target === "preview" ? site?.preview : site?.publish;
+    if (!cmd) { get().openPublish(); return; }
+    const log: string[] = [];
+    set({ publish: { open: true, running: true, log, url: null, error: null, cancelled: false, target, step: opts.commit ? "commit" : "deploy" } });
+    const push = (line: string) => set({ publish: { ...get().publish, log: [...get().publish.log, line] } });
     try {
-      const r = await api.publishRun(siteId);
-      set({ publish: { ...get().publish, running: false, url: r.url ?? null, error: r.ok ? null : `Publish exited with code ${r.code ?? "?"}` } });
+      if (opts.commit) {
+        push(`$ git commit -m ${JSON.stringify(opts.message.trim() || "Update site")}`);
+        const g = await api.siteGitCommit(siteId, opts.message.trim() || "Update site");
+        set({ git: { ...get().git, [siteId]: g } });
+        push("Committed.");
+      }
+      if (opts.push) {
+        set({ publish: { ...get().publish, step: "push" } });
+        push("$ git push -u origin HEAD");
+        const out = await api.siteGitPush(siteId);
+        if (out) push(out);
+      }
+      set({ publish: { ...get().publish, step: "deploy" } });
+      push(`$ ${cmd}`);
+      const r = await api.publishRun(siteId, target);
+      const cancelled = get().publish.cancelled;
+      set({ publish: { ...get().publish, running: false, step: "", url: cancelled ? null : r.url ?? null, error: cancelled || r.ok ? null : `Publish exited with code ${r.code ?? "?"}` } });
       void get().refreshGit(siteId);
     } catch (e) {
-      set({ publish: { ...get().publish, running: false, error: String(e) } });
+      set({ publish: { ...get().publish, running: false, step: "", error: String(e) } });
     }
+  },
+  async cancelPublish() {
+    const siteId = get().currentSiteId;
+    if (!siteId || !get().publish.running) return;
+    set({ publish: { ...get().publish, cancelled: true } });
+    if (get().publish.step === "deploy") {
+      try { await api.publishCancel(siteId); } catch (e) { get().showToast(String(e)); }
+    }
+  },
+  async openDiff(files) {
+    const siteId = get().currentSiteId;
+    if (!siteId || files.length === 0) return;
+    set({ diff: { open: true, loading: true, files, text: "", error: null } });
+    try {
+      const text = await api.siteGitDiff(siteId, files);
+      set({ diff: { ...get().diff, loading: false, text } });
+    } catch (e) {
+      set({ diff: { ...get().diff, loading: false, error: String(e) } });
+    }
+  },
+  closeDiff() { set({ diff: { ...get().diff, open: false } }); },
+  syncBadge() {
+    let pending = 0;
+    for (const t of Object.values(get().transcripts)) for (const it of t.items) if (it.kind === "permission" && it.status === "pending") pending++;
+    void api?.setBadge(pending).catch(() => {});
   },
   setPublishOpen(open) { set({ publish: { ...get().publish, open } }); },
   setSettingsOpen(open) { set({ settingsOpen: open }); },

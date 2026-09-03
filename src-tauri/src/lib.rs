@@ -1,0 +1,342 @@
+mod agent;
+mod devserver;
+mod sites;
+#[cfg(debug_assertions)]
+mod smoke;
+mod state;
+
+use serde_json::{json, Value};
+use state::AppState;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+const PICKER_JS: &str = include_str!("picker.js");
+
+// ---------- settings / environment ----------
+
+#[tauri::command]
+fn settings_get(state: State<'_, AppState>) -> Value {
+    let p = state.persisted.lock().unwrap().clone();
+    json!({
+        "claudePath": p.claude_path,
+        "model": p.model,
+        "permissionMode": p.permission_mode,
+    })
+}
+
+#[tauri::command]
+fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> {
+    {
+        let mut p = state.persisted.lock().unwrap();
+        if let Some(v) = patch.get("claudePath") { p.claude_path = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
+        if let Some(v) = patch.get("model") { p.model = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
+        if let Some(v) = patch.get("permissionMode") { p.permission_mode = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
+    }
+    state.save()
+}
+
+#[tauri::command]
+async fn claude_check(state: State<'_, AppState>) -> Result<Value, String> {
+    let configured = state.persisted.lock().unwrap().claude_path.clone();
+    let path_env = state.path_env.clone();
+    let found = agent::claude::locate(configured.as_deref(), &path_env).await;
+    match found {
+        Some(path) => {
+            let version = agent::claude::version(&path, &path_env).await.unwrap_or_default();
+            Ok(json!({ "ok": true, "path": path, "version": version }))
+        }
+        None => Ok(json!({ "ok": false })),
+    }
+}
+
+// ---------- sites ----------
+
+#[tauri::command]
+fn sites_list(state: State<'_, AppState>) -> Vec<sites::Site> {
+    state.persisted.lock().unwrap().sites.clone()
+}
+
+#[tauri::command]
+async fn site_pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().set_title("Open a site folder").pick_folder(move |p| {
+        let _ = tx.send(p);
+    });
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    match picked {
+        Some(fp) => Ok(Some(fp.into_path().map_err(|e| e.to_string())?.to_string_lossy().to_string())),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+fn site_add(state: State<'_, AppState>, path: String) -> Result<sites::Site, String> {
+    let site = sites::Site::from_path(&path)?;
+    sites::mark_trusted(&site.path);
+    {
+        let mut p = state.persisted.lock().unwrap();
+        if let Some(existing) = p.sites.iter().find(|s| s.path == site.path) {
+            return Ok(existing.clone());
+        }
+        p.sites.insert(0, site.clone());
+    }
+    state.save()?;
+    Ok(site)
+}
+
+#[tauri::command]
+fn site_remove(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+    state.persisted.lock().unwrap().sites.retain(|s| s.id != site_id);
+    state.save()
+}
+
+#[tauri::command]
+fn site_refresh(state: State<'_, AppState>, site_id: String) -> Result<sites::Site, String> {
+    let mut p = state.persisted.lock().unwrap();
+    let site = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+    site.refresh()?;
+    let out = site.clone();
+    drop(p);
+    state.save()?;
+    Ok(out)
+}
+
+#[tauri::command]
+async fn site_install(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<sites::Site, String> {
+    let site = state.site(&site_id)?;
+    sites::run_install(app, &site, &state.path_env).await?;
+    let mut p = state.persisted.lock().unwrap();
+    let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+    s.refresh()?;
+    let out = s.clone();
+    drop(p);
+    state.save()?;
+    Ok(out)
+}
+
+#[tauri::command]
+fn site_git_status(state: State<'_, AppState>, site_id: String) -> Result<sites::GitStatus, String> {
+    let site = state.site(&site_id)?;
+    sites::git_status(&site.path, &state.path_env)
+}
+
+#[tauri::command]
+fn site_undo_files(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<Vec<String>, String> {
+    let site = state.site(&site_id)?;
+    sites::git_restore(&site.path, &files, &state.path_env)
+}
+
+/// Diagnostics from the preview pane (visible when the app is launched from a terminal).
+#[tauri::command]
+fn preview_event(kind: String, detail: String) {
+    eprintln!("[preview] {kind}: {detail}");
+}
+
+#[tauri::command]
+fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String) -> Result<sites::Site, String> {
+    let site = state.site(&site_id)?;
+    sites::write_open_json(&site.path, "publish", &command)?;
+    let mut p = state.persisted.lock().unwrap();
+    let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+    s.refresh()?;
+    let out = s.clone();
+    drop(p);
+    state.save()?;
+    Ok(out)
+}
+
+#[tauri::command]
+fn site_git_init(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+    let site = state.site(&site_id)?;
+    sites::git_init(&site.path, &state.path_env)
+}
+
+#[tauri::command]
+fn site_set_last_session(state: State<'_, AppState>, site_id: String, session_id: Option<String>) -> Result<(), String> {
+    {
+        let mut p = state.persisted.lock().unwrap();
+        if let Some(s) = p.sites.iter_mut().find(|s| s.id == site_id) { s.last_session_id = session_id; }
+    }
+    state.save()
+}
+
+#[tauri::command]
+async fn site_new(app: AppHandle, state: State<'_, AppState>, parent: String, name: String) -> Result<sites::Site, String> {
+    let starter = starter_dir(&app).ok_or("starter template not found")?;
+    let site = sites::create_from_starter(&starter, &parent, &name, &state.path_env).await?;
+    sites::mark_trusted(&site.path);
+    {
+        let mut p = state.persisted.lock().unwrap();
+        p.sites.insert(0, site.clone());
+    }
+    state.save()?;
+    Ok(site)
+}
+
+fn starter_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    // dev: <repo>/starters/next ; bundled: <resources>/starters/next
+    let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../starters/next");
+    if dev.join("package.json").exists() { return Some(dev); }
+    let res = app.path().resource_dir().ok()?.join("starters/next");
+    if res.join("package.json").exists() { Some(res) } else { None }
+}
+
+// ---------- dev server ----------
+
+#[tauri::command]
+async fn dev_start(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<devserver::DevInfo, String> {
+    let site = state.site(&site_id)?;
+    state.dev.start(app.clone(), site, state.path_env.clone()).await
+}
+
+#[tauri::command]
+async fn dev_stop(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+    state.dev.stop(&app, &site_id).await
+}
+
+#[tauri::command]
+async fn dev_status(state: State<'_, AppState>, site_id: String) -> Result<Option<devserver::DevInfo>, String> {
+    Ok(state.dev.status(&site_id).await)
+}
+
+#[tauri::command]
+async fn dev_log(state: State<'_, AppState>, site_id: String) -> Result<Vec<String>, String> {
+    Ok(state.dev.log(&site_id).await)
+}
+
+// ---------- publish ----------
+
+#[tauri::command]
+async fn publish_run(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<Value, String> {
+    let site = state.site(&site_id)?;
+    let cmd = site.publish.clone().ok_or("No publish command set for this site. Add one in open.json, e.g. {\"publish\": \"vercel deploy --prod --yes\"}")?;
+    sites::run_publish(app, &site, &cmd, &state.path_env).await
+}
+
+// ---------- agent ----------
+
+/// Shared by the `agent_start` command and the debug smoke test.
+pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<String>) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let site = state.site(site_id)?;
+    let (configured, model, mode) = {
+        let p = state.persisted.lock().unwrap();
+        (p.claude_path.clone(), p.model.clone(), p.permission_mode.clone())
+    };
+    #[cfg(debug_assertions)]
+    let model = std::env::var("OPEN_SMOKE_MODEL").ok().or(model);
+    let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
+    let preview = state.dev.status(site_id).await.map(|d| d.url);
+    let session_id = resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let opts = agent::claude::StartOpts {
+        session_id: session_id.clone(),
+        site_id: site_id.to_string(),
+        cwd: site.path.clone(),
+        resume: resume.is_some(),
+        model,
+        permission_mode: mode,
+        system_append: agent::system_prompt(&site, preview.as_deref()),
+        claude_path,
+        path_env: state.path_env.clone(),
+    };
+    state.agents.start(app.clone(), opts).await?;
+    Ok(session_id)
+}
+
+#[tauri::command]
+async fn agent_start(app: AppHandle, site_id: String, resume: Option<String>) -> Result<String, String> {
+    start_agent(&app, &site_id, resume).await
+}
+
+#[tauri::command]
+async fn agent_send(state: State<'_, AppState>, session_id: String, text: String, selection: Option<Value>, images: Option<Vec<agent::ImageIn>>) -> Result<(), String> {
+    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    h.send_user(agent::compose_user_content(&text, selection.as_ref(), &images.unwrap_or_default())).await
+}
+
+#[tauri::command]
+async fn agent_respond(state: State<'_, AppState>, session_id: String, request_id: String, response: Value) -> Result<(), String> {
+    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    h.respond(&request_id, response).await
+}
+
+#[tauri::command]
+async fn agent_interrupt(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    h.interrupt().await
+}
+
+#[tauri::command]
+async fn agent_stop(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    state.agents.stop(&session_id).await
+}
+
+#[tauri::command]
+async fn agent_running(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+    Ok(state.agents.running().await)
+}
+
+#[tauri::command]
+fn sessions_list(state: State<'_, AppState>, site_id: String) -> Result<Vec<agent::sessions::SessionInfo>, String> {
+    let site = state.site(&site_id)?;
+    Ok(agent::sessions::list(&site.path))
+}
+
+#[tauri::command]
+fn session_transcript(state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
+    let site = state.site(&site_id)?;
+    agent::sessions::transcript(&site.path, &session_id)
+}
+
+// ---------- app ----------
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let state = AppState::load(app.handle())?;
+            app.manage(state);
+            #[cfg(debug_assertions)]
+            if let Ok(prompt) = std::env::var("OPEN_SMOKE_PROMPT") {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move { smoke::run(handle, prompt).await });
+            }
+            let builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                .title("Open")
+                .inner_size(1440.0, 900.0)
+                .min_inner_size(980.0, 620.0)
+                .initialization_script_for_all_frames(PICKER_JS)
+                // Let the page handle HTML5 drag and drop itself (images dropped into the composer).
+                .disable_drag_drop_handler();
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+            builder.build()?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            settings_get, settings_set, claude_check,
+            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_undo_files, preview_event, site_set_publish, site_set_last_session, site_new,
+            dev_start, dev_stop, dev_status, dev_log,
+            publish_run,
+            agent_start, agent_send, agent_respond, agent_interrupt, agent_stop, agent_running,
+            sessions_list, session_transcript
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let state = app.state::<AppState>();
+                let agents = &state.agents;
+                let dev = &state.dev;
+                tauri::async_runtime::block_on(async {
+                    agents.stop_all().await;
+                    dev.stop_all().await;
+                });
+                let _ = app.emit("app://exiting", ());
+            }
+        });
+}

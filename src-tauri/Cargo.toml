@@ -1,0 +1,24 @@
+[package]
+name = "open"
+version = "0.1.0"
+description = "Open — build websites with your local coding agent"
+authors = ["wozu"]
+edition = "2021"
+
+[lib]
+name = "open_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "rt-multi-thread", "macros", "time", "net", "fs"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+libc = "0.2"

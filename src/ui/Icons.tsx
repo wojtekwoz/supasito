@@ -1,0 +1,28 @@
+import type { SVGProps } from "react";
+
+const base = (props: SVGProps<SVGSVGElement>) => ({ viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, ...props });
+
+export const Plus = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M8 3v10M3 8h10" /></svg>;
+export const Folder = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /></svg>;
+export const Crosshair = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="8" cy="8" r="4.5" /><path d="M8 1v3M8 12v3M1 8h3M12 8h3" /></svg>;
+export const Send = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>;
+export const Stop = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)} fill="currentColor" stroke="none"><rect x="4" y="4" width="8" height="8" rx="1.5" /></svg>;
+export const Reload = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M13 8a5 5 0 1 1-1.5-3.6" /><path d="M13 2.5v3h-3" /></svg>;
+export const External = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M7 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V9" /><path d="M9.5 2H14v4.5M14 2 7.5 8.5" /></svg>;
+export const Desktop = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="1.5" y="3" width="13" height="8.5" rx="1.5" /><path d="M5.5 14h5M8 11.5V14" /></svg>;
+export const Tablet = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="3" y="1.5" width="10" height="13" rx="1.5" /><path d="M7 12.5h2" /></svg>;
+export const Phone = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="4.5" y="1.5" width="7" height="13" rx="1.5" /><path d="M7 12.5h2" /></svg>;
+export const Gear = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="8" cy="8" r="2.2" /><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3" /></svg>;
+export const Check = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 8.5 6.5 12 13 4.5" /></svg>;
+export const X = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M4 4l8 8M12 4l-8 8" /></svg>;
+export const Chevron = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M6 3.5 10.5 8 6 12.5" /></svg>;
+export const Doc = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M4 1.5h5l3.5 3.5v9.5h-8.5z" /><path d="M9 1.5V5h3.5M6 8.5h4M6 11h4" /></svg>;
+export const Pen = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="m2.5 13.5.8-3.2 7.5-7.5a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2l-7.5 7.5z" /></svg>;
+export const Terminal = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="m4.5 6 2.5 2-2.5 2M8.5 10.5h3" /></svg>;
+export const Search = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3.5 3.5" /></svg>;
+export const Globe = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="8" cy="8" r="6.5" /><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13" /></svg>;
+export const Branch = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="4" cy="3.5" r="1.5" /><circle cx="4" cy="12.5" r="1.5" /><circle cx="12" cy="5.5" r="1.5" /><path d="M4 5v6M12 7c0 3-8 1.5-8 4" /></svg>;
+export const Shield = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M8 1.5 13 3.5v4c0 3.2-2.1 5.6-5 7-2.9-1.4-5-3.8-5-7v-4z" /></svg>;
+export const Question = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="8" cy="8" r="6.5" /><path d="M6 6.2a2 2 0 1 1 2.8 1.8c-.6.3-.8.7-.8 1.3M8 11.6v.1" /></svg>;
+export const Sparkle = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z" /></svg>;
+export const Trash = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.6 8.5h5.8l.6-8.5" /></svg>;

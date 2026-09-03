@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+/* Design tokens: edit these first, the components read from them. */
+@theme {
+  --color-paper: #F6F4EE;
+  --color-ink: #17181C;
+  --color-ink-2: #4B4E57;
+  --color-line: #DEDAD0;
+  --color-accent: #1F3A8A;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-body: ui-sans-serif, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+html { background: var(--color-paper); color: var(--color-ink); }
+body { font-family: var(--font-body); -webkit-font-smoothing: antialiased; }

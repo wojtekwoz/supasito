@@ -1,0 +1,4 @@
+{
+  "name": "New site",
+  "dev": "node_modules/.bin/next dev -p {port}"
+}

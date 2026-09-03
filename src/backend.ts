@@ -1,0 +1,90 @@
+import type {
+  Attachment, ClaudeStatus, DevInfo, EventName, GitStatus, PublishResult, Selection, SessionInfo, Settings, Site,
+} from "./types";
+
+export type Unlisten = () => void;
+
+export interface Backend {
+  settingsGet(): Promise<Settings>;
+  settingsSet(patch: Settings): Promise<void>;
+  claudeCheck(): Promise<ClaudeStatus>;
+  sitesList(): Promise<Site[]>;
+  sitePickFolder(): Promise<string | null>;
+  siteAdd(path: string): Promise<Site>;
+  siteRemove(siteId: string): Promise<void>;
+  siteRefresh(siteId: string): Promise<Site>;
+  siteInstall(siteId: string): Promise<Site>;
+  siteGitStatus(siteId: string): Promise<GitStatus>;
+  siteGitInit(siteId: string): Promise<void>;
+  siteUndoFiles(siteId: string, files: string[]): Promise<string[]>;
+  previewEvent(kind: string, detail: string): Promise<void>;
+  siteSetLastSession(siteId: string, sessionId: string | null): Promise<void>;
+  siteNew(parent: string, name: string): Promise<Site>;
+  devStart(siteId: string): Promise<DevInfo>;
+  devStop(siteId: string): Promise<void>;
+  devStatus(siteId: string): Promise<DevInfo | null>;
+  devLog(siteId: string): Promise<string[]>;
+  publishRun(siteId: string): Promise<PublishResult>;
+  agentStart(siteId: string, resume: string | null): Promise<string>;
+  agentSend(sessionId: string, text: string, selection: Selection | null, images: Attachment[]): Promise<void>;
+  siteSetPublish(siteId: string, command: string): Promise<Site>;
+  agentRespond(sessionId: string, requestId: string, response: unknown): Promise<void>;
+  agentInterrupt(sessionId: string): Promise<void>;
+  agentStop(sessionId: string): Promise<void>;
+  agentRunning(): Promise<{ sessionId: string; siteId: string }[]>;
+  sessionsList(siteId: string): Promise<SessionInfo[]>;
+  sessionTranscript(siteId: string, sessionId: string): Promise<unknown[]>;
+  openExternal(url: string): Promise<void>;
+  revealPath(path: string): Promise<void>;
+  on(event: EventName, handler: (payload: any) => void): Promise<Unlisten>;
+}
+
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+async function tauriBackend(): Promise<Backend> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  const { openUrl, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  return {
+    settingsGet: () => invoke("settings_get"),
+    settingsSet: (patch) => invoke("settings_set", { patch }),
+    claudeCheck: () => invoke("claude_check"),
+    sitesList: () => invoke("sites_list"),
+    sitePickFolder: () => invoke("site_pick_folder"),
+    siteAdd: (path) => invoke("site_add", { path }),
+    siteRemove: (siteId) => invoke("site_remove", { siteId }),
+    siteRefresh: (siteId) => invoke("site_refresh", { siteId }),
+    siteInstall: (siteId) => invoke("site_install", { siteId }),
+    siteGitStatus: (siteId) => invoke("site_git_status", { siteId }),
+    siteGitInit: (siteId) => invoke("site_git_init", { siteId }),
+    siteUndoFiles: (siteId, files) => invoke("site_undo_files", { siteId, files }),
+    previewEvent: (kind, detail) => invoke("preview_event", { kind, detail }),
+    siteSetLastSession: (siteId, sessionId) => invoke("site_set_last_session", { siteId, sessionId }),
+    siteNew: (parent, name) => invoke("site_new", { parent, name }),
+    devStart: (siteId) => invoke("dev_start", { siteId }),
+    devStop: (siteId) => invoke("dev_stop", { siteId }),
+    devStatus: (siteId) => invoke("dev_status", { siteId }),
+    devLog: (siteId) => invoke("dev_log", { siteId }),
+    publishRun: (siteId) => invoke("publish_run", { siteId }),
+    agentStart: (siteId, resume) => invoke("agent_start", { siteId, resume }),
+    agentSend: (sessionId, text, selection, images) => invoke("agent_send", { sessionId, text, selection, images: images.map((i) => ({ mediaType: i.mediaType, data: i.data })) }),
+    siteSetPublish: (siteId, command) => invoke("site_set_publish", { siteId, command }),
+    agentRespond: (sessionId, requestId, response) => invoke("agent_respond", { sessionId, requestId, response }),
+    agentInterrupt: (sessionId) => invoke("agent_interrupt", { sessionId }),
+    agentStop: (sessionId) => invoke("agent_stop", { sessionId }),
+    agentRunning: () => invoke("agent_running"),
+    sessionsList: (siteId) => invoke("sessions_list", { siteId }),
+    sessionTranscript: (siteId, sessionId) => invoke("session_transcript", { siteId, sessionId }),
+    openExternal: (url) => openUrl(url),
+    revealPath: (path) => revealItemInDir(path),
+    on: async (event, handler) => listen(event, (e) => handler(e.payload)),
+  };
+}
+
+let backendPromise: Promise<Backend> | null = null;
+export function backend(): Promise<Backend> {
+  if (!backendPromise) {
+    backendPromise = isTauri ? tauriBackend() : import("./mock").then((m) => m.mockBackend());
+  }
+  return backendPromise;
+}

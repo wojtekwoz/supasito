@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "open-ui",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "port": 1420
+    },
+    {
+      "name": "open-ui-alt",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev", "--port", "1421"],
+      "port": 1421
+    }
+  ]
+}

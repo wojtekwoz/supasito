@@ -59,7 +59,7 @@ export function PermissionCard({ item, sessionId }: { item: PermItem; sessionId:
           </div>
         )
       ) : (
-        <div className="settled">{item.status === "allowed" ? "Allowed" : "Denied"}</div>
+        <div className="settled">{item.status === "allowed" ? "Allowed" : item.status === "denied" ? "Denied" : "No longer needed (the turn ended)"}</div>
       )}
     </div>
   );
@@ -108,7 +108,7 @@ export function QuestionCard({ item, sessionId }: { item: PermItem; sessionId: s
       ))}
       {item.status === "pending"
         ? <div className="actions"><button className="btn sm primary" disabled={!complete} onClick={submit}>Send answers</button></div>
-        : <div className="settled">Answered</div>}
+        : <div className="settled">{item.status === "expired" ? "No longer needed (the turn ended)" : "Answered"}</div>}
     </div>
   );
 }

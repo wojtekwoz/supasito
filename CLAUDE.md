@@ -1,7 +1,8 @@
 # Open — notes for agents working on this repo
 
 Open is a macOS desktop app (Tauri 2, Rust core, React UI) that builds websites by driving the
-user's own Claude Code binary. Read PLAN.md for the thesis and decisions; README.md for usage.
+user's own Claude Code binary. Read PLAN.md for the current state, decisions and next milestone;
+CHANGELOG.md for what was built and verified when; README.md for usage.
 
 ## The one rule
 Every feature must shorten the loop *say → change → see → approve → publish*. If a change adds a

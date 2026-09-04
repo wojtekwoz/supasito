@@ -78,6 +78,16 @@ impl Handle {
         .await
     }
 
+    /// Change the permission mode of the running session (acceptEdits, bypassPermissions, plan, default).
+    pub async fn set_permission_mode(&self, mode: &str) -> Result<(), String> {
+        self.write(json!({
+            "type": "control_request",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+            "request": { "subtype": "set_permission_mode", "mode": mode }
+        }))
+        .await
+    }
+
     async fn close_input(&self) {
         self.tx.lock().await.take();
     }
@@ -87,10 +97,18 @@ impl Handle {
             libc::kill(self.pid as libc::pid_t, sig);
         }
     }
+
+    /// SIGTERM claude and everything it spawned (its own process group).
+    fn terminate_group(&self) {
+        unsafe {
+            libc::kill(-(self.pid as libc::pid_t), libc::SIGTERM);
+            libc::kill(self.pid as libc::pid_t, libc::SIGTERM);
+        }
+    }
 }
 
 pub struct Registry {
-    inner: Mutex<HashMap<String, Arc<Handle>>>,
+    inner: Arc<Mutex<HashMap<String, Arc<Handle>>>>,
     /// Pids of claude processes we started, so a later launch can stop any that outlived an app
     /// instance that died without cleaning up.
     pids_file: std::path::PathBuf,
@@ -116,7 +134,7 @@ fn reap_orphans(file: &std::path::Path) {
 impl Registry {
     pub fn new(pids_file: std::path::PathBuf) -> Self {
         reap_orphans(&pids_file);
-        Self { inner: Mutex::new(HashMap::new()), pids_file }
+        Self { inner: Arc::new(Mutex::new(HashMap::new())), pids_file }
     }
 
     async fn persist(&self) {
@@ -231,6 +249,32 @@ impl Registry {
                                 })).await;
                             }
                         }
+                        Some("control_response") => {
+                            // Responses to our own requests (interrupt, set_permission_mode). Surface failures.
+                            if v.pointer("/response/subtype").and_then(|s| s.as_str()) == Some("error") {
+                                let _ = app.emit("agent://control_error", json!({
+                                    "sessionId": sid,
+                                    "requestId": v.pointer("/response/request_id").cloned().unwrap_or(Value::Null),
+                                    "error": v.pointer("/response/error").cloned().unwrap_or(Value::Null),
+                                }));
+                            }
+                            let _ = app.emit("agent://message", json!({ "sessionId": sid, "message": v }));
+                        }
+                        Some("assistant") => {
+                            // Note which Write calls create a new file (checked before the tool runs),
+                            // so Undo can delete only what the turn created.
+                            if let Some(blocks) = v.pointer("/message/content").and_then(|c| c.as_array()) {
+                                for b in blocks {
+                                    if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") && b.get("name").and_then(|n| n.as_str()) == Some("Write") {
+                                        if let (Some(id), Some(file)) = (b.get("id").and_then(|i| i.as_str()), b.pointer("/input/file_path").and_then(|f| f.as_str())) {
+                                            let existed = std::path::Path::new(file).exists();
+                                            let _ = app.emit("agent://fs", json!({ "sessionId": sid, "toolUseId": id, "file": file, "existed": existed }));
+                                        }
+                                    }
+                                }
+                            }
+                            let _ = app.emit("agent://message", json!({ "sessionId": sid, "message": v }));
+                        }
                         _ => {
                             let _ = app.emit("agent://message", json!({ "sessionId": sid, "message": v }));
                         }
@@ -263,9 +307,13 @@ impl Registry {
             tokio::time::sleep(Duration::from_millis(150)).await;
             h.signal(libc::SIGINT);
             let hh = h.clone();
+            let sid = session_id.to_string();
+            let inner = self.inner.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                hh.signal(libc::SIGTERM);
+                // Only escalate if the exit watcher has not removed the session yet (avoids
+                // signalling a recycled pid after a clean exit).
+                if inner.lock().await.contains_key(&sid) { hh.terminate_group(); }
             });
         }
         Ok(())
@@ -279,7 +327,7 @@ impl Registry {
         }
         if !all.is_empty() {
             tokio::time::sleep(Duration::from_millis(800)).await;
-            for h in &all { h.signal(libc::SIGTERM); }
+            for h in &all { h.terminate_group(); }
         }
         let _ = std::fs::remove_file(&self.pids_file);
     }

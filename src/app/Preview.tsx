@@ -89,7 +89,11 @@ export function Preview() {
   const isMock = dev?.url === "mock:";
   // The iframe's src is fixed for the life of the mount; in-page navigation is reported back by the
   // picker script and never re-sets src (that would reload the page the user just navigated to).
-  const mountPath = useRef(previewPath);
+  const mountPath = useRef("/");
+  const mountSite = useRef<string | null>(null);
+  // A new site always starts at its root (reset during render so the first frame is right);
+  // a manual reload remounts at the page currently shown.
+  if (mountSite.current !== (site?.id ?? null)) { mountSite.current = site?.id ?? null; mountPath.current = "/"; }
   const src = ready && !isMock ? `${dev!.url}${mountPath.current === "/" ? "/" : mountPath.current}` : undefined;
   const navigate = (p: string) => {
     const path = p.startsWith("/") ? p : "/" + p;
@@ -116,7 +120,7 @@ export function Preview() {
           <input value={pathDraft} onChange={(e) => setPathDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") navigate(pathDraft); }} onBlur={() => setPathDraft(previewPath)} spellCheck={false} />
         </div>
         <button className={cx("icon-btn", picking && "on")} title="Pick an element" disabled={!ready} onClick={() => setPicking(!picking)}><Crosshair /></button>
-        <button className="icon-btn" title="Reload" disabled={!ready} onClick={() => { post({ type: "reload" }); reloadPreview(); }}><Reload /></button>
+        <button className="icon-btn" title="Reload" disabled={!ready} onClick={() => { if ((window as any).__openPickerSeen) post({ type: "reload" }); else { mountPath.current = previewPath; reloadPreview(); } }}><Reload /></button>
         <button className="icon-btn" title="Open in browser" disabled={!ready || isMock} onClick={() => void openInBrowser()}><External /></button>
         <button className="icon-btn" title="Attach a screenshot of the preview to your next message" disabled={!ready} onClick={() => void capturePreview()}><Camera /></button>
         <button className={cx("icon-btn", devLogOpen && "on")} title="Dev server log" onClick={toggleDevLog}><Terminal /></button>

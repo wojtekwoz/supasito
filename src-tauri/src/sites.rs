@@ -235,14 +235,22 @@ pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_
         std::fs::write(dest.join("package.json"), pkg.replace("\"name\": \"open-starter\"", &format!("\"name\": \"{slug}\""))).map_err(|e| e.to_string())?;
     }
     let dest_s = dest.to_string_lossy().to_string();
-    // install + git init, through the login shell so pnpm/git resolve
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let status = tokio::process::Command::new(&shell)
-        .args(["-lc", "pnpm install --silent && git init -q && git add -A && git commit -qm 'New site from Open starter'"])
-        .env("PATH", path_env)
-        .current_dir(&dest)
-        .status().await.map_err(|e| e.to_string())?;
-    if !status.success() { return Err("Dependency install failed. Open the folder in a terminal and run pnpm install.".into()); }
+    let run = |args: &[&str]| {
+        let mut c = tokio::process::Command::new(args[0]);
+        c.args(&args[1..]).env("PATH", path_env).current_dir(&dest).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
+        c.output()
+    };
+    // 1. dependencies — without them the site cannot run, so a failure removes the folder again
+    let install = run(&["pnpm", "install", "--silent"]).await.map_err(|e| e.to_string())?;
+    if !install.status.success() {
+        let _ = std::fs::remove_dir_all(&dest);
+        let err = String::from_utf8_lossy(&install.stderr).trim().lines().last().unwrap_or("").to_string();
+        return Err(format!("Dependency install failed{}. Is pnpm installed and online?", if err.is_empty() { String::new() } else { format!(": {err}") }));
+    }
+    // 2. git — best effort; the site is usable without a first commit
+    let _ = run(&["git", "init", "-q"]).await;
+    let _ = run(&["git", "add", "-A"]).await;
+    let _ = run(&["git", "commit", "-qm", "New site from Open starter"]).await;
     let mut site = Site::from_path(&dest_s)?;
     site.name = name.trim().to_string();
     Ok(site)
@@ -348,18 +356,49 @@ pub fn mark_trusted(path: &str) {
     if entry.get("hasTrustDialogAccepted").and_then(|v| v.as_bool()) == Some(true) { return; }
     entry.as_object_mut().unwrap().insert("hasTrustDialogAccepted".into(), Value::Bool(true));
     if let Ok(out) = serde_json::to_string(&root) {
-        let _ = std::fs::write(&file, out);
+        // write-then-rename so a crash or a concurrent claude write cannot leave a torn file
+        let tmp = home.join(format!(".claude.json.open-{}", std::process::id()));
+        if std::fs::write(&tmp, out).is_ok() && std::fs::rename(&tmp, &file).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 }
 
-/// Undo a turn: put tracked files back to their committed state and delete files the turn
-/// created. Paths may be absolute or relative to the site. Returns the files touched.
-pub fn git_restore(path: &str, files: &[String], path_env: &str) -> Result<Vec<String>, String> {
+/// Resolve a file path (absolute or site-relative) to a path inside the site, or None.
+fn inside_site(root: &Path, f: &str) -> Option<PathBuf> {
+    let candidate = if Path::new(f).is_absolute() { PathBuf::from(f) } else { root.join(f) };
+    let root_c = root.canonicalize().ok()?;
+    // canonicalise the deepest existing ancestor so symlinks and `..` cannot escape
+    let mut probe = candidate.clone();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    while !probe.exists() {
+        tail.push(probe.file_name()?.to_os_string());
+        probe = probe.parent()?.to_path_buf();
+    }
+    let mut resolved = probe.canonicalize().ok()?;
+    for seg in tail.iter().rev() { resolved.push(seg); }
+    if resolved.starts_with(&root_c) { Some(resolved) } else { None }
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreReport {
+    pub restored: Vec<String>,
+    pub deleted: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Undo a turn. Tracked files go back to HEAD; files in `created` (which did not exist before
+/// the turn) are deleted; anything else is left alone and reported. Requires a git repo.
+pub fn git_restore(path: &str, files: &[String], created: &[String], path_env: &str) -> Result<RestoreReport, String> {
     let root = Path::new(path);
-    let mut restored = Vec::new();
+    if !root.join(".git").exists() { return Err("This folder is not a git repository, so there is nothing to restore from.".into()); }
+    let root_c = root.canonicalize().map_err(|e| e.to_string())?;
+    let mut report = RestoreReport::default();
+    let created_set: std::collections::HashSet<PathBuf> = created.iter().filter_map(|f| inside_site(root, f)).collect();
     for f in files {
-        let rel = f.strip_prefix(path).map(|r| r.trim_start_matches('/').to_string()).unwrap_or_else(|| f.clone());
-        if rel.is_empty() || rel.starts_with("..") { continue; }
+        let Some(full) = inside_site(root, f) else { report.skipped.push(f.clone()); continue };
+        let rel = full.strip_prefix(&root_c).map(|r| r.to_string_lossy().to_string()).unwrap_or_else(|_| f.clone());
         let tracked = std::process::Command::new("git").env("PATH", path_env)
             .args(["-C", path, "ls-files", "--error-unmatch", "--", &rel]).output()
             .map(|o| o.status.success()).unwrap_or(false);
@@ -367,13 +406,15 @@ pub fn git_restore(path: &str, files: &[String], path_env: &str) -> Result<Vec<S
             let out = std::process::Command::new("git").env("PATH", path_env)
                 .args(["-C", path, "checkout", "--", &rel]).output().map_err(|e| e.to_string())?;
             if !out.status.success() { return Err(format!("git checkout {rel}: {}", String::from_utf8_lossy(&out.stderr).trim())); }
-        } else {
-            let full = root.join(&rel);
+            report.restored.push(rel);
+        } else if created_set.contains(&full) {
             if full.is_file() { std::fs::remove_file(&full).map_err(|e| format!("remove {rel}: {e}"))?; }
+            report.deleted.push(rel);
+        } else {
+            report.skipped.push(rel);
         }
-        restored.push(rel);
     }
-    Ok(restored)
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -406,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_reverts_tracked_and_deletes_untracked() {
+    fn restore_reverts_tracked_and_deletes_only_created() {
         let dir = std::env::temp_dir().join(format!("open-restore-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.to_str().unwrap();
@@ -420,10 +461,14 @@ mod tests {
         git(&["commit", "-qm", "init"]);
         std::fs::write(dir.join("a.txt"), "two").unwrap();
         std::fs::write(dir.join("new.txt"), "created").unwrap();
-        let restored = git_restore(path, &[format!("{path}/a.txt"), "new.txt".into()], &env).unwrap();
-        assert_eq!(restored, vec!["a.txt", "new.txt"]);
+        std::fs::write(dir.join("keep.txt"), "pre-existing untracked").unwrap();
+        let r = git_restore(path, &[format!("{path}/a.txt"), "new.txt".into(), "keep.txt".into(), "../outside.txt".into()], &["new.txt".into()], &env).unwrap();
+        assert_eq!(r.restored, vec!["a.txt"]);
+        assert_eq!(r.deleted, vec!["new.txt"]);
+        assert_eq!(r.skipped, vec!["keep.txt", "../outside.txt"]);
         assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one");
         assert!(!dir.join("new.txt").exists());
+        assert!(dir.join("keep.txt").exists(), "untracked files that existed before the turn are left alone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

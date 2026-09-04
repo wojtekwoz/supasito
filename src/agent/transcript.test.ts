@@ -1,6 +1,6 @@
 // Run with: node --experimental-strip-types src/agent/transcript.test.ts
 import { readFileSync } from "node:fs";
-import { addPermission, addUser, applyMessage, emptySession, filesTouchedInTurn, settlePermission, type Item } from "./transcript.ts";
+import { addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, filesTouchedInTurn, settlePermission, type Item } from "./transcript.ts";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail?: unknown) => {
@@ -65,8 +65,18 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
     { kind: "tool", id: "t4", name: "Edit", input: { file_path: "/s/a.tsx" }, label: "", result: "", status: "done", parentToolUseId: null },
     { kind: "tool", id: "t5", name: "Write", input: { file_path: "/s/c.css" }, label: "", result: "", status: "done", parentToolUseId: null },
   ];
-  const files = filesTouchedInTurn(items);
+  const { files } = filesTouchedInTurn(items);
   check("files: current turn only, deduped, failures excluded", JSON.stringify(files) === JSON.stringify(["/s/a.tsx", "/s/c.css"]), files);
+  // a queued message sitting at the end must not hide the turn's files
+  const withQueued: Item[] = [...items, { kind: "user", id: "u3", text: "queued", queued: true }];
+  check("files: queued message does not end the turn early", filesTouchedInTurn(withQueued).files.length === 2, filesTouchedInTurn(withQueued));
+  // created files are tracked separately, from the Rust fs event
+  const s5 = emptySession();
+  s5.items = [...items];
+  applyFs(s5, "t5", false);
+  applyFs(s5, "t2", true);
+  const t = filesTouchedInTurn(s5.items);
+  check("files: created list only holds files that did not exist before", JSON.stringify(t.created) === JSON.stringify(["/s/c.css"]), t);
 }
 
 // 5. Permissions: pending → settled, queued user messages clear when the next turn starts.
@@ -79,7 +89,14 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
   addUser(s, "second", null);
   check("queue: message sent while busy is queued", s.items[1].kind === "user" && s.items[1].queued === true);
   applyMessage(s, { type: "stream_event", event: { type: "message_start", message: { id: "m9" } }, parent_tool_use_id: null });
-  check("queue: cleared when its turn starts", s.items[1].kind === "user" && s.items[1].queued === false);
+  check("queue: still queued while the current turn continues", s.items[1].kind === "user" && s.items[1].queued === true);
+  applyMessage(s, { type: "result", subtype: "success", is_error: false, result: "ok" });
+  check("queue: cleared when the current turn ends, session stays busy", s.items[1].kind === "user" && s.items[1].queued === false && s.busy === true);
+  const s6 = emptySession();
+  addPermission(s6, { sessionId: "x", requestId: "req2", request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } });
+  applyMessage(s6, { type: "result", subtype: "error_during_execution", is_error: true, result: null });
+  check("permission: unanswered approval expires when the turn ends", s6.items[0].kind === "permission" && s6.items[0].status === "expired" && s6.busy === false);
+  check("permission: expirePermissions counts", expirePermissions(emptySession()) === 0);
 }
 
 // 6. Saved transcripts: user lines with images and a selection block render both.

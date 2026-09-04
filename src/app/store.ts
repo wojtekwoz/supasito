@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
 import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site } from "../types";
-import { addNotice, addPermission, addUser, applyMessage, emptySession, markUndone, settlePermission, type SessionState } from "../agent/transcript";
+import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, settlePermission, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
@@ -9,6 +9,7 @@ export type Device = "desktop" | "tablet" | "phone";
 
 type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy" };
 type DiffState = { open: boolean; loading: boolean; files: string[]; text: string; error: string | null };
+type RulesState = { open: boolean; loading: boolean; saving: boolean; text: string; error: string | null };
 type NewSiteState = { open: boolean; running: boolean; log: string[]; error: string | null };
 
 export type Store = {
@@ -38,6 +39,7 @@ export type Store = {
   navigateRequest: { path: string; seq: number } | null;
   publish: PublishState;
   diff: DiffState;
+  rules: RulesState;
   /** Time of the last commit made from Open; turns before it can no longer be undone. */
   committedAt: number;
   newSite: NewSiteState;
@@ -51,7 +53,7 @@ export type Store = {
   createSite: (name: string) => Promise<void>;
   openNewSite: (open: boolean) => void;
   newSession: () => void;
-  openSession: (id: string) => Promise<void>;
+  openSession: (id: string, forSiteId?: string) => Promise<void>;
   send: (text: string) => Promise<void>;
   respondPermission: (sessionId: string, requestId: string, response: unknown, status: "allowed" | "denied") => Promise<void>;
   interrupt: () => Promise<void>;
@@ -75,6 +77,11 @@ export type Store = {
   reloadPreview: () => void;
   revealSite: (siteId: string) => Promise<void>;
   openSiteInEditor: (siteId: string) => Promise<void>;
+  renameSite: (siteId: string, name: string) => Promise<void>;
+  openRules: () => Promise<void>;
+  closeRules: () => void;
+  saveRules: (text: string) => Promise<void>;
+  setSessionMode: (mode: string) => Promise<void>;
   capturePreview: () => Promise<void>;
   /** The preview pane sets this so captures know where the iframe is. */
   previewRect: { x: number; y: number; w: number; h: number } | null;
@@ -95,6 +102,22 @@ export type Store = {
 
 let api: Backend;
 let initStarted = false;
+let sending = false;
+
+const RULES_TEMPLATE = `# This site
+
+Notes Claude reads before every change. Keep them short and true.
+
+## Brand
+- Voice: plain, confident, short sentences.
+- Type: one display face for headlines, a system sans for everything else.
+- Colours: keep to the tokens; no new colours without asking.
+
+## Conventions
+- One component per section. Small, direct edits.
+- Do not add dependencies unless asked.
+- Never start the dev server; Open runs it.
+`;
 const now = () => Date.now();
 
 function bump(transcripts: Record<string, SessionState>, id: string): Record<string, SessionState> {
@@ -129,6 +152,7 @@ export const useStore = create<Store>((set, get) => ({
   previewRect: null,
   publish: { open: false, running: false, log: [], url: null, error: null, cancelled: false, target: "production", step: "" },
   diff: { open: false, loading: false, files: [], text: "", error: null },
+  rules: { open: false, loading: false, saving: false, text: "", error: null },
   committedAt: 0,
   newSite: { open: false, running: false, log: [], error: null },
   toast: null,
@@ -158,6 +182,7 @@ export const useStore = create<Store>((set, get) => ({
         if (message?.type === "result") {
           const siteId = st.sites.find((s) => (st.sessions[s.id] ?? []).some((x) => x.id === sessionId))?.id ?? st.currentSiteId;
           if (siteId) void get().refreshGit(siteId);
+          get().syncBadge();
           if (!document.hasFocus()) void api.requestAttention().catch(() => {});
         }
       });
@@ -175,12 +200,27 @@ export const useStore = create<Store>((set, get) => ({
         const running = { ...st.running };
         delete running[sessionId];
         const cur = st.transcripts[sessionId];
-        if (cur && cur.busy) {
-          const tail = cur.stderr.slice(-3).map((l) => l.trim()).filter(Boolean).join(" · ");
-          addNotice(cur, code === 0 ? "Claude ended the session." : `Claude exited unexpectedly (code ${code ?? "?"}).${tail ? ` ${tail}` : ""} Send a message to resume.`, code === 0 ? "info" : "error");
-          cur.busy = false;
+        if (cur) {
+          const expired = expirePermissions(cur);
+          if (cur.busy) {
+            const tail = cur.stderr.slice(-3).map((l) => l.trim()).filter(Boolean).join(" · ");
+            addNotice(cur, code === 0 ? "Claude ended the session." : `Claude exited unexpectedly (code ${code ?? "?"}).${tail ? ` ${tail}` : ""} Send a message to resume.`, code === 0 ? "info" : "error");
+            cur.busy = false;
+          }
           set({ running, transcripts: bump(st.transcripts, sessionId) });
+          if (expired) get().syncBadge();
         } else set({ running });
+      });
+      await api.on("agent://fs", ({ sessionId, toolUseId, existed }) => {
+        const st = get();
+        const cur = st.transcripts[sessionId];
+        if (cur && applyFs(cur, toolUseId, !!existed)) set({ transcripts: bump(st.transcripts, sessionId) });
+      });
+      await api.on("agent://control_error", ({ sessionId, error }) => {
+        const cur = get().transcripts[sessionId];
+        const msg = typeof error === "string" ? error : JSON.stringify(error);
+        if (cur) { addNotice(cur, `Claude Code rejected a control request: ${msg}`, "error"); set({ transcripts: bump(get().transcripts, sessionId) }); }
+        else get().showToast(`Claude Code rejected a control request: ${msg}`);
       });
       await api.on("agent://stderr", ({ sessionId, line }) => {
         const cur = get().transcripts[sessionId];
@@ -225,9 +265,11 @@ export const useStore = create<Store>((set, get) => ({
     const [sessions, devInfo] = await Promise.all([api.sessionsList(id), api.devStatus(id)]);
     set({ sessions: { ...get().sessions, [id]: sessions } });
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
+    if (get().currentSiteId !== id) return; // the user moved on while we were loading
     void get().refreshGit(id);
     const last = site.lastSessionId && sessions.find((s) => s.id === site.lastSessionId) ? site.lastSessionId : sessions[0]?.id;
-    if (last) await get().openSession(last); else get().newSession();
+    if (last) await get().openSession(last, id); else get().newSession();
+    if (get().currentSiteId !== id) return;
     if (!devInfo || devInfo.status === "stopped" || devInfo.status === "error") {
       if (site.dev && !site.needsInstall) void get().startDev(id);
     }
@@ -245,6 +287,15 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async removeSite(id) {
+    const st = get();
+    const ids = new Set((st.sessions[id] ?? []).map((x) => x.id));
+    for (const sid of Object.keys(st.running)) if (ids.has(sid)) await api.agentStop(sid).catch(() => {});
+    const transcripts = { ...st.transcripts };
+    for (const sid of ids) delete transcripts[sid];
+    const running = { ...st.running };
+    for (const sid of ids) delete running[sid];
+    set({ transcripts, running });
+    get().syncBadge();
     await api.devStop(id).catch(() => {});
     await api.siteRemove(id);
     const sites = get().sites.filter((s) => s.id !== id);
@@ -285,14 +336,15 @@ export const useStore = create<Store>((set, get) => ({
     set({ currentSessionId: DRAFT, transcripts: { ...t, [DRAFT]: emptySession() }, selection: null, picking: false });
   },
 
-  async openSession(id) {
+  async openSession(id, forSiteId) {
+    const siteId = forSiteId ?? get().currentSiteId;
+    if (!siteId || get().currentSiteId !== siteId) return;
     set({ currentSessionId: id, selection: null, picking: false });
-    const siteId = get().currentSiteId;
-    if (!siteId) return;
     void api.siteSetLastSession(siteId, id);
     if (get().transcripts[id]?.loaded) return;
     try {
       const lines = await api.sessionTranscript(siteId, id);
+      if (get().currentSiteId !== siteId) return;
       const st = get().transcripts[id] ?? emptySession();
       if (st.items.length === 0) for (const l of lines) applyMessage(st, l);
       st.loaded = true;
@@ -309,10 +361,12 @@ export const useStore = create<Store>((set, get) => ({
   async send(text) {
     const st = get();
     const siteId = st.currentSiteId;
-    if (!siteId || !text.trim()) return;
+    if (!siteId || !text.trim() || sending) return;
+    sending = true;
     let sessionId = st.currentSessionId ?? DRAFT;
     const selection = st.selection;
     const attachments = st.attachments;
+    set({ selection: null, attachments: [], picking: false });
     try {
       if (sessionId === DRAFT) {
         const id = await api.agentStart(siteId, null);
@@ -330,7 +384,7 @@ export const useStore = create<Store>((set, get) => ({
       const cur = get().transcripts[sessionId] ?? emptySession();
       addUser(cur, text.trim(), selection, attachments);
       get().transcripts[sessionId] = cur;
-      set({ transcripts: bump(get().transcripts, sessionId), selection: null, attachments: [], picking: false });
+      set({ transcripts: bump(get().transcripts, sessionId) });
       await api.agentSend(sessionId, text.trim(), selection, attachments);
       const list = (get().sessions[siteId] ?? []).map((s) => (s.id === sessionId ? { ...s, lastModified: now(), messageCount: s.messageCount + 1 } : s));
       set({ sessions: { ...get().sessions, [siteId]: list } });
@@ -339,7 +393,9 @@ export const useStore = create<Store>((set, get) => ({
       addNotice(cur, String(e), "error");
       cur.busy = false;
       get().transcripts[sessionId] = cur;
-      set({ transcripts: bump(get().transcripts, sessionId) });
+      set({ transcripts: bump(get().transcripts, sessionId), selection, attachments });
+    } finally {
+      sending = false;
     }
   },
 
@@ -365,7 +421,9 @@ export const useStore = create<Store>((set, get) => ({
   async startDev(siteId) {
     try {
       const info = await api.devStart(siteId);
-      set({ dev: { ...get().dev, [siteId]: info } });
+      const newer = get().dev[siteId];
+      // a status event for this very server may have arrived before the reply; keep it
+      if (!(newer && newer.port === info.port && newer.status !== "starting")) set({ dev: { ...get().dev, [siteId]: info } });
     } catch (e) {
       set({ dev: { ...get().dev, [siteId]: { siteId, port: 0, url: "", status: "error", command: "" } }, devLogs: { ...get().devLogs, [siteId]: [String(e)] } });
     }
@@ -387,12 +445,15 @@ export const useStore = create<Store>((set, get) => ({
     if (!siteId || !cur) return;
     const item = cur.items.find((i) => i.kind === "result" && i.id === resultId);
     if (!item || item.kind !== "result" || item.files.length === 0) return;
+    if (!get().git[siteId]?.isGit) { get().showToast("Undo needs git in this folder. Initialise it from the preview pane first."); return; }
     if (item.at <= get().committedAt) { get().showToast("That turn was committed since; undo it with git instead."); return; }
     try {
-      const restored = await api.siteUndoFiles(siteId, item.files);
+      const r = await api.siteUndoFiles(siteId, item.files, item.created);
       markUndone(cur, resultId);
       set({ transcripts: bump(get().transcripts, sessionId) });
-      get().showToast(`Restored ${restored.length} file${restored.length === 1 ? "" : "s"}`);
+      const n = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+      const parts = [r.restored.length && `restored ${n(r.restored.length, "file")}`, r.deleted.length && `removed ${n(r.deleted.length, "new file")}`, r.skipped.length && `left ${n(r.skipped.length, "untracked file")} as is`].filter(Boolean);
+      get().showToast(parts.length ? parts.join(", ").replace(/^./, (c) => c.toUpperCase()) : "Nothing to restore");
       void get().refreshGit(siteId);
     } catch (e) { get().showToast(String(e)); }
   },
@@ -438,6 +499,43 @@ export const useStore = create<Store>((set, get) => ({
       if (which === "finder") get().showToast("No code editor found on your PATH (code, cursor, zed); opened the folder instead.");
     } catch (e) { get().showToast(String(e)); }
   },
+  async renameSite(siteId, name) {
+    try {
+      const site = await api.siteRename(siteId, name);
+      set({ sites: get().sites.map((s) => (s.id === siteId ? site : s)) });
+    } catch (e) { get().showToast(String(e)); }
+  },
+  async openRules() {
+    const siteId = get().currentSiteId;
+    if (!siteId) return;
+    set({ rules: { open: true, loading: true, saving: false, text: "", error: null } });
+    try {
+      const text = await api.siteReadText(siteId, "CLAUDE.md");
+      set({ rules: { ...get().rules, loading: false, text: text || RULES_TEMPLATE } });
+    } catch (e) { set({ rules: { ...get().rules, loading: false, error: String(e) } }); }
+  },
+  closeRules() { set({ rules: { ...get().rules, open: false } }); },
+  async saveRules(text) {
+    const siteId = get().currentSiteId;
+    if (!siteId) return;
+    set({ rules: { ...get().rules, saving: true, error: null } });
+    try {
+      await api.siteWriteText(siteId, "CLAUDE.md", text);
+      set({ rules: { ...get().rules, open: false, saving: false, text } });
+      get().showToast("Site rules saved. New sessions pick them up; a running session sees them on its next turn.");
+      void get().refreshGit(siteId);
+    } catch (e) { set({ rules: { ...get().rules, saving: false, error: String(e) } }); }
+  },
+  async setSessionMode(mode) {
+    const id = get().currentSessionId;
+    if (!id || id === DRAFT) return;
+    const cur = get().transcripts[id];
+    if (!get().running[id]) { get().showToast("Start the session first; the mode for new sessions is in Settings."); return; }
+    try {
+      await api.agentSetMode(id, mode);
+      if (cur) { cur.mode = mode; set({ transcripts: bump(get().transcripts, id) }); }
+    } catch (e) { get().showToast(String(e)); }
+  },
   setPreviewRect(r) { set({ previewRect: r }); },
   async capturePreview() {
     const st = get();
@@ -473,19 +571,28 @@ export const useStore = create<Store>((set, get) => ({
     const log: string[] = [];
     set({ publish: { open: true, running: true, log, url: null, error: null, cancelled: false, target, step: opts.commit ? "commit" : "deploy" } });
     const push = (line: string) => set({ publish: { ...get().publish, log: [...get().publish.log, line] } });
+    const stopIfCancelled = () => {
+      if (!get().publish.cancelled) return false;
+      push("Stopped before deploying.");
+      set({ publish: { ...get().publish, running: false, step: "" } });
+      return true;
+    };
     try {
       if (opts.commit) {
         push(`$ git commit -m ${JSON.stringify(opts.message.trim() || "Update site")}`);
         const g = await api.siteGitCommit(siteId, opts.message.trim() || "Update site");
         set({ git: { ...get().git, [siteId]: g }, committedAt: Date.now() });
         push("Committed.");
+        if (stopIfCancelled()) return;
       }
       if (opts.push) {
         set({ publish: { ...get().publish, step: "push" } });
         push("$ git push -u origin HEAD");
         const out = await api.siteGitPush(siteId);
         if (out) push(out);
+        if (stopIfCancelled()) return;
       }
+      if (stopIfCancelled()) return;
       set({ publish: { ...get().publish, step: "deploy" } });
       push(`$ ${cmd}`);
       const r = await api.publishRun(siteId, target);
@@ -500,6 +607,7 @@ export const useStore = create<Store>((set, get) => ({
     const siteId = get().currentSiteId;
     if (!siteId || !get().publish.running) return;
     set({ publish: { ...get().publish, cancelled: true } });
+    // commit/push finish on their own and the flow stops before deploying; a running deploy is killed
     if (get().publish.step === "deploy") {
       try { await api.publishCancel(siteId); } catch (e) { get().showToast(String(e)); }
     }

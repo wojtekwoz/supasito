@@ -61,11 +61,15 @@ export type ClaudeStatus = { ok: boolean; path?: string; version?: string };
 export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
 
+export type RestoreReport = { restored: string[]; deleted: string[]; skipped: string[] };
+
 export type EventName =
   | "agent://message"
   | "agent://permission"
   | "agent://exit"
   | "agent://stderr"
+  | "agent://fs"
+  | "agent://control_error"
   | "dev://status"
   | "dev://log"
   | "publish://log"

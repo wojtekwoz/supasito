@@ -31,12 +31,15 @@ Add `--bundles dmg` from an interactive terminal session if you want a disk imag
 - **Sessions are Claude Code sessions.** Open drives your `claude` binary over its stream-json protocol, so your login, skills, MCP servers and CLAUDE.md all apply. Transcripts stay in `~/.claude/projects`, where `claude --resume` also finds them.
 - **The preview is an iframe** of the dev server. A small script injected into every frame powers the element picker; a selection carries the element's tag, classes, text, computed styles and, when the framework exposes it, its source file and React component chain.
 - **Publish runs one command** and shows you the URL. The pending-change count is `git status`.
-- **Undo a turn** puts the files that turn wrote back to their committed state (and deletes files it created). Git is the history; there is no separate undo stack.
+- **Undo a turn** puts the files that turn wrote back to their committed state and removes files the turn created; other untracked files are left alone. Needs git in the folder. Git is the history; there is no separate undo stack.
 - **Images:** paste or drop a screenshot into the composer and Claude receives it with your message ("make it look like this").
 - **Queueing:** you can keep typing while Claude works; Enter queues the message and it is sent when the current turn ends. Escape stops the current turn.
 - **Publish** offers two targets: **Preview** (a shareable test link; the live site doesn't change) and **Production**. Each is one command in `open.json` (`preview`, `publish`), with presets for Vercel, Cloudflare, Netlify and git push. The dialog can commit the pending changes first (message prefilled from your last request) and push to `origin`, so publishing doubles as a backup. A running publish can be cancelled.
 - **What changed:** "N files changed" on a turn's completion line opens the diff for that turn.
 - **Show Claude the preview:** the camera button in the preview toolbar attaches a screenshot of the preview pane to your next message. It uses the webview's own snapshot, so there is no permission prompt.
+- **Site rules:** the book icon on the current site opens its `CLAUDE.md` (voice, brand, what not to touch) in a dialog. Double-click a site to rename it.
+- **Slash commands:** type `/` in the composer to pick from the skills and commands your Claude Code reports for the session.
+- **Permission mode per session:** the session header switches a running session between "Ask before commands", "Don't ask this session", "Plan first" and "Ask about everything".
 - **One dev server at a time:** switching sites stops the previous site's dev server unless one of its sessions is still working.
 - **Getting called back:** the Dock badge shows how many approvals are waiting, and the Dock icon bounces when Claude needs you or finishes while Open is in the background.
 - **Model:** Settings offers your Claude Code default, Sonnet, Opus, Haiku, or a custom model name. It applies to sessions started after saving; the chip in the session header shows the model in use.

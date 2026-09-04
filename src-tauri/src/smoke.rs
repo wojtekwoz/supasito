@@ -7,7 +7,7 @@
 //! - OPEN_SMOKE_SITE       pick the registered site whose name or path contains this
 //! - OPEN_SMOKE_SITE_PATH  use this folder as the site (registered in memory only, never saved)
 //! - OPEN_SMOKE_MODEL      model alias for the run (e.g. haiku)
-//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing
+//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode
 //!
 //! Permission prompts are auto-allowed. Everything is printed to stderr with a [smoke] prefix.
 
@@ -180,6 +180,23 @@ pub async fn run(app: AppHandle, prompt: String) {
             let r2 = wait_result(&mut rx, 60).await;
             eprintln!("[smoke] follow-up result: {}", r2.as_ref().map(|r| r["result"].to_string()).unwrap_or("none".into()));
             eprintln!("[smoke] INTERRUPT {}", if r1.is_some() && r2.is_some() { "OK: turn ended on interrupt and the session kept working" } else { "FAILED" });
+        }
+        "mode" => {
+            eprintln!("[smoke] scenario mode: switch the running session to bypassPermissions, then ask for a Bash command");
+            let _ = send("Reply with the single word READY and nothing else.", None).await;
+            let _ = wait_result(&mut rx, 60).await;
+            let _ = h.set_permission_mode("bypassPermissions").await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let permission_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            {
+                let seen = permission_seen.clone();
+                app.listen_any("agent://permission", move |_| { seen.store(true, std::sync::atomic::Ordering::SeqCst); });
+            }
+            let _ = send("Use the Bash tool to run exactly: echo open-mode-check. Then reply with its output.", None).await;
+            let r = wait_result(&mut rx, 90).await;
+            let seen = permission_seen.load(std::sync::atomic::Ordering::SeqCst);
+            eprintln!("[smoke] result: {} · permission prompt seen: {seen}", r.as_ref().map(|r| r["result"].to_string()).unwrap_or("none".into()));
+            eprintln!("[smoke] MODE {}", if r.is_some() && !seen { "OK: bypassPermissions applied mid-session (no prompt)" } else { "FAILED or prompt still shown" });
         }
         "pointing" => {
             eprintln!("[smoke] scenario pointing: message with an attached selection (the starter's hero h1)");

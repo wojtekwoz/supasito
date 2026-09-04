@@ -104,7 +104,7 @@ export function PublishDialog() {
               <div className="opts">
                 <label className={canCommit ? "" : "muted"}><input type="checkbox" disabled={!canCommit} checked={canCommit && commit} onChange={(e) => setCommit(e.target.checked)} /> {canCommit ? `Commit ${changed} changed file${changed === 1 ? "" : "s"} first` : "Nothing to commit"}</label>
                 {canCommit && commit && <input className="text-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Commit message" />}
-                <label className={canPush ? "" : "muted"} title={git.remote ?? "No origin remote configured"}><input type="checkbox" disabled={!canPush} checked={canPush && push} onChange={(e) => setPush(e.target.checked)} /> {canPush ? `Push to origin (${git.remote?.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")})` : "Push to origin (no remote yet)"}</label>
+                <label className={canPush && (commit || !canCommit) ? "" : "muted"} title={!canPush ? "No origin remote configured" : canCommit && !commit ? "Tick commit first: only committed changes can be pushed" : git.remote ?? ""}><input type="checkbox" disabled={!canPush || (canCommit && !commit)} checked={canPush && push && (commit || !canCommit)} onChange={(e) => setPush(e.target.checked)} /> {canPush ? `Push to origin (${git.remote?.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")})${canCommit && !commit ? " · needs the commit" : ""}` : "Push to origin (no remote yet)"}</label>
               </div>
             )}
             <div className="foot">
@@ -119,7 +119,7 @@ export function PublishDialog() {
             <div className="log">{p.log.join("\n")}</div>
             <div className="foot">
               <span className="spinner" style={{ marginRight: "auto", alignSelf: "center" }} />
-              <button className="btn" disabled={p.cancelled} onClick={() => void cancelPublish()}>{p.cancelled ? "Cancelling…" : "Cancel"}</button>
+              <button className="btn" disabled={p.cancelled && p.step !== "deploy"} onClick={() => void cancelPublish()}>{p.cancelled ? (p.step === "deploy" ? "Cancel again" : "Stopping after this step…") : "Cancel"}</button>
             </div>
           </>
         )}
@@ -136,6 +136,33 @@ export function PublishDialog() {
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+export function RulesDialog() {
+  const r = useStore((s) => s.rules);
+  const closeRules = useStore((s) => s.closeRules);
+  const saveRules = useStore((s) => s.saveRules);
+  const site = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId) ?? null);
+  const [text, setText] = useState("");
+  useEffect(() => { if (r.open && !r.loading) setText(r.text); }, [r.open, r.loading, r.text]);
+  if (!r.open) return null;
+  const dirty = text !== r.text;
+  return (
+    <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !r.saving) closeRules(); }}>
+      <div className="modal wide">
+        <h2>Site rules · {site?.name}</h2>
+        <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 12.5 }}>This is the site's <code>CLAUDE.md</code>. Claude reads it before every change: voice, brand, what not to touch. Plain text, Markdown headings help.</p>
+        {r.loading ? <div className="log">Loading…</div> : (
+          <textarea className="rules" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); void saveRules(text); } }} />
+        )}
+        {r.error && <div className="err">{r.error}</div>}
+        <div className="foot">
+          <button className="btn ghost" disabled={r.saving} onClick={closeRules}>Cancel</button>
+          <button className="btn primary" disabled={r.saving || r.loading || !dirty} onClick={() => void saveRules(text)}>{r.saving ? "Saving…" : "Save"}</button>
+        </div>
       </div>
     </div>
   );

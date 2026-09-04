@@ -1,5 +1,5 @@
 import type {
-  Attachment, ClaudeStatus, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, Selection, SessionInfo, Settings, Site,
+  Attachment, ClaudeStatus, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, Settings, Site,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -16,7 +16,7 @@ export interface Backend {
   siteInstall(siteId: string): Promise<Site>;
   siteGitStatus(siteId: string): Promise<GitStatus>;
   siteGitInit(siteId: string): Promise<void>;
-  siteUndoFiles(siteId: string, files: string[]): Promise<string[]>;
+  siteUndoFiles(siteId: string, files: string[], created: string[]): Promise<RestoreReport>;
   previewEvent(kind: string, detail: string): Promise<void>;
   siteSetLastSession(siteId: string, sessionId: string | null): Promise<void>;
   siteNew(parent: string, name: string): Promise<Site>;
@@ -31,6 +31,10 @@ export interface Backend {
   setBadge(count: number): Promise<void>;
   previewCapture(rect: { x: number; y: number; w: number; h: number }, scale: number): Promise<{ mediaType: string; data: string; bytes: number }>;
   siteOpenEditor(siteId: string): Promise<string>;
+  siteReadText(siteId: string, rel: string): Promise<string>;
+  siteWriteText(siteId: string, rel: string, content: string): Promise<void>;
+  siteRename(siteId: string, name: string): Promise<Site>;
+  agentSetMode(sessionId: string, mode: string): Promise<void>;
   requestAttention(): Promise<void>;
   publishCancel(siteId: string): Promise<void>;
   agentStart(siteId: string, resume: string | null): Promise<string>;
@@ -65,7 +69,7 @@ async function tauriBackend(): Promise<Backend> {
     siteInstall: (siteId) => invoke("site_install", { siteId }),
     siteGitStatus: (siteId) => invoke("site_git_status", { siteId }),
     siteGitInit: (siteId) => invoke("site_git_init", { siteId }),
-    siteUndoFiles: (siteId, files) => invoke("site_undo_files", { siteId, files }),
+    siteUndoFiles: (siteId, files, created) => invoke("site_undo_files", { siteId, files, created }),
     previewEvent: (kind, detail) => invoke("preview_event", { kind, detail }),
     siteSetLastSession: (siteId, sessionId) => invoke("site_set_last_session", { siteId, sessionId }),
     siteNew: (parent, name) => invoke("site_new", { parent, name }),
@@ -80,6 +84,10 @@ async function tauriBackend(): Promise<Backend> {
     setBadge: (count) => invoke("set_badge", { count }),
     previewCapture: (rect, scale) => invoke("preview_capture", { x: rect.x, y: rect.y, w: rect.w, h: rect.h, scale }),
     siteOpenEditor: (siteId) => invoke("site_open_editor", { siteId }),
+    siteReadText: (siteId, rel) => invoke("site_read_text", { siteId, rel }),
+    siteWriteText: (siteId, rel, content) => invoke("site_write_text", { siteId, rel, content }),
+    siteRename: (siteId, name) => invoke("site_rename", { siteId, name }),
+    agentSetMode: (sessionId, mode) => invoke("agent_set_mode", { sessionId, mode }),
     requestAttention: () => invoke("request_attention"),
     publishCancel: (siteId) => invoke("publish_cancel", { siteId }),
     agentStart: (siteId, resume) => invoke("agent_start", { siteId, resume }),

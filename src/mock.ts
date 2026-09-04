@@ -28,6 +28,7 @@ export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title
 const running = new Set<string>();
 let mockPublishCancelled = false;
 let mockChanged = 5;
+let mockRules = "# This site\n\n## Brand\n- Voice: plain, confident, short sentences.\n- Type: display serif for headlines.\n";
 (window as any).__openMockDoc = demoHtml;
 
 async function fakeTurn(sessionId: string, text: string) {
@@ -42,7 +43,7 @@ async function fakeTurn(sessionId: string, text: string) {
     emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, role: "assistant", content: [{ type: "text", text: s }] }, parent_tool_use_id: null } });
   };
   await wait(300);
-  emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: "claude-sonnet-5", cwd: site.path, session_id: sessionId, tools: [] } });
+  emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: "claude-sonnet-5", cwd: site.path, session_id: sessionId, tools: [], permissionMode: "acceptEdits", slash_commands: ["compact", "cost", "review", "impeccable", "web-typography", "cro-methodology"] } });
   await say("Checking the hero section first — the headline lives in components/hero.tsx.");
   const t1 = "toolu_1" + Math.random().toString(36).slice(2);
   emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m2", role: "assistant", content: [{ type: "tool_use", id: t1, name: "Read", input: { file_path: site.path + "/components/hero.tsx" } }] }, parent_tool_use_id: null } });
@@ -86,9 +87,13 @@ export function mockBackend(): Backend {
       return { mediaType: "image/png", data, bytes: data.length };
     },
     siteOpenEditor: async () => "code",
+    siteReadText: async (_siteId, rel) => (rel === "CLAUDE.md" ? mockRules : ""),
+    siteWriteText: async (_siteId, rel, content) => { if (rel === "CLAUDE.md") mockRules = content; },
+    siteRename: async (_siteId, name) => { site.name = name; return { ...site }; },
+    agentSetMode: async (_sessionId, mode) => { console.debug("[mode]", mode); },
     requestAttention: async () => { console.debug("[attention]"); },
     siteGitInit: async () => {},
-    siteUndoFiles: async (_siteId, files) => files.map((f) => f.replace(site.path + "/", "")),
+    siteUndoFiles: async (_siteId, files, created) => ({ restored: files.filter((f) => !created.includes(f)).map((f) => f.replace(site.path + "/", "")), deleted: created.map((f) => f.replace(site.path + "/", "")), skipped: [] }),
     previewEvent: async (kind, detail) => { console.debug("[preview]", kind, detail); },
     siteSetLastSession: async () => {},
     siteNew: async (parent, name) => ({ ...site, id: "site-new", path: parent + "/" + name, name, lastSessionId: null }),

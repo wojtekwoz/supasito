@@ -6,9 +6,9 @@ export type ToolStatus = "running" | "done" | "error";
 export type Item =
   | { kind: "user"; id: string; text: string; selection?: Selection | null; selectionSummary?: string | null; images?: { mediaType: string; data: string }[]; queued?: boolean }
   | { kind: "assistant"; id: string; text: string; thinking: string; streaming: boolean; parentToolUseId: string | null }
-  | { kind: "tool"; id: string; name: string; input: any; label: string; result: string | null; status: ToolStatus; parentToolUseId: string | null }
-  | { kind: "permission"; id: string; request: PermissionRequest["request"]; status: "pending" | "allowed" | "denied" }
-  | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; undone: boolean; at: number }
+  | { kind: "tool"; id: string; name: string; input: any; label: string; result: string | null; status: ToolStatus; parentToolUseId: string | null; created?: boolean }
+  | { kind: "permission"; id: string; request: PermissionRequest["request"]; status: "pending" | "allowed" | "denied" | "expired" }
+  | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; created: string[]; undone: boolean; at: number }
   | { kind: "notice"; id: string; text: string; tone: "info" | "error" };
 
 export type SessionState = {
@@ -23,9 +23,13 @@ export type SessionState = {
   lastWrite: { file: string; seq: number } | null;
   /** Highest utilisation reported by the CLI's rate_limit_event, when it reports one. */
   usage: { utilization: number; resetsAt: number | null; window: string } | null;
+  /** Slash commands and skills the CLI reported at init, for composer autocomplete. */
+  commands: string[];
+  /** Permission mode the session runs with (acceptEdits, bypassPermissions, plan, default). */
+  mode: string | null;
 };
 
-export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null });
+export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null });
 
 const RESULT_ERRORS: Record<string, string> = {
   error_max_turns: "Stopped: the turn limit was reached.",
@@ -100,7 +104,13 @@ export function applyMessage(state: SessionState, msg: any): boolean {
   const parent: string | null = msg.parent_tool_use_id ?? null;
   switch (msg.type) {
     case "system": {
-      if (msg.subtype === "init") { state.model = msg.model ?? state.model; return true; }
+      if (msg.subtype === "init") {
+        state.model = msg.model ?? state.model;
+        if (typeof msg.permissionMode === "string") state.mode = msg.permissionMode;
+        const cmds = new Set<string>([...(Array.isArray(msg.slash_commands) ? msg.slash_commands : []), ...(Array.isArray(msg.skills) ? msg.skills : [])].filter((c) => typeof c === "string"));
+        state.commands = [...cmds].sort();
+        return true;
+      }
       return false;
     }
     case "stream_event": {
@@ -110,8 +120,6 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         const id = ev.message?.id || uid("m");
         if (!findAssistant(items, id)) items.push({ kind: "assistant", id, text: "", thinking: "", streaming: true, parentToolUseId: parent });
         state.busy = true;
-        const q = items.findIndex((it) => it.kind === "user" && it.queued);
-        if (q >= 0) items[q] = { ...(items[q] as Extract<Item, { kind: "user" }>), queued: false };
         return true;
       }
       if (ev.type === "content_block_delta") {
@@ -203,13 +211,19 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         if (it.kind === "assistant" && it.streaming) items[k] = { ...it, streaming: false };
         if (it.kind === "tool" && it.status === "running") items[k] = { ...it, status: "done" };
       }
-      state.busy = false;
       const subtype = typeof msg.subtype === "string" ? msg.subtype : "success";
       const failed = !!msg.is_error || subtype !== "success";
       const stopped = failed && state.interrupting;
       state.interrupting = false;
       const text = stopped ? "Stopped" : failed ? (typeof msg.result === "string" && msg.result ? msg.result : RESULT_ERRORS[subtype] ?? "The turn ended with an error.") : "";
-      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: filesTouchedInTurn(items), undone: false, at: Date.now() });
+      const touched = filesTouchedInTurn(items);
+      // a queued message is next in line; an approval that was never answered is now moot
+      const q = items.findIndex((it) => it.kind === "user" && it.queued);
+      if (q >= 0) { items[q] = { ...(items[q] as Extract<Item, { kind: "user" }>), queued: false }; state.busy = true; }
+      expirePermissions(state);
+      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: touched.files, created: touched.created, undone: false, at: Date.now() });
+      if (q >= 0) return true;
+      state.busy = false;
       return true;
     }
     default:
@@ -217,17 +231,36 @@ export function applyMessage(state: SessionState, msg: any): boolean {
   }
 }
 
-/** Files written by Edit/Write tools since the last user message (the turn that just ended). */
-export function filesTouchedInTurn(items: Item[]): string[] {
+/** Files written by Edit/Write tools in the turn that just ended (since the last user message that
+ *  actually started a turn; queued messages are skipped). `created` lists files a Write created. */
+export function filesTouchedInTurn(items: Item[]): { files: string[]; created: string[] } {
   const files: string[] = [];
+  const created: string[] = [];
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
-    if (it.kind === "user") break;
+    if (it.kind === "user") { if (it.queued) continue; break; }
     if (it.kind !== "tool" || it.status === "error") continue;
     const f = ["Edit", "MultiEdit", "Write"].includes(it.name) ? it.input?.file_path : it.name === "NotebookEdit" ? it.input?.notebook_path : null;
-    if (typeof f === "string" && f && !files.includes(f)) files.unshift(f);
+    if (typeof f !== "string" || !f) continue;
+    if (!files.includes(f)) files.unshift(f);
+    if (it.name === "Write" && it.created && !created.includes(f)) created.push(f);
   }
-  return files;
+  return { files, created };
+}
+
+/** Record whether a Write tool call created its file (reported by Rust before the tool ran). */
+export function applyFs(state: SessionState, toolUseId: string, existed: boolean) {
+  return patch(state.items, (it) => it.id === toolUseId, "tool", { created: !existed });
+}
+
+/** Approvals nobody answered before the turn ended or the process left are moot. */
+export function expirePermissions(state: SessionState): number {
+  let n = 0;
+  for (let k = 0; k < state.items.length; k++) {
+    const it = state.items[k];
+    if (it.kind === "permission" && it.status === "pending") { state.items[k] = { ...it, status: "expired" }; n++; }
+  }
+  return n;
 }
 
 export function addPermission(state: SessionState, req: PermissionRequest) {

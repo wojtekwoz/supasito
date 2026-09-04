@@ -28,3 +28,4 @@ export const Sparkle = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d
 export const Trash = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.6 8.5h5.8l.6-8.5" /></svg>;
 export const Camera = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h1.8l1-1.5h3.4l1 1.5h1.8A1.5 1.5 0 0 1 14 5.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /><circle cx="8" cy="8.5" r="2.4" /></svg>;
 export const Code = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9.5 2.5l-3 11" /></svg>;
+export const Book = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2.5 3.5A1.5 1.5 0 0 1 4 2h3.5v11.5H4a1.5 1.5 0 0 0-1.5 1.5zM13.5 3.5A1.5 1.5 0 0 0 12 2H8.5v11.5H12a1.5 1.5 0 0 1 1.5 1.5z" /></svg>;

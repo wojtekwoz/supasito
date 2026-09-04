@@ -185,10 +185,20 @@ impl Registry {
             tauri::async_runtime::spawn(async move {
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
                 loop {
-                    if tokio::time::Instant::now() > deadline { break; }
-                    // exited?
+                    if tokio::time::Instant::now() > deadline {
+                        let mut r = running.lock().await;
+                        if r.info.status == "starting" {
+                            let port = r.info.port;
+                            r.info.status = "error".into();
+                            r.log.push(format!("Open waited 90s but nothing answered on port {port}. Is this the right dev command?"));
+                            let _ = app.emit("dev://status", &r.info);
+                        }
+                        break;
+                    }
+                    // exited or stopped?
                     {
                         let mut r = running.lock().await;
+                        if r.child.is_none() { return; }
                         if let Some(child) = r.child.as_mut() {
                             if let Ok(Some(status)) = child.try_wait() {
                                 r.info.status = "error".into();

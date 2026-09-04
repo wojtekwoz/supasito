@@ -14,6 +14,7 @@ export function SessionPane() {
   const sessions = useSessionsOfCurrentSite();
   const claude = useStore((s) => s.claude);
   const interrupt = useStore((s) => s.interrupt);
+  const running = useStore((s) => (s.currentSessionId ? !!s.running[s.currentSessionId] : false));
   const title = currentSessionId === DRAFT ? "New session" : sessions.find((s) => s.id === currentSessionId)?.title ?? "Session";
 
   if (!site) return <Welcome />;
@@ -28,6 +29,7 @@ export function SessionPane() {
           </span>
         )}
         {session?.model && <span className="chip" title="Model">{session.model.replace(/^claude-/, "")}</span>}
+        {currentSessionId && currentSessionId !== DRAFT && running && <ModeSelect mode={session?.mode ?? null} />}
         {session?.busy && <button className="btn sm ghost" onClick={() => void interrupt()} title="Interrupt (Esc)"><Stop /> Stop</button>}
       </div>
       {claude && !claude.ok
@@ -35,6 +37,23 @@ export function SessionPane() {
         : <Transcript items={session?.items ?? []} busy={!!session?.busy} root={site.path} sessionId={currentSessionId} />}
       <Composer />
     </section>
+  );
+}
+
+const MODES: { value: string; label: string; hint: string }[] = [
+  { value: "acceptEdits", label: "Ask before commands", hint: "Edits files freely; asks before running commands" },
+  { value: "bypassPermissions", label: "Don't ask this session", hint: "Runs everything without asking. Use on sites you can restore." },
+  { value: "plan", label: "Plan first", hint: "Explores and proposes a plan before changing anything" },
+  { value: "default", label: "Ask about everything", hint: "Asks before edits and commands" },
+];
+
+function ModeSelect({ mode }: { mode: string | null }) {
+  const setSessionMode = useStore((s) => s.setSessionMode);
+  const current = MODES.find((m) => m.value === mode) ?? MODES[0];
+  return (
+    <select className="chip select" value={current.value} title={current.hint} onChange={(e) => void setSessionMode(e.target.value)}>
+      {MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+    </select>
   );
 }
 
@@ -161,9 +180,10 @@ function TurnEnd({ item, sessionId }: { item: Extract<Item, { kind: "result" }>;
   const undoTurn = useStore((s) => s.undoTurn);
   const openDiff = useStore((s) => s.openDiff);
   const committedAt = useStore((s) => s.committedAt);
+  const isGit = useStore((s) => (s.currentSiteId ? !!s.git[s.currentSiteId]?.isGit : false));
   const root = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId)?.path ?? "");
   const n = item.files.length;
-  const canUndo = n > 0 && !item.undone && item.at > committedAt;
+  const canUndo = isGit && n > 0 && !item.undone && item.at > committedAt;
   const label = item.isError
     ? item.text
     : [item.stopped ? "Stopped" : "Done", item.durationMs != null && fmtDuration(item.durationMs), item.costUsd != null && item.costUsd > 0 && `$${item.costUsd.toFixed(3)}`].filter(Boolean).join(" · ");
@@ -270,6 +290,11 @@ function Composer() {
   const busy = !!session?.busy;
   const canPick = dev?.status === "ready";
   const canSend = (text.trim().length > 0 || attachments.length > 0) && claudeOk;
+  const [cmdIndex, setCmdIndex] = useState(0);
+  const slashMatch = /^\/([\w:-]*)$/.exec(text);
+  const commands = session?.commands ?? [];
+  const suggestions = slashMatch ? commands.filter((c) => c.toLowerCase().startsWith(slashMatch[1].toLowerCase())).slice(0, 8) : [];
+  const pickCommand = (c: string) => { setText(`/${c} `); setCmdIndex(0); ref.current?.focus(); };
 
   useEffect(() => {
     const el = ref.current;
@@ -317,10 +342,24 @@ function Composer() {
           onChange={(e) => setText(e.target.value)}
           onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); onFiles(files); } }}
           onKeyDown={(e) => {
+            if (suggestions.length > 0) {
+              if (e.key === "ArrowDown") { e.preventDefault(); setCmdIndex((i) => (i + 1) % suggestions.length); return; }
+              if (e.key === "ArrowUp") { e.preventDefault(); setCmdIndex((i) => (i - 1 + suggestions.length) % suggestions.length); return; }
+              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); pickCommand(suggestions[Math.min(cmdIndex, suggestions.length - 1)]); return; }
+              if (e.key === "Escape") { e.preventDefault(); setText(""); return; }
+            }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
           }}
           rows={1}
         />
+        {suggestions.length > 0 && (
+          <div className="suggest" role="listbox">
+            {suggestions.map((c, i) => (
+              <button key={c} role="option" aria-selected={i === cmdIndex} className={cx("suggest-item", i === cmdIndex && "on")} onMouseDown={(e) => { e.preventDefault(); pickCommand(c); }}>/{c}</button>
+            ))}
+            <div className="suggest-hint">Skills and commands from your Claude Code · Tab to insert</div>
+          </div>
+        )}
         <div className="bar">
           <button className={cx("icon-btn", picking && "on")} disabled={!canPick} title={canPick ? "Pick an element in the preview (⌘⇧E)" : "Preview must be running to pick"} onClick={() => setPicking(!picking)}><Crosshair /></button>
           <span className="hint">{dragging ? "Drop the image to attach it" : picking ? "Click an element in the preview · Esc to cancel" : busy ? "Claude is working · Enter queues your message · Esc to stop" : "Enter to send · Shift+Enter for a new line · paste or drop an image"}</span>

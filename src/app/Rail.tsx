@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { DRAFT, useSessionsOfCurrentSite, useStore } from "./store";
 import { ago, cx } from "../util";
-import { Code, Folder, Gear, Plus, Sparkle, Trash } from "../ui/Icons";
+import { Book, Code, Folder, Gear, Plus, Sparkle, Trash } from "../ui/Icons";
 
 const SESSION_CAP = 12;
 
@@ -14,7 +14,10 @@ export function Rail() {
   const removeSite = useStore((s) => s.removeSite);
   const revealSite = useStore((s) => s.revealSite);
   const openSiteInEditor = useStore((s) => s.openSiteInEditor);
+  const renameSite = useStore((s) => s.renameSite);
+  const openRules = useStore((s) => s.openRules);
   const [showAll, setShowAll] = useState(false);
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const sessions = useSessionsOfCurrentSite();
   const currentSessionId = useStore((s) => s.currentSessionId);
   const openSession = useStore((s) => s.openSession);
@@ -41,8 +44,19 @@ export function Rail() {
           <div className="list">
             {sites.length === 0 && <div className="empty">No sites yet.</div>}
             {sites.map((site) => (
-              <button key={site.id} className={cx("row", site.id === currentSiteId && "on")} onClick={() => void selectSite(site.id)} title={site.path}>
-                <span className="t">{site.name}</span>
+              <button key={site.id} className={cx("row", site.id === currentSiteId && "on")} onClick={() => void selectSite(site.id)} onDoubleClick={() => setRenaming({ id: site.id, value: site.name })} title={`${site.path}\nDouble-click to rename`}>
+                {renaming?.id === site.id ? (
+                  <input
+                    className="rename"
+                    autoFocus
+                    value={renaming.value}
+                    onChange={(e) => setRenaming({ id: site.id, value: e.target.value })}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={() => { const v = renaming.value.trim(); setRenaming(null); if (v && v !== site.name) void renameSite(site.id, v); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setRenaming(null); }}
+                  />
+                ) : <span className="t">{site.name}</span>}
+                {site.id === currentSiteId && <span className="icon-btn x" title="Site rules (CLAUDE.md): voice, brand, conventions" onClick={(e) => { e.stopPropagation(); void openRules(); }}><Book /></span>}
                 <span className="icon-btn x" title="Open in your code editor" onClick={(e) => { e.stopPropagation(); void openSiteInEditor(site.id); }}><Code /></span>
                 <span className="icon-btn x" title="Reveal in Finder" onClick={(e) => { e.stopPropagation(); void revealSite(site.id); }}><Folder /></span>
                 <span className="icon-btn x" title="Remove from Open (keeps the folder)" onClick={(e) => { e.stopPropagation(); if (confirm(`Remove ${site.name} from Open? The folder stays on disk.`)) void removeSite(site.id); }}><Trash /></span>

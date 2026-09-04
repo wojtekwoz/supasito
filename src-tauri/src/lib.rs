@@ -116,15 +116,17 @@ async fn site_install(app: AppHandle, state: State<'_, AppState>, site_id: Strin
 }
 
 #[tauri::command]
-fn site_git_status(state: State<'_, AppState>, site_id: String) -> Result<sites::GitStatus, String> {
+async fn site_git_status(state: State<'_, AppState>, site_id: String) -> Result<sites::GitStatus, String> {
     let site = state.site(&site_id)?;
-    sites::git_status(&site.path, &state.path_env)
+    let env = state.path_env.clone();
+    tauri::async_runtime::spawn_blocking(move || sites::git_status(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn site_undo_files(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<Vec<String>, String> {
+async fn site_undo_files(state: State<'_, AppState>, site_id: String, files: Vec<String>, created: Option<Vec<String>>) -> Result<sites::RestoreReport, String> {
     let site = state.site(&site_id)?;
-    sites::git_restore(&site.path, &files, &state.path_env)
+    let env = state.path_env.clone();
+    tauri::async_runtime::spawn_blocking(move || sites::git_restore(&site.path, &files, &created.unwrap_or_default(), &env)).await.map_err(|e| e.to_string())?
 }
 
 /// Diagnostics from the preview pane (visible when the app is launched from a terminal).
@@ -149,15 +151,17 @@ fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String
 }
 
 #[tauri::command]
-fn site_git_commit(state: State<'_, AppState>, site_id: String, message: String) -> Result<sites::GitStatus, String> {
+async fn site_git_commit(state: State<'_, AppState>, site_id: String, message: String) -> Result<sites::GitStatus, String> {
     let site = state.site(&site_id)?;
-    sites::git_commit(&site.path, &message, &state.path_env)
+    let env = state.path_env.clone();
+    tauri::async_runtime::spawn_blocking(move || sites::git_commit(&site.path, &message, &env)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn site_git_diff(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<String, String> {
+async fn site_git_diff(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<String, String> {
     let site = state.site(&site_id)?;
-    sites::git_diff(&site.path, &files, &state.path_env)
+    let env = state.path_env.clone();
+    tauri::async_runtime::spawn_blocking(move || sites::git_diff(&site.path, &files, &env)).await.map_err(|e| e.to_string())?
 }
 
 /// Screenshot of the preview region. `x, y, w, h` in CSS pixels (the webview's own coordinates).
@@ -202,10 +206,51 @@ fn request_attention(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn site_file(site: &sites::Site, rel: &str) -> Result<std::path::PathBuf, String> {
+    let rel = rel.trim_start_matches('/');
+    if rel.is_empty() || rel.split('/').any(|seg| seg == "..") { return Err("invalid path".into()); }
+    Ok(std::path::Path::new(&site.path).join(rel))
+}
+
+/// Read a text file inside the site (used for CLAUDE.md editing). Empty string if it does not exist.
 #[tauri::command]
-fn site_git_init(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+fn site_read_text(state: State<'_, AppState>, site_id: String, rel: String) -> Result<String, String> {
     let site = state.site(&site_id)?;
-    sites::git_init(&site.path, &state.path_env)
+    let path = site_file(&site, &rel)?;
+    if !path.exists() { return Ok(String::new()); }
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 512 * 1024 { return Err("That file is too large to edit here.".into()); }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn site_write_text(state: State<'_, AppState>, site_id: String, rel: String, content: String) -> Result<(), String> {
+    let site = state.site(&site_id)?;
+    let path = site_file(&site, &rel)?;
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn site_rename(state: State<'_, AppState>, site_id: String, name: String) -> Result<sites::Site, String> {
+    let site = state.site(&site_id)?;
+    let name = name.trim().to_string();
+    if name.is_empty() { return Err("Give the site a name.".into()); }
+    sites::write_open_json(&site.path, "name", &name)?;
+    let mut p = state.persisted.lock().unwrap();
+    let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+    s.name = name;
+    let out = s.clone();
+    drop(p);
+    state.save()?;
+    Ok(out)
+}
+
+#[tauri::command]
+async fn site_git_init(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+    let site = state.site(&site_id)?;
+    let env = state.path_env.clone();
+    tauri::async_runtime::spawn_blocking(move || sites::git_init(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -243,7 +288,14 @@ fn starter_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
 #[tauri::command]
 async fn dev_start(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<devserver::DevInfo, String> {
     let site = state.site(&site_id)?;
-    state.dev.start(app.clone(), site, state.path_env.clone()).await
+    let info = state.dev.start(app.clone(), site, state.path_env.clone()).await?;
+    {
+        let mut p = state.persisted.lock().unwrap();
+        if let Some(s) = p.sites.iter_mut().find(|s| s.id == site_id) {
+            if s.last_port != Some(info.port) { s.last_port = Some(info.port); drop(p); let _ = state.save(); }
+        }
+    }
+    Ok(info)
 }
 
 #[tauri::command]
@@ -273,9 +325,10 @@ async fn publish_run(app: AppHandle, state: State<'_, AppState>, site_id: String
 }
 
 #[tauri::command]
-fn site_git_push(state: State<'_, AppState>, site_id: String) -> Result<String, String> {
+async fn site_git_push(state: State<'_, AppState>, site_id: String) -> Result<String, String> {
     let site = state.site(&site_id)?;
-    sites::git_push(&site.path, &state.path_env)
+    let env = state.path_env.clone();
+    tauri::async_runtime::spawn_blocking(move || sites::git_push(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -336,6 +389,12 @@ async fn agent_respond(state: State<'_, AppState>, session_id: String, request_i
 }
 
 #[tauri::command]
+async fn agent_set_mode(state: State<'_, AppState>, session_id: String, mode: String) -> Result<(), String> {
+    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    h.set_permission_mode(&mode).await
+}
+
+#[tauri::command]
 async fn agent_interrupt(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
     h.interrupt().await
@@ -352,15 +411,15 @@ async fn agent_running(state: State<'_, AppState>) -> Result<Vec<Value>, String>
 }
 
 #[tauri::command]
-fn sessions_list(state: State<'_, AppState>, site_id: String) -> Result<Vec<agent::sessions::SessionInfo>, String> {
+async fn sessions_list(state: State<'_, AppState>, site_id: String) -> Result<Vec<agent::sessions::SessionInfo>, String> {
     let site = state.site(&site_id)?;
-    Ok(agent::sessions::list(&site.path))
+    tauri::async_runtime::spawn_blocking(move || agent::sessions::list(&site.path)).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn session_transcript(state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
+async fn session_transcript(state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
     let site = state.site(&site_id)?;
-    agent::sessions::transcript(&site.path, &session_id)
+    tauri::async_runtime::spawn_blocking(move || agent::sessions::transcript(&site.path, &session_id)).await.map_err(|e| e.to_string())?
 }
 
 // ---------- app ----------
@@ -394,10 +453,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings_get, settings_set, claude_check,
-            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
+            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
             dev_start, dev_stop, dev_status, dev_log,
             publish_run, publish_cancel,
-            agent_start, agent_send, agent_respond, agent_interrupt, agent_stop, agent_running,
+            agent_start, agent_send, agent_respond, agent_set_mode, agent_interrupt, agent_stop, agent_running,
             sessions_list, session_transcript
         ])
         .build(tauri::generate_context!())

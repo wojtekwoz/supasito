@@ -3,7 +3,7 @@ import { useStore } from "./store";
 import { Rail } from "./Rail";
 import { SessionPane } from "./Session";
 import { Preview } from "./Preview";
-import { DiffDialog, NewSiteDialog, PublishDialog, SettingsDialog } from "./Dialogs";
+import { DiffDialog, NewSiteDialog, PublishDialog, RulesDialog, SettingsDialog } from "./Dialogs";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 
 export default function App() {
@@ -31,10 +31,13 @@ export default function App() {
       if (e.key === "Escape") {
         const st = useStore.getState();
         if (st.diff.open) { st.closeDiff(); return; }
+        if (st.rules.open && !st.rules.saving) { st.closeRules(); return; }
         if (st.picking) { st.setPicking(false); return; }
-        if (st.publish.open && !st.publish.running) st.setPublishOpen(false);
-        if (st.newSite.open && !st.newSite.running) st.openNewSite(false);
-        if (st.settingsOpen) st.setSettingsOpen(false);
+        if (st.publish.open && !st.publish.running) { st.setPublishOpen(false); return; }
+        if (st.newSite.open && !st.newSite.running) { st.openNewSite(false); return; }
+        if (st.settingsOpen) { st.setSettingsOpen(false); return; }
+        const cur = st.currentSessionId ? st.transcripts[st.currentSessionId] : null;
+        if (cur?.busy && !(e.target instanceof HTMLInputElement)) void st.interrupt();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -59,6 +62,7 @@ export default function App() {
       <NewSiteDialog />
       <PublishDialog />
       <DiffDialog />
+      <RulesDialog />
       <SettingsDialog />
       {toast && <div className="toast">{toast}</div>}
     </div>

@@ -52,9 +52,8 @@ pub async fn capture_region(app: &AppHandle, x: f64, y: f64, w: f64, h: f64) -> 
                 })();
                 if let Some(tx) = tx2.lock().unwrap().take() { let _ = tx.send(result); }
             });
+            // WebKit copies the block for the duration of the request; ours can drop afterwards.
             let _: () = msg_send![wk, takeSnapshotWithConfiguration: cfg, completionHandler: &*block];
-            // keep the block alive until WebKit is done with it
-            std::mem::forget(block);
         })
         .map_err(|e| e.to_string())?;
 

@@ -16,7 +16,8 @@ pnpm tauri dev
 A production bundle (`Open.app` in `src-tauri/target/release/bundle/macos`):
 
 ```bash
-pnpm tauri build
+pnpm release            # builds Open.app
+pnpm release --install  # …and copies it to /Applications
 ```
 
 Add `--bundles dmg` from an interactive terminal session if you want a disk image; the DMG step drives Finder and fails in headless shells.
@@ -35,6 +36,8 @@ Add `--bundles dmg` from an interactive terminal session if you want a disk imag
 - **Queueing:** you can keep typing while Claude works; Enter queues the message and it is sent when the current turn ends. Escape stops the current turn.
 - **Publish** offers two targets: **Preview** (a shareable test link; the live site doesn't change) and **Production**. Each is one command in `open.json` (`preview`, `publish`), with presets for Vercel, Cloudflare, Netlify and git push. The dialog can commit the pending changes first (message prefilled from your last request) and push to `origin`, so publishing doubles as a backup. A running publish can be cancelled.
 - **What changed:** "N files changed" on a turn's completion line opens the diff for that turn.
+- **Show Claude the preview:** the camera button in the preview toolbar attaches a screenshot of the preview pane to your next message. It uses the webview's own snapshot, so there is no permission prompt.
+- **One dev server at a time:** switching sites stops the previous site's dev server unless one of its sessions is still working.
 - **Getting called back:** the Dock badge shows how many approvals are waiting, and the Dock icon bounces when Claude needs you or finishes while Open is in the background.
 - **Model:** Settings offers your Claude Code default, Sonnet, Opus, Haiku, or a custom model name. It applies to sessions started after saving; the chip in the session header shows the model in use.
 - **The preview follows the work:** when Claude edits a page file (`app/pricing/page.tsx`, `src/pages/pricing.astro`, `src/routes/pricing/+page.svelte`, `pages/pricing.vue`), the preview switches to that page.
@@ -68,7 +71,7 @@ OPEN_SMOKE_SITE_PATH=/path/to/site OPEN_SMOKE_MODEL=haiku OPEN_SMOKE_SCENARIO=qu
 ## Tests
 
 ```bash
-pnpm test                                        # route mapping check + Rust unit tests
+pnpm test                                        # transcript reducer (recorded stream), route mapping, Rust unit tests
 cd src-tauri && cargo test -- --ignored          # also creates a real site from the starter (runs pnpm install)
 ```
 

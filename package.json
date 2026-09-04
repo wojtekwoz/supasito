@@ -8,8 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "node --experimental-strip-types --no-warnings src/routes.test.ts && cd src-tauri && cargo test",
-    "test:ui": "node --experimental-strip-types --no-warnings src/routes.test.ts"
+    "test": "pnpm run test:ui && cd src-tauri && cargo test",
+    "test:ui": "node --experimental-strip-types --no-warnings src/routes.test.ts && node --experimental-strip-types --no-warnings src/agent/transcript.test.ts",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

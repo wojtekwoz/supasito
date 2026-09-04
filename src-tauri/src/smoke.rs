@@ -88,6 +88,22 @@ pub async fn run(app: AppHandle, prompt: String) {
     if state.dev.status(&site.id).await.map(|d| d.status == "error").unwrap_or(false) {
         for line in state.dev.log(&site.id).await.iter().rev().take(6).rev() { eprintln!("[smoke] dev log: {line}"); }
     }
+    if let Ok(out) = std::env::var("OPEN_SMOKE_CAPTURE") {
+        use tauri::Manager;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if let Some(w) = app.get_webview_window("main") {
+            let size = w.inner_size().unwrap_or(tauri::PhysicalSize::new(1440, 900));
+            let scale = w.scale_factor().unwrap_or(2.0);
+            let (cw, ch) = (size.width as f64 / scale, size.height as f64 / scale);
+            eprintln!("[smoke] capture window {cw}x{ch} css px (scale {scale})");
+            // the right-hand 55% of the window is where the preview pane lives
+            let x = cw * 0.45;
+            match crate::capture::capture_region(&app, x, 0.0, cw - x, ch).await {
+                Ok(bytes) => { let _ = std::fs::write(&out, &bytes); eprintln!("[smoke] capture written to {out} ({} bytes)", bytes.len()); }
+                Err(e) => eprintln!("[smoke] capture failed: {e}"),
+            }
+        }
+    }
     if prompt == "-" {
         let d = state.dev.status(&site.id).await;
         eprintln!("[smoke] dev server final status: {:?}", d.map(|d| format!("{} {}", d.status, d.url)));

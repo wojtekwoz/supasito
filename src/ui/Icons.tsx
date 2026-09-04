@@ -26,3 +26,5 @@ export const Shield = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d=
 export const Question = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="8" cy="8" r="6.5" /><path d="M6 6.2a2 2 0 1 1 2.8 1.8c-.6.3-.8.7-.8 1.3M8 11.6v.1" /></svg>;
 export const Sparkle = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z" /></svg>;
 export const Trash = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.6 8.5h5.8l.6-8.5" /></svg>;
+export const Camera = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h1.8l1-1.5h3.4l1 1.5h1.8A1.5 1.5 0 0 1 14 5.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /><circle cx="8" cy="8.5" r="2.4" /></svg>;
+export const Code = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9.5 2.5l-3 11" /></svg>;

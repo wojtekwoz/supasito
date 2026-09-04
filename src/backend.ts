@@ -29,6 +29,8 @@ export interface Backend {
   siteGitPush(siteId: string): Promise<string>;
   siteGitDiff(siteId: string, files: string[]): Promise<string>;
   setBadge(count: number): Promise<void>;
+  previewCapture(rect: { x: number; y: number; w: number; h: number }, scale: number): Promise<{ mediaType: string; data: string; bytes: number }>;
+  siteOpenEditor(siteId: string): Promise<string>;
   requestAttention(): Promise<void>;
   publishCancel(siteId: string): Promise<void>;
   agentStart(siteId: string, resume: string | null): Promise<string>;
@@ -76,6 +78,8 @@ async function tauriBackend(): Promise<Backend> {
     siteGitPush: (siteId) => invoke("site_git_push", { siteId }),
     siteGitDiff: (siteId, files) => invoke("site_git_diff", { siteId, files }),
     setBadge: (count) => invoke("set_badge", { count }),
+    previewCapture: (rect, scale) => invoke("preview_capture", { x: rect.x, y: rect.y, w: rect.w, h: rect.h, scale }),
+    siteOpenEditor: (siteId) => invoke("site_open_editor", { siteId }),
     requestAttention: () => invoke("request_attention"),
     publishCancel: (siteId) => invoke("publish_cancel", { siteId }),
     agentStart: (siteId, resume) => invoke("agent_start", { siteId, resume }),

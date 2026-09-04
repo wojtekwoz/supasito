@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { DRAFT, useSession, useSessionsOfCurrentSite, useSite, useStore } from "./store";
 import type { Item } from "../agent/transcript";
 import { Markdown } from "../ui/Markdown";
@@ -122,7 +122,7 @@ function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boo
   );
 }
 
-function Entry({ item, sessionId }: { item: Item; sessionId: string | null }) {
+const Entry = memo(function Entry({ item, sessionId }: { item: Item; sessionId: string | null }) {
   switch (item.kind) {
     case "user":
       return (
@@ -155,13 +155,15 @@ function Entry({ item, sessionId }: { item: Item; sessionId: string | null }) {
     default:
       return null;
   }
-}
+});
 
 function TurnEnd({ item, sessionId }: { item: Extract<Item, { kind: "result" }>; sessionId: string | null }) {
   const undoTurn = useStore((s) => s.undoTurn);
   const openDiff = useStore((s) => s.openDiff);
+  const committedAt = useStore((s) => s.committedAt);
   const root = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId)?.path ?? "");
   const n = item.files.length;
+  const canUndo = n > 0 && !item.undone && item.at > committedAt;
   const label = item.isError
     ? item.text
     : [item.stopped ? "Stopped" : "Done", item.durationMs != null && fmtDuration(item.durationMs), item.costUsd != null && item.costUsd > 0 && `$${item.costUsd.toFixed(3)}`].filter(Boolean).join(" · ");
@@ -169,7 +171,7 @@ function TurnEnd({ item, sessionId }: { item: Extract<Item, { kind: "result" }>;
     <div className={cx("turn-end", item.isError && "error")} title={item.files.map((f) => relPath(f, root)).join("\n")}>
       <span>{label}</span>
       {n > 0 && !item.isError && <button className="link-btn" onClick={() => void openDiff(item.files)} title="Show what changed">· {n} file{n === 1 ? "" : "s"} changed</button>}
-      {n > 0 && sessionId && !item.undone && (
+      {canUndo && sessionId && (
         <button className="link-btn" onClick={() => { if (confirm(`Put ${n === 1 ? "this file" : `these ${n} files`} back the way ${n === 1 ? "it" : "they"} ${n === 1 ? "was" : "were"} before this turn?\n\n${item.files.map((f) => relPath(f, root)).join("\n")}`)) void undoTurn(sessionId, item.id); }}>Undo</button>
       )}
       {item.undone && <span>· undone</span>}
@@ -188,7 +190,9 @@ function toolGlyph(name: string) {
   }
 }
 
-function Steps({ items, root }: { items: Item[]; root: string }) {
+const sameItems = (a: { items: Item[]; root: string }, b: { items: Item[]; root: string }) => a.root === b.root && a.items.length === b.items.length && a.items.every((it, i) => it === b.items[i]);
+
+const Steps = memo(function Steps({ items, root }: { items: Item[]; root: string }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <div className="steps">
@@ -209,7 +213,7 @@ function Steps({ items, root }: { items: Item[]; root: string }) {
       })}
     </div>
   );
-}
+}, sameItems);
 
 function StepDetail({ item, root }: { item: Extract<Item, { kind: "tool" }>; root: string }) {
   const i = item.input || {};

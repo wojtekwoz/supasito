@@ -79,6 +79,13 @@ export function mockBackend(): Backend {
     siteGitPush: async () => { await wait(600); return "To github.com:you/clarityops.git\n   1a2b3c4..5d6e7f8  main -> main"; },
     siteGitDiff: async (_siteId, files) => files.map((f) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -12,7 +12,7 @@ export function Hero() {\n       <p className="text-[11px] font-semibold uppercase">Decision intelligence</p>\n-      <h1 className="mx-auto mt-4 max-w-3xl font-display text-6xl">Decisions, made durable</h1>\n+      <h1 className="mx-auto mt-4 max-w-3xl font-display text-6xl">Decisions, made durable, together</h1>\n       <p className="mx-auto mt-6 max-w-xl text-lg">ClarityOps gives leadership teams one durable operating record.</p>`).join("\n"),
     setBadge: async (count) => { console.debug("[badge]", count); },
+    previewCapture: async (rect) => {
+      const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(rect.w)); c.height = Math.max(1, Math.round(rect.h));
+      const g = c.getContext("2d")!; g.fillStyle = "#f7f6f2"; g.fillRect(0, 0, c.width, c.height); g.fillStyle = "#141414"; g.font = "48px Georgia"; g.fillText("Decisions, made durable", 40, 120);
+      const data = c.toDataURL("image/png").split(",")[1];
+      return { mediaType: "image/png", data, bytes: data.length };
+    },
+    siteOpenEditor: async () => "code",
     requestAttention: async () => { console.debug("[attention]"); },
     siteGitInit: async () => {},
     siteUndoFiles: async (_siteId, files) => files.map((f) => f.replace(site.path + "/", "")),

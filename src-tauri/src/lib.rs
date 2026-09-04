@@ -1,4 +1,5 @@
 mod agent;
+mod capture;
 mod devserver;
 mod sites;
 #[cfg(debug_assertions)]
@@ -157,6 +158,30 @@ fn site_git_commit(state: State<'_, AppState>, site_id: String, message: String)
 fn site_git_diff(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<String, String> {
     let site = state.site(&site_id)?;
     sites::git_diff(&site.path, &files, &state.path_env)
+}
+
+/// Screenshot of the preview region. `x, y, w, h` in CSS pixels (the webview's own coordinates).
+#[tauri::command]
+async fn preview_capture(app: AppHandle, x: f64, y: f64, w: f64, h: f64, _scale: f64) -> Result<Value, String> {
+    use base64::Engine;
+    let bytes = capture::capture_region(&app, x, y, w, h).await?;
+    Ok(json!({ "mediaType": "image/png", "data": base64::engine::general_purpose::STANDARD.encode(&bytes), "bytes": bytes.len() }))
+}
+
+/// Open the site folder in the user's code editor (code, cursor, zed on PATH), else in Finder.
+#[tauri::command]
+async fn site_open_editor(state: State<'_, AppState>, site_id: String) -> Result<String, String> {
+    let site = state.site(&site_id)?;
+    let path_env = state.path_env.clone();
+    let find = |bin: &str| path_env.split(':').map(|d| std::path::Path::new(d).join(bin)).find(|p| p.is_file());
+    for bin in ["code", "cursor", "zed", "windsurf"] {
+        if let Some(exe) = find(bin) {
+            tokio::process::Command::new(exe).arg(&site.path).env("PATH", &path_env).spawn().map_err(|e| e.to_string())?;
+            return Ok(bin.to_string());
+        }
+    }
+    tokio::process::Command::new("open").arg(&site.path).spawn().map_err(|e| e.to_string())?;
+    Ok("finder".into())
 }
 
 /// Dock badge with the number of approvals waiting (macOS); None clears it.
@@ -369,7 +394,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings_get, settings_set, claude_check,
-            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, site_set_last_session, site_new,
+            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
             dev_start, dev_stop, dev_status, dev_log,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_interrupt, agent_stop, agent_running,

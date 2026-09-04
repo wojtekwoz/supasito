@@ -222,3 +222,15 @@ From the first hands-on round: pointing worked on a real site. Fixed: the user b
 - **Diff per turn:** "N files changed" opens a unified diff (working tree vs HEAD, untracked files shown as additions, capped at 800 lines).
 - **Dock badge and attention:** badge = pending approvals across sessions; the Dock bounces on a new approval request or a finished turn while the window is unfocused. No notification plugin.
 - ⌘N new session, ⌘, settings.
+
+### Session 8 (2026-09-04)
+- **Transcript reducer tests** against a recorded Claude Code 2.1.257 stream (`src/agent/fixtures/`), plus streaming, interrupt, queue, files-touched and saved-transcript cases. `pnpm test` runs them with the route check and the Rust suite; test files are excluded from the app's type-check.
+- **Show Claude the preview:** camera button → `preview_capture` asks WKWebView for a snapshot of the iframe's rect (`takeSnapshotWithConfiguration:` via objc2 + block2, width capped at 1600 px); the PNG is attached to the composer like a pasted image. Cross-origin iframe content is included and no Screen Recording permission is needed (a first attempt with `screencapture` needed that permission and was dropped). macOS only.
+- **Release script** (`pnpm release [--install]`) so daily use doesn't depend on `tauri dev`.
+- Rail: session list capped at 12 with "Show older"; "Open in your code editor" (code, cursor, zed, windsurf on PATH; Finder otherwise).
+
+### Session 9 (2026-09-04)
+- **Transcript performance:** items are now replaced, never mutated, and rows (`Entry`, `Steps`) are memoised, so a streamed token re-renders one row instead of the whole transcript.
+- **Idle dev servers stop** when you switch sites, unless a session on that site is still working.
+- **Undo is gated by commit time:** turns from before the last commit made in Open lose their Undo (git is the right tool from there).
+- `CLAUDE.md` added for agents working on this repo: the one rule, how to run and test, where the sharp edges are.

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useDev, useDevLogOfCurrentSite, useSite, useStore, type Device } from "./store";
 import { cx } from "../util";
-import { Crosshair, Desktop, External, Phone, Reload, Tablet, Terminal } from "../ui/Icons";
+import { Camera, Crosshair, Desktop, External, Phone, Reload, Tablet, Terminal } from "../ui/Icons";
 import { isTauri } from "../backend";
 
 const widths: Record<Device, string> = { desktop: "100%", tablet: "834px", phone: "390px" };
@@ -33,6 +33,8 @@ export function Preview() {
   const refreshGit = useStore((s) => s.refreshGit);
   const previewEvent = useStore((s) => s.previewEvent);
   const navigateRequest = useStore((s) => s.navigateRequest);
+  const setPreviewRect = useStore((s) => s.setPreviewRect);
+  const capturePreview = useStore((s) => s.capturePreview);
 
   const frame = useRef<HTMLIFrameElement>(null);
   const [pathDraft, setPathDraft] = useState(previewPath);
@@ -54,6 +56,21 @@ export function Preview() {
   }, [setSelection, setPicking, setPreviewInfo, previewEvent]);
 
   useEffect(() => { post({ type: "pick", active: picking }); }, [picking]);
+
+  // Keep the iframe's position on record so a screenshot can be cropped to it.
+  useEffect(() => {
+    const update = () => {
+      const el = frame.current;
+      if (!el) { setPreviewRect(null); return; }
+      const r = el.getBoundingClientRect();
+      setPreviewRect({ x: r.left, y: r.top, w: r.width, h: r.height });
+    };
+    update();
+    const ro = frame.current ? new ResizeObserver(update) : null;
+    if (frame.current && ro) ro.observe(frame.current);
+    window.addEventListener("resize", update);
+    return () => { ro?.disconnect(); window.removeEventListener("resize", update); };
+  }, [dev?.status, device, nonce, setPreviewRect]);
 
   // Follow the page Claude is editing.
   useEffect(() => {
@@ -101,6 +118,7 @@ export function Preview() {
         <button className={cx("icon-btn", picking && "on")} title="Pick an element" disabled={!ready} onClick={() => setPicking(!picking)}><Crosshair /></button>
         <button className="icon-btn" title="Reload" disabled={!ready} onClick={() => { post({ type: "reload" }); reloadPreview(); }}><Reload /></button>
         <button className="icon-btn" title="Open in browser" disabled={!ready || isMock} onClick={() => void openInBrowser()}><External /></button>
+        <button className="icon-btn" title="Attach a screenshot of the preview to your next message" disabled={!ready} onClick={() => void capturePreview()}><Camera /></button>
         <button className={cx("icon-btn", devLogOpen && "on")} title="Dev server log" onClick={toggleDevLog}><Terminal /></button>
         <DevChip />
         <button className="publish" onClick={openPublish} title={site.publish ? site.publish : "No publish command yet"}>

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
 import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site } from "../types";
-import { addNotice, addPermission, addUser, applyMessage, emptySession, settlePermission, type SessionState } from "../agent/transcript";
+import { addNotice, addPermission, addUser, applyMessage, emptySession, markUndone, settlePermission, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
@@ -38,6 +38,8 @@ export type Store = {
   navigateRequest: { path: string; seq: number } | null;
   publish: PublishState;
   diff: DiffState;
+  /** Time of the last commit made from Open; turns before it can no longer be undone. */
+  committedAt: number;
   newSite: NewSiteState;
   toast: string | null;
 
@@ -72,6 +74,11 @@ export type Store = {
   setDevice: (d: Device) => void;
   reloadPreview: () => void;
   revealSite: (siteId: string) => Promise<void>;
+  openSiteInEditor: (siteId: string) => Promise<void>;
+  capturePreview: () => Promise<void>;
+  /** The preview pane sets this so captures know where the iframe is. */
+  previewRect: { x: number; y: number; w: number; h: number } | null;
+  setPreviewRect: (r: { x: number; y: number; w: number; h: number } | null) => void;
   recheckClaude: () => Promise<void>;
   openInBrowser: () => Promise<void>;
   openPublish: () => void;
@@ -119,8 +126,10 @@ export const useStore = create<Store>((set, get) => ({
   device: "desktop",
   previewNonce: 0,
   navigateRequest: null,
+  previewRect: null,
   publish: { open: false, running: false, log: [], url: null, error: null, cancelled: false, target: "production", step: "" },
   diff: { open: false, loading: false, files: [], text: "", error: null },
+  committedAt: 0,
   newSite: { open: false, running: false, log: [], error: null },
   toast: null,
 
@@ -204,7 +213,15 @@ export const useStore = create<Store>((set, get) => ({
   async selectSite(id) {
     const site = get().sites.find((s) => s.id === id);
     if (!site) return;
+    const previous = get().currentSiteId;
     set({ currentSiteId: id, selection: null, picking: false, previewPath: "/", previewTitle: "", devLogOpen: false });
+    // Stop the dev server of the site we are leaving unless one of its sessions is still working.
+    if (previous && previous !== id) {
+      const st = get();
+      const busy = (st.sessions[previous] ?? []).some((x) => st.transcripts[x.id]?.busy);
+      const d = st.dev[previous];
+      if (!busy && d && (d.status === "ready" || d.status === "starting")) void api.devStop(previous).catch(() => {});
+    }
     const [sessions, devInfo] = await Promise.all([api.sessionsList(id), api.devStatus(id)]);
     set({ sessions: { ...get().sessions, [id]: sessions } });
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
@@ -370,9 +387,10 @@ export const useStore = create<Store>((set, get) => ({
     if (!siteId || !cur) return;
     const item = cur.items.find((i) => i.kind === "result" && i.id === resultId);
     if (!item || item.kind !== "result" || item.files.length === 0) return;
+    if (item.at <= get().committedAt) { get().showToast("That turn was committed since; undo it with git instead."); return; }
     try {
       const restored = await api.siteUndoFiles(siteId, item.files);
-      item.undone = true;
+      markUndone(cur, resultId);
       set({ transcripts: bump(get().transcripts, sessionId) });
       get().showToast(`Restored ${restored.length} file${restored.length === 1 ? "" : "s"}`);
       void get().refreshGit(siteId);
@@ -414,6 +432,24 @@ export const useStore = create<Store>((set, get) => ({
     const site = get().sites.find((s) => s.id === siteId);
     if (site) await api.revealPath(site.path).catch((e) => get().showToast(String(e)));
   },
+  async openSiteInEditor(siteId) {
+    try {
+      const which = await api.siteOpenEditor(siteId);
+      if (which === "finder") get().showToast("No code editor found on your PATH (code, cursor, zed); opened the folder instead.");
+    } catch (e) { get().showToast(String(e)); }
+  },
+  setPreviewRect(r) { set({ previewRect: r }); },
+  async capturePreview() {
+    const st = get();
+    const rect = st.previewRect;
+    const dev = st.currentSiteId ? st.dev[st.currentSiteId] : null;
+    if (!rect || dev?.status !== "ready") { get().showToast("The preview must be showing before it can be captured."); return; }
+    try {
+      const shot = await api.previewCapture(rect, window.devicePixelRatio || 1);
+      const a: Attachment = { id: `${Date.now()}-shot`, name: `preview${st.previewPath === "/" ? "" : st.previewPath.replace(/\//g, "-")}.png`, mediaType: shot.mediaType, data: shot.data, size: shot.bytes };
+      set({ attachments: [...st.attachments.filter((x) => !x.name.startsWith("preview")), a].slice(0, 6) });
+    } catch (e) { get().showToast(String(e)); }
+  },
   async recheckClaude() {
     const claude = await api.claudeCheck();
     set({ claude });
@@ -441,7 +477,7 @@ export const useStore = create<Store>((set, get) => ({
       if (opts.commit) {
         push(`$ git commit -m ${JSON.stringify(opts.message.trim() || "Update site")}`);
         const g = await api.siteGitCommit(siteId, opts.message.trim() || "Update site");
-        set({ git: { ...get().git, [siteId]: g } });
+        set({ git: { ...get().git, [siteId]: g }, committedAt: Date.now() });
         push("Committed.");
       }
       if (opts.push) {

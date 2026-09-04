@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { DRAFT, useSessionsOfCurrentSite, useStore } from "./store";
 import { ago, cx } from "../util";
-import { Folder, Gear, Plus, Sparkle, Trash } from "../ui/Icons";
+import { Code, Folder, Gear, Plus, Sparkle, Trash } from "../ui/Icons";
+
+const SESSION_CAP = 12;
 
 export function Rail() {
   const sites = useStore((s) => s.sites);
@@ -10,6 +13,8 @@ export function Rail() {
   const openNewSite = useStore((s) => s.openNewSite);
   const removeSite = useStore((s) => s.removeSite);
   const revealSite = useStore((s) => s.revealSite);
+  const openSiteInEditor = useStore((s) => s.openSiteInEditor);
+  const [showAll, setShowAll] = useState(false);
   const sessions = useSessionsOfCurrentSite();
   const currentSessionId = useStore((s) => s.currentSessionId);
   const openSession = useStore((s) => s.openSession);
@@ -38,6 +43,7 @@ export function Rail() {
             {sites.map((site) => (
               <button key={site.id} className={cx("row", site.id === currentSiteId && "on")} onClick={() => void selectSite(site.id)} title={site.path}>
                 <span className="t">{site.name}</span>
+                <span className="icon-btn x" title="Open in your code editor" onClick={(e) => { e.stopPropagation(); void openSiteInEditor(site.id); }}><Code /></span>
                 <span className="icon-btn x" title="Reveal in Finder" onClick={(e) => { e.stopPropagation(); void revealSite(site.id); }}><Folder /></span>
                 <span className="icon-btn x" title="Remove from Open (keeps the folder)" onClick={(e) => { e.stopPropagation(); if (confirm(`Remove ${site.name} from Open? The folder stays on disk.`)) void removeSite(site.id); }}><Trash /></span>
               </button>
@@ -58,7 +64,7 @@ export function Rail() {
                 <button className="row on"><Sparkle className="glyph" /><span className="t">New session</span></button>
               )}
               {sessions.length === 0 && currentSessionId !== DRAFT && <div className="empty">No sessions for this site yet.</div>}
-              {sessions.map((s) => {
+              {(showAll ? sessions : sessions.slice(0, SESSION_CAP)).map((s) => {
                 const busy = transcripts[s.id]?.busy;
                 const live = !!running[s.id];
                 return (
@@ -69,6 +75,9 @@ export function Rail() {
                   </button>
                 );
               })}
+              {sessions.length > SESSION_CAP && (
+                <button className="row" onClick={() => setShowAll(!showAll)}><span className="t" style={{ color: "var(--ink-3)" }}>{showAll ? "Show fewer" : `Show ${sessions.length - SESSION_CAP} older`}</span></button>
+              )}
             </div>
           </div>
         )}

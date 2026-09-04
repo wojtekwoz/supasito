@@ -8,7 +8,7 @@ export type Item =
   | { kind: "assistant"; id: string; text: string; thinking: string; streaming: boolean; parentToolUseId: string | null }
   | { kind: "tool"; id: string; name: string; input: any; label: string; result: string | null; status: ToolStatus; parentToolUseId: string | null }
   | { kind: "permission"; id: string; request: PermissionRequest["request"]; status: "pending" | "allowed" | "denied" }
-  | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; undone: boolean }
+  | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; undone: boolean; at: number }
   | { kind: "notice"; id: string; text: string; tone: "info" | "error" };
 
 export type SessionState = {
@@ -84,6 +84,14 @@ function findAssistant(items: Item[], id: string) {
   for (let k = items.length - 1; k >= 0; k--) { const it = items[k]; if (it.kind === "assistant" && it.id === id) return it; }
   return null;
 }
+/** Items are never mutated in place: a changed item is replaced by a copy so memoised rows re-render only when their own item changed. */
+function patch<K extends Item["kind"]>(items: Item[], pred: (it: Item) => boolean, kind: K, changes: Partial<Extract<Item, { kind: K }>>): boolean {
+  for (let k = items.length - 1; k >= 0; k--) {
+    const it = items[k];
+    if (it.kind === kind && pred(it)) { items[k] = { ...it, ...changes } as Item; return true; }
+  }
+  return false;
+}
 
 /** Mutates `state` in place with one stream-json message. Returns true if something changed. */
 export function applyMessage(state: SessionState, msg: any): boolean {
@@ -102,19 +110,20 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         const id = ev.message?.id || uid("m");
         if (!findAssistant(items, id)) items.push({ kind: "assistant", id, text: "", thinking: "", streaming: true, parentToolUseId: parent });
         state.busy = true;
-        for (const it of items) if (it.kind === "user" && it.queued) { it.queued = false; break; }
+        const q = items.findIndex((it) => it.kind === "user" && it.queued);
+        if (q >= 0) items[q] = { ...(items[q] as Extract<Item, { kind: "user" }>), queued: false };
         return true;
       }
       if (ev.type === "content_block_delta") {
         const last = [...items].reverse().find((i) => i.kind === "assistant" && i.streaming) as Extract<Item, { kind: "assistant" }> | undefined;
         if (!last) return false;
-        if (ev.delta?.type === "text_delta") { last.text += ev.delta.text ?? ""; return true; }
-        if (ev.delta?.type === "thinking_delta") { last.thinking += ev.delta.thinking ?? ""; return true; }
+        if (ev.delta?.type === "text_delta") return patch(items, (i) => i === last, "assistant", { text: last.text + (ev.delta.text ?? "") });
+        if (ev.delta?.type === "thinking_delta") return patch(items, (i) => i === last, "assistant", { thinking: last.thinking + (ev.delta.thinking ?? "") });
         return false;
       }
       if (ev.type === "message_stop") {
         const last = [...items].reverse().find((i) => i.kind === "assistant" && i.streaming) as Extract<Item, { kind: "assistant" }> | undefined;
-        if (last) { last.streaming = false; return true; }
+        if (last) return patch(items, (i) => i === last, "assistant", { streaming: false });
         return false;
       }
       return false;
@@ -131,7 +140,7 @@ export function applyMessage(state: SessionState, msg: any): boolean {
           // subagent text: keep it out of the main thread
         } else {
           const existing = findAssistant(items, id);
-          if (existing) { existing.text = text || existing.text; existing.thinking = thinking || existing.thinking; existing.streaming = false; }
+          if (existing) patch(items, (i) => i === existing, "assistant", { text: text || existing.text, thinking: thinking || existing.thinking, streaming: false });
           else items.push({ kind: "assistant", id, text, thinking, streaming: false, parentToolUseId: parent });
           changed = true;
         }
@@ -160,8 +169,7 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         for (const r of results) {
           const t = findTool(items, r.tool_use_id);
           if (!t) continue;
-          t.result = contentText(r.content);
-          t.status = r.is_error ? "error" : "done";
+          patch(items, (i) => i === t, "tool", { result: contentText(r.content), status: r.is_error ? "error" : "done" });
           changed = true;
         }
         return changed;
@@ -190,15 +198,18 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       return true;
     }
     case "result": {
-      for (const it of items) if (it.kind === "assistant") it.streaming = false;
-      for (const it of items) if (it.kind === "tool" && it.status === "running") it.status = "done";
+      for (let k = 0; k < items.length; k++) {
+        const it = items[k];
+        if (it.kind === "assistant" && it.streaming) items[k] = { ...it, streaming: false };
+        if (it.kind === "tool" && it.status === "running") items[k] = { ...it, status: "done" };
+      }
       state.busy = false;
       const subtype = typeof msg.subtype === "string" ? msg.subtype : "success";
       const failed = !!msg.is_error || subtype !== "success";
       const stopped = failed && state.interrupting;
       state.interrupting = false;
       const text = stopped ? "Stopped" : failed ? (typeof msg.result === "string" && msg.result ? msg.result : RESULT_ERRORS[subtype] ?? "The turn ended with an error.") : "";
-      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: filesTouchedInTurn(items), undone: false });
+      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: filesTouchedInTurn(items), undone: false, at: Date.now() });
       return true;
     }
     default:
@@ -225,7 +236,11 @@ export function addPermission(state: SessionState, req: PermissionRequest) {
 }
 
 export function settlePermission(state: SessionState, requestId: string, status: "allowed" | "denied") {
-  for (const it of state.items) if (it.kind === "permission" && it.id === requestId) it.status = status;
+  patch(state.items, (it) => it.id === requestId, "permission", { status });
+}
+
+export function markUndone(state: SessionState, resultId: string) {
+  patch(state.items, (it) => it.id === resultId, "result", { undone: true });
 }
 
 export function addUser(state: SessionState, text: string, selection: Selection | null, images: Attachment[] = []) {

@@ -5,6 +5,7 @@ import { Markdown } from "../ui/Markdown";
 import { Crosshair, Doc, Globe, Pen, Search, Send, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
+import { Checklist, claudeBlocked, toolsMissing } from "./Checklist";
 import type { Selection } from "../types";
 
 export function SessionPane() {
@@ -12,7 +13,7 @@ export function SessionPane() {
   const session = useSession();
   const currentSessionId = useStore((s) => s.currentSessionId);
   const sessions = useSessionsOfCurrentSite();
-  const claude = useStore((s) => s.claude);
+  const tools = useStore((s) => s.tools);
   const interrupt = useStore((s) => s.interrupt);
   const running = useStore((s) => (s.currentSessionId ? !!s.running[s.currentSessionId] : false));
   const title = currentSessionId === DRAFT ? "New session" : sessions.find((s) => s.id === currentSessionId)?.title ?? "Session";
@@ -32,7 +33,7 @@ export function SessionPane() {
         {currentSessionId && currentSessionId !== DRAFT && running && <ModeSelect mode={session?.mode ?? null} />}
         {session?.busy && <button className="btn sm ghost" onClick={() => void interrupt()} title="Interrupt (Esc)"><Stop /> Stop</button>}
       </div>
-      {claude && !claude.ok
+      {claudeBlocked(tools)
         ? <Setup />
         : <Transcript items={session?.items ?? []} busy={!!session?.busy} root={site.path} sessionId={currentSessionId} />}
       <Composer />
@@ -57,24 +58,15 @@ function ModeSelect({ mode }: { mode: string | null }) {
   );
 }
 
+/** Shown instead of the transcript while Claude Code is missing or signed out. */
 function Setup() {
-  const recheck = useStore((s) => s.recheckClaude);
-  const setSettingsOpen = useStore((s) => s.setSettingsOpen);
-  const [checking, setChecking] = useState(false);
+  const signedOut = useStore((s) => !!s.tools?.claude.ok);
   return (
     <div className="welcome">
-      <div className="box" style={{ textAlign: "left", maxWidth: 400 }}>
-        <h2>Open needs Claude Code</h2>
-        <p>Open drives the Claude Code you already use. It isn't on this Mac yet, or it isn't on the PATH.</p>
-        <ol className="setup-steps">
-          <li><b>Install it.</b> Follow the steps at <a href="https://claude.com/claude-code" target="_blank" rel="noreferrer">claude.com/claude-code</a>.</li>
-          <li><b>Sign in once.</b> Run <code>claude</code> in Terminal and finish the login.</li>
-          <li><b>Come back here.</b></li>
-        </ol>
-        <div className="actions" style={{ justifyContent: "flex-start" }}>
-          <button className="btn primary" disabled={checking} onClick={() => { setChecking(true); void recheck().finally(() => setChecking(false)); }}>{checking ? "Checking…" : "Check again"}</button>
-          <button className="btn ghost" onClick={() => setSettingsOpen(true)}>Set the path manually</button>
-        </div>
+      <div className="box wide" style={{ textAlign: "left" }}>
+        <h2>{signedOut ? "Sign in to Claude Code" : "Open needs Claude Code"}</h2>
+        <p>Open drives the Claude Code you already use, with your own subscription. {signedOut ? "It's installed but not signed in on this Mac." : "It isn't on this Mac yet, or it isn't on the PATH."} Follow the line below, then check again.</p>
+        <Checklist />
       </div>
     </div>
   );
@@ -83,16 +75,28 @@ function Setup() {
 function Welcome() {
   const addSiteFromFolder = useStore((s) => s.addSiteFromFolder);
   const openNewSite = useStore((s) => s.openNewSite);
+  const tools = useStore((s) => s.tools);
+  const missing = toolsMissing(tools);
   return (
     <section className="pane session">
       <div className="titlebar drag" data-tauri-drag-region />
       <div className="welcome">
-        <div className="box">
-          <h2>Open a site to begin</h2>
-          <p>A site is a folder with a dev server. Open one you already have, or start a new one from the starter and describe what it should be.</p>
+        <div className={cx("box", missing && "wide")}>
+          {missing ? (
+            <>
+              <h2>Before you start</h2>
+              <p>Open builds sites with tools already on your Mac. Get the missing ones, then check again.</p>
+              <Checklist />
+            </>
+          ) : (
+            <>
+              <h2>Open a site to begin</h2>
+              <p>A site is a folder with a dev server. Open one you already have, or start a new one from the starter and describe what it should be.</p>
+            </>
+          )}
           <div className="actions">
             <button className="btn primary" onClick={() => void addSiteFromFolder()}>Open a folder…</button>
-            <button className="btn" onClick={() => openNewSite(true)}>New site</button>
+            <button className="btn" onClick={() => openNewSite(true)} disabled={!!tools && !tools.node.ok} title={tools && !tools.node.ok ? "Needs Node.js" : undefined}>New site</button>
           </div>
         </div>
       </div>
@@ -286,7 +290,7 @@ function Composer() {
   const picking = useStore((s) => s.picking);
   const setPicking = useStore((s) => s.setPicking);
   const dev = useStore((s) => (s.currentSiteId ? s.dev[s.currentSiteId] : null));
-  const claudeOk = useStore((s) => s.claude?.ok ?? false);
+  const claudeOk = useStore((s) => !!s.tools && !claudeBlocked(s.tools));
   const busy = !!session?.busy;
   const canPick = dev?.status === "ready";
   const canSend = (text.trim().length > 0 || attachments.length > 0) && claudeOk;

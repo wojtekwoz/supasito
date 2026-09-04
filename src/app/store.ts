@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site } from "../types";
+import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site, Toolchain } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, settlePermission, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
@@ -15,7 +15,9 @@ type NewSiteState = { open: boolean; running: boolean; log: string[]; error: str
 export type Store = {
   ready: boolean;
   fatal: string | null;
+  /** Shortcut for `tools.claude`; null until the first check completes. */
   claude: ClaudeStatus | null;
+  tools: Toolchain | null;
   settings: Settings;
   settingsOpen: boolean;
   sites: Site[];
@@ -86,7 +88,7 @@ export type Store = {
   /** The preview pane sets this so captures know where the iframe is. */
   previewRect: { x: number; y: number; w: number; h: number } | null;
   setPreviewRect: (r: { x: number; y: number; w: number; h: number } | null) => void;
-  recheckClaude: () => Promise<void>;
+  recheckTools: () => Promise<void>;
   openInBrowser: () => Promise<void>;
   openPublish: () => void;
   runPublish: (target: PublishTarget, opts: { commit: boolean; message: string; push: boolean }) => Promise<void>;
@@ -119,6 +121,15 @@ Notes Claude reads before every change. Keep them short and true.
 - Never start the dev server; Open runs it.
 `;
 const now = () => Date.now();
+/** Explain a failed publish command from its output: most first failures are a hosting CLI that isn't signed in or installed. */
+function publishFailure(cmd: string, code: number | null | undefined, log: string[]): string {
+  const tool = cmd.trim().split(/\s+/)[0] ?? "";
+  const text = log.join("\n");
+  if (/command not found|No such file or directory|not recognized/i.test(text) && tool) return `\`${tool}\` isn't installed on this Mac. Install your host's CLI (for example \`npm install -g ${tool}\`), sign in with \`${tool} login\` in Terminal, then try again.`;
+  if (/log ?in|credentials|not authenticated|unauthori[sz]ed|401|403|token/i.test(text) && tool) return `The ${tool} CLI isn't signed in. In Terminal, run \`${tool} login\` inside this site's folder, then try again.`;
+  return `Publish exited with code ${code ?? "?"}. The output above says why; fix it and try again.`;
+}
+const isAuthFailure = (text: unknown) => typeof text === "string" && /not logged in|authentication_failed|invalid api key|please run \/login/i.test(text);
 
 function bump(transcripts: Record<string, SessionState>, id: string): Record<string, SessionState> {
   const s = transcripts[id];
@@ -129,6 +140,7 @@ export const useStore = create<Store>((set, get) => ({
   ready: false,
   fatal: null,
   claude: null,
+  tools: null,
   settings: {},
   settingsOpen: false,
   sites: [],
@@ -163,8 +175,11 @@ export const useStore = create<Store>((set, get) => ({
     initStarted = true;
     try {
       api = await backend();
-      const [settings, claude, sites, running] = await Promise.all([api.settingsGet(), api.claudeCheck(), api.sitesList(), api.agentRunning()]);
-      set({ settings, claude, sites, running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
+      // The toolchain check runs `claude auth status`, `node --version` etc.; don't hold the window on it.
+      const toolsP = api.toolchainCheck().then((tools) => set({ tools, claude: tools.claude })).catch((e) => get().showToast(`Could not check the tools on this Mac: ${e}`));
+      const [settings, sites, running] = await Promise.all([api.settingsGet(), api.sitesList(), api.agentRunning()]);
+      set({ settings, sites, running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
+      void toolsP;
 
       await api.on("agent://message", ({ sessionId, message }) => {
         const st = get();
@@ -184,6 +199,8 @@ export const useStore = create<Store>((set, get) => ({
           if (siteId) void get().refreshGit(siteId);
           get().syncBadge();
           if (!document.hasFocus()) void api.requestAttention().catch(() => {});
+          // A sign-out mid-session (token expired, `claude auth logout`) shows up as an auth error; re-check so the checklist takes over.
+          if (message.is_error && isAuthFailure(message.result)) void get().recheckTools();
         }
       });
       await api.on("agent://permission", (req: PermissionRequest) => {
@@ -548,10 +565,11 @@ export const useStore = create<Store>((set, get) => ({
       set({ attachments: [...st.attachments.filter((x) => !x.name.startsWith("preview")), a].slice(0, 6) });
     } catch (e) { get().showToast(String(e)); }
   },
-  async recheckClaude() {
-    const claude = await api.claudeCheck();
-    set({ claude });
-    if (!claude.ok) get().showToast("Still can't find Claude Code. Install it, sign in once in a terminal, or set its path in Settings.");
+  async recheckTools() {
+    try {
+      const tools = await api.toolchainCheck();
+      set({ tools, claude: tools.claude });
+    } catch (e) { get().showToast(String(e)); }
   },
   async openInBrowser() {
     const st = get();
@@ -597,7 +615,7 @@ export const useStore = create<Store>((set, get) => ({
       push(`$ ${cmd}`);
       const r = await api.publishRun(siteId, target);
       const cancelled = get().publish.cancelled;
-      set({ publish: { ...get().publish, running: false, step: "", url: cancelled ? null : r.url ?? null, error: cancelled || r.ok ? null : `Publish exited with code ${r.code ?? "?"}` } });
+      set({ publish: { ...get().publish, running: false, step: "", url: cancelled ? null : r.url ?? null, error: cancelled || r.ok ? null : publishFailure(cmd, r.code, get().publish.log) } });
       void get().refreshGit(siteId);
     } catch (e) {
       set({ publish: { ...get().publish, running: false, step: "", error: String(e) } });
@@ -633,8 +651,8 @@ export const useStore = create<Store>((set, get) => ({
   setSettingsOpen(open) { set({ settingsOpen: open }); },
   async saveSettings(patch) {
     await api.settingsSet(patch);
-    const [settings, claude] = await Promise.all([api.settingsGet(), api.claudeCheck()]);
-    set({ settings, claude });
+    const [settings, tools] = await Promise.all([api.settingsGet(), api.toolchainCheck()]);
+    set({ settings, tools, claude: tools.claude });
   },
   showToast(t) { set({ toast: t }); if (t) setTimeout(() => { if (get().toast === t) set({ toast: null }); }, 5000); },
 }));

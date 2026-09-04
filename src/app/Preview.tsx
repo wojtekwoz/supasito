@@ -28,6 +28,7 @@ export function Preview() {
   const startDev = useStore((s) => s.startDev);
   const restartDev = useStore((s) => s.restartDev);
   const installDeps = useStore((s) => s.installDeps);
+  const noNode = useStore((s) => !!s.tools && !s.tools.node.ok);
   const newSite = useStore((s) => s.newSite);
   const gitInit = useStore((s) => s.gitInit);
   const refreshGit = useStore((s) => s.refreshGit);
@@ -150,9 +151,10 @@ export function Preview() {
                 <>
                   <h3>Dependencies aren't installed</h3>
                   <p>This site needs its packages before the dev server can start.</p>
+                  {noNode && <p style={{ color: "#C0392B" }}>Node.js isn't installed, so nothing can be installed yet. Get the LTS from nodejs.org, then come back.</p>}
                   {newSite.running && <div className="log">{newSite.log.slice(-12).join("\n") || "Installing…"}</div>}
                   {newSite.error && <p style={{ color: "#C0392B" }}>{newSite.error}</p>}
-                  <div><button className="btn primary" disabled={newSite.running} onClick={() => void installDeps(site.id)}>{newSite.running ? "Installing…" : `Run ${site.packageManager ?? "npm"} install`}</button></div>
+                  <div><button className="btn primary" disabled={newSite.running || noNode} onClick={() => void installDeps(site.id)}>{newSite.running ? "Installing…" : `Run ${site.packageManager ?? "npm"} install`}</button></div>
                 </>
               ) : !site.dev ? (
                 <>
@@ -162,6 +164,7 @@ export function Preview() {
               ) : dev?.status === "error" || dev?.status === "stopped" ? (
                 <>
                   <h3>{dev.status === "error" ? "The dev server didn't start" : "The dev server stopped"}</h3>
+                  {noNode && <p style={{ color: "#C0392B" }}>Node.js isn't installed, so the dev server can't run. Get the LTS from nodejs.org, then try again.</p>}
                   <div className="log">{devLog.slice(-14).join("\n") || dev.command}</div>
                   <div><button className="btn primary" onClick={() => void restartDev(site.id)}>Try again</button></div>
                 </>

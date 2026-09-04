@@ -38,6 +38,15 @@ const RESULT_ERRORS: Record<string, string> = {
   error_max_structured_output_retries: "The turn stopped with an error.",
 };
 
+/** The CLI's own error texts, reworded for someone who is not at a terminal. */
+export function friendlyError(raw: string, subtype: string): string {
+  if (/not logged in|authentication_failed|please run \/login/i.test(raw)) return "Claude Code isn't signed in on this Mac. In Terminal, run `claude auth login`, then send your message again.";
+  if (/invalid api key|authentication/i.test(raw)) return `Claude Code could not authenticate: ${raw}. Run \`claude auth login\` in Terminal, then try again.`;
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|network|ETIMEDOUT/i.test(raw)) return "Claude couldn't reach the API. Check your internet connection and send the message again.";
+  if (/rate.?limit|429|usage limit|limit reached/i.test(raw)) return `Your Claude plan limit is reached for now: ${raw}`;
+  return raw || RESULT_ERRORS[subtype] || "The turn ended with an error.";
+}
+
 let counter = 0;
 export const uid = (p = "i") => `${p}_${Date.now().toString(36)}_${(counter++).toString(36)}`;
 
@@ -137,6 +146,9 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       return false;
     }
     case "assistant": {
+      // API failures (signed out, offline, rate limit) arrive as a synthetic assistant message and
+      // again as the result; the result row carries the reworded text, so skip the bubble.
+      if (msg.is_api_error_message === true || typeof msg.error === "string") { state.busy = true; return false; }
       const m = msg.message || {};
       const id: string = m.id || uid("m");
       let changed = false;
@@ -193,8 +205,16 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       return true;
     }
     case "rate_limit_event": {
-      const windows = msg.rate_limit_info?.unifiedWindows;
-      if (!windows || typeof windows !== "object") return false;
+      const info = msg.rate_limit_info || {};
+      let changed = false;
+      if (info.status === "rejected") {
+        const at = typeof info.resetsAt === "number" ? new Date(info.resetsAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+        const text = `Your Claude plan limit is reached${at ? `; it resets at ${at}` : ""}. Open will keep the session; send again after the reset.`;
+        const last = items[items.length - 1];
+        if (!(last?.kind === "notice" && last.text === text)) { items.push({ kind: "notice", id: uid("n"), text, tone: "error" }); changed = true; }
+      }
+      const windows = info.unifiedWindows;
+      if (!windows || typeof windows !== "object") return changed;
       let best: { utilization: number; resetsAt: number | null; window: string } | null = null;
       for (const [name, w] of Object.entries<any>(windows)) {
         const u = typeof w?.utilization === "number" ? w.utilization : null;
@@ -215,7 +235,7 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       const failed = !!msg.is_error || subtype !== "success";
       const stopped = failed && state.interrupting;
       state.interrupting = false;
-      const text = stopped ? "Stopped" : failed ? (typeof msg.result === "string" && msg.result ? msg.result : RESULT_ERRORS[subtype] ?? "The turn ended with an error.") : "";
+      const text = stopped ? "Stopped" : failed ? friendlyError(typeof msg.result === "string" ? msg.result : "", subtype) : "";
       const touched = filesTouchedInTurn(items);
       // a queued message is next in line; an approval that was never answered is now moot
       const q = items.findIndex((it) => it.kind === "user" && it.queued);

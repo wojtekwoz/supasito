@@ -88,18 +88,18 @@ pnpm release [--install]       # Open.app (optionally into /Applications)
 - Only used seriously on one machine with two real sites (Astro, Next) plus scratch projects. SvelteKit, Nuxt, plain Vite and monorepos were reasoned about, not used.
 - The release app has been launched by a script, never used day to day. Dev mode is what has been tested.
 - Not signed or notarized: anyone else gets Gatekeeper's "damaged" dialog.
-- New site requires pnpm; a machine with only npm can't create one. The setup card covers a missing Claude Code, not a missing Node.
-- Failure paths (not logged in, rate limit, offline) have notices in the code but no human has seen them.
+- The first-run checklist and the npm path for New site were verified in the mock and by unit tests on this (fully equipped) machine, not yet on a bare Mac.
+- Failure paths: "not logged in" was recorded from the real CLI and is handled; offline and rate-limit texts are reworded by pattern from the CLI's own strings and have not been provoked for real.
 - Session listing re-reads JSONL heads on every site switch (fine below a few hundred sessions).
 - Last review round's fixes were verified in the mock and by smoke tests, not yet by a person.
 
 ## 8. Next milestone — v0.2 "usable by someone who isn't you"
 
 1. **Live on the release app for a week.** `pnpm release --install`, quit `tauri dev`, use Open.app for real work. Log every papercut. Acceptance: a list of things that bit, or the honest absence of one.
-2. **First-run checks that name what's missing.** Node, pnpm or npm, git, Claude Code (and its login) with one line each on how to get it. Acceptance: a fresh macOS user account reaches a working preview following only the app's own text.
-3. **npm fallback for New site.** Use pnpm if present, else npm; keep the starter lockfile-free. Acceptance: New site works on a machine without pnpm.
-4. **Signed and notarized build.** Apple Developer ID in the Tauri bundle config, `notarytool`, a `pnpm release` that produces a distributable DMG. Acceptance: a second Mac opens the DMG with no warnings.
-5. **Failure-path pass.** Deliberately hit: not logged in, rate-limited, offline, dev server crash, publish auth failure. Acceptance: each shows a notice that says what happened and what to do.
+2. **First-run checks that name what's missing.** *Built (session 12):* `toolchain.rs` + the checklist (session pane, welcome, Settings); Claude sign-in via `claude auth status`. Acceptance still open: a fresh macOS user account reaches a working preview following only the app's own text.
+3. **npm fallback for New site.** *Built (session 12):* pnpm if present, else npm, starter rules rewritten; the starter stays lockfile-free. Acceptance still open: try it on a machine without pnpm (`PATH` without pnpm is enough to simulate).
+4. **Signed and notarized build.** *Groundwork done (session 12):* `pnpm release --dmg` signs and notarizes from `.env.release`; README has the steps. Needs your Developer ID certificate and an app-specific password. Acceptance: a second Mac opens the DMG with no warnings.
+5. **Failure-path pass.** *Partly done (session 12):* not logged in (recorded for real), offline and rate limit (by pattern), publish sign-in failure, dev server without Node. Still to provoke by hand: rate limit and offline with the real CLI, a dev server crash mid-session.
 6. **Exercise the review fixes by hand.** Undo with untracked files present, cancel during commit/push, a dev script that never opens a port, fast site switching. Acceptance: matches the CHANGELOG description.
 
 Then decide from use whether anything else deserves building. Default answer: no.

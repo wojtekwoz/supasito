@@ -221,12 +221,48 @@ pub fn write_open_json(path: &str, key: &str, value: &str) -> Result<(), String>
     std::fs::write(&file, serde_json::to_string_pretty(&root).unwrap()).map_err(|e| e.to_string())
 }
 
-/// Copy the bundled starter into `<parent>/<name>` and install dependencies.
-pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_env: &str) -> Result<Site, String> {
+const NO_NODE: &str = "Node.js isn't installed, so packages can't be installed. Get it from https://nodejs.org (npm comes with it), then try again.";
+
+/// The package manager to install with: pnpm when present, else npm (which ships with Node).
+fn pick_package_manager(path_env: &str) -> Result<(&'static str, PathBuf), String> {
+    for name in ["pnpm", "npm"] {
+        if let Some(p) = crate::toolchain::which(name, path_env) { return Ok((name, p)); }
+    }
+    Err(NO_NODE.into())
+}
+
+/// The starter's permission rules and CLAUDE.md are written for pnpm; translate them when a site
+/// is created with npm so Claude's type-checks are still pre-approved there.
+pub fn npm_rule(rule: &str) -> String {
+    if let Some(rest) = rule.strip_prefix("Bash(pnpm exec ") { return format!("Bash(npx {rest}"); }
+    if let Some(rest) = rule.strip_prefix("Bash(pnpm ") { return format!("Bash(npm run {rest}"); }
+    rule.to_string()
+}
+
+fn rewrite_for_npm(dest: &Path) {
+    let settings = dest.join(".claude/settings.json");
+    if let Some(mut v) = std::fs::read_to_string(&settings).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+        for key in ["allow", "deny", "ask"] {
+            if let Some(list) = v.pointer_mut(&format!("/permissions/{key}")).and_then(|l| l.as_array_mut()) {
+                for r in list.iter_mut() { if let Some(t) = r.as_str() { *r = Value::String(npm_rule(t)); } }
+            }
+        }
+        let _ = std::fs::write(&settings, serde_json::to_string_pretty(&v).unwrap_or_default());
+    }
+    let rules = dest.join("CLAUDE.md");
+    if let Ok(text) = std::fs::read_to_string(&rules) {
+        let _ = std::fs::write(&rules, text.replace("`pnpm typecheck`", "`npm run typecheck`"));
+    }
+}
+
+/// Copy the bundled starter into `<parent>/<name>` and install dependencies, reporting each line
+/// of the installer's output to `on_log`.
+pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_env: &str, on_log: impl Fn(String) + Send + Sync) -> Result<Site, String> {
     let slug: String = name.trim().to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string();
     if slug.is_empty() { return Err("Give the site a name".into()); }
     let dest = Path::new(parent).join(&slug);
     if dest.exists() { return Err(format!("{} already exists", dest.display())); }
+    let (pm, pm_path) = pick_package_manager(path_env)?; // before copying, so a missing Node leaves nothing behind
     copy_dir(starter, &dest).map_err(|e| e.to_string())?;
     // personalise
     let cfg = json!({ "name": name.trim(), "dev": "node_modules/.bin/next dev -p {port}" });
@@ -234,23 +270,37 @@ pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_
     if let Ok(pkg) = std::fs::read_to_string(dest.join("package.json")) {
         std::fs::write(dest.join("package.json"), pkg.replace("\"name\": \"open-starter\"", &format!("\"name\": \"{slug}\""))).map_err(|e| e.to_string())?;
     }
+    if pm == "npm" { rewrite_for_npm(&dest); }
     let dest_s = dest.to_string_lossy().to_string();
-    let run = |args: &[&str]| {
-        let mut c = tokio::process::Command::new(args[0]);
-        c.args(&args[1..]).env("PATH", path_env).current_dir(&dest).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
-        c.output()
-    };
     // 1. dependencies — without them the site cannot run, so a failure removes the folder again
-    let install = run(&["pnpm", "install", "--silent"]).await.map_err(|e| e.to_string())?;
-    if !install.status.success() {
+    let install_args: &[&str] = if pm == "pnpm" { &["install"] } else { &["install", "--no-audit", "--no-fund", "--loglevel=error"] };
+    on_log(format!("$ {pm} {}", install_args.join(" ")));
+    let mut child = tokio::process::Command::new(&pm_path).args(install_args).env("PATH", path_env).env("CI", "1")
+        .current_dir(&dest).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
+        .spawn().map_err(|e| { let _ = std::fs::remove_dir_all(&dest); format!("Could not run {pm}: {e}") })?;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+    pump_lines(child.stdout.take().unwrap(), tx.clone());
+    pump_lines(child.stderr.take().unwrap(), tx.clone());
+    drop(tx);
+    let mut last = String::new();
+    while let Some(l) = rx.recv().await {
+        if !l.trim().is_empty() { last = l.trim().to_string(); }
+        on_log(l);
+    }
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    if !status.success() {
         let _ = std::fs::remove_dir_all(&dest);
-        let err = String::from_utf8_lossy(&install.stderr).trim().lines().last().unwrap_or("").to_string();
-        return Err(format!("Dependency install failed{}. Is pnpm installed and online?", if err.is_empty() { String::new() } else { format!(": {err}") }));
+        return Err(format!("{pm} install failed{}. Check that you're online, then try again.", if last.is_empty() { String::new() } else { format!(": {last}") }));
     }
     // 2. git — best effort; the site is usable without a first commit
-    let _ = run(&["git", "init", "-q"]).await;
-    let _ = run(&["git", "add", "-A"]).await;
-    let _ = run(&["git", "commit", "-qm", "New site from Open starter"]).await;
+    let git = |args: &[&str]| {
+        let mut c = tokio::process::Command::new("git");
+        c.args(args).env("PATH", path_env).current_dir(&dest).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        c.output()
+    };
+    let _ = git(&["init", "-q"]).await;
+    let _ = git(&["add", "-A"]).await;
+    let _ = git(&["commit", "-qm", "New site from Open starter"]).await;
     let mut site = Site::from_path(&dest_s)?;
     site.name = name.trim().to_string();
     Ok(site)
@@ -303,8 +353,15 @@ pub async fn run_publish(app: AppHandle, site: &Site, cmd: &str, path_env: &str)
 }
 
 /// Run the package manager's install in the site folder, streaming lines to `install://log`.
+/// The lockfile says which manager the site uses; if that one isn't installed, npm still works.
 pub async fn run_install(app: AppHandle, site: &Site, path_env: &str) -> Result<(), String> {
-    let pm = site.package_manager.clone().unwrap_or_else(|| "npm".into());
+    let site_id = site.id.clone();
+    let detected = site.package_manager.clone().unwrap_or_else(|| "npm".into());
+    let pm = if crate::toolchain::which(&detected, path_env).is_some() { detected }
+        else if crate::toolchain::which("npm", path_env).is_some() {
+            let _ = app.emit("install://log", json!({ "siteId": site_id, "line": format!("{detected} isn't installed on this Mac; using npm instead (its lockfile will be ignored).") }));
+            "npm".to_string()
+        } else { return Err(NO_NODE.into()) };
     let cmd = format!("{pm} install");
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut child = tokio::process::Command::new(&shell)
@@ -315,7 +372,6 @@ pub async fn run_install(app: AppHandle, site: &Site, path_env: &str) -> Result<
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn().map_err(|e| e.to_string())?;
-    let site_id = site.id.clone();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
@@ -447,6 +503,25 @@ mod tests {
     }
 
     #[test]
+    fn starter_rules_translate_to_npm() {
+        assert_eq!(npm_rule("Bash(pnpm typecheck)"), "Bash(npm run typecheck)");
+        assert_eq!(npm_rule("Bash(pnpm exec tsc *)"), "Bash(npx tsc *)");
+        assert_eq!(npm_rule("Bash(pnpm dev*)"), "Bash(npm run dev*)");
+        assert_eq!(npm_rule("Bash(git status*)"), "Bash(git status*)");
+        let dir = std::env::temp_dir().join(format!("open-npm-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        std::fs::write(dir.join(".claude/settings.json"), r#"{"permissions":{"allow":["Bash(pnpm typecheck)","Bash(git diff*)"],"deny":["Bash(pnpm dev*)"]}}"#).unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "run `pnpm typecheck` after edits").unwrap();
+        rewrite_for_npm(&dir);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(".claude/settings.json")).unwrap()).unwrap();
+        assert_eq!(v["permissions"]["allow"][0], "Bash(npm run typecheck)");
+        assert_eq!(v["permissions"]["allow"][1], "Bash(git diff*)");
+        assert_eq!(v["permissions"]["deny"][0], "Bash(npm run dev*)");
+        assert!(std::fs::read_to_string(dir.join("CLAUDE.md")).unwrap().contains("`npm run typecheck`"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn restore_reverts_tracked_and_deletes_only_created() {
         let dir = std::env::temp_dir().join(format!("open-restore-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -479,7 +554,7 @@ mod tests {
         let parent = std::env::temp_dir().join(format!("open-new-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&parent).unwrap();
         let env = crate::state::login_shell_path();
-        let site = create_from_starter(&starter(), parent.to_str().unwrap(), "My Test Site", &env).await.unwrap();
+        let site = create_from_starter(&starter(), parent.to_str().unwrap(), "My Test Site", &env, |l| eprintln!("{l}")).await.unwrap();
         assert_eq!(site.name, "My Test Site");
         assert!(site.path.ends_with("my-test-site"));
         assert!(site.is_git && !site.needs_install);

@@ -53,6 +53,37 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
   check("errors: friendly text for max turns", r2?.kind === "result" && r2.isError && /turn limit/.test(r2.text), r2);
 }
 
+// 3b. Signed out: the CLI sends a synthetic assistant message and an error result (recorded from
+// 2.1.257 with an empty HOME). The bubble is skipped and the result says what to do in Open's terms.
+{
+  const s = emptySession();
+  addUser(s, "say hi", null);
+  applyMessage(s, { type: "assistant", message: { id: "a1", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "Not logged in · Please run /login" }] }, parent_tool_use_id: null, error: "authentication_failed", is_api_error_message: true });
+  check("auth: synthetic bubble not shown", !s.items.some((i) => i.kind === "assistant"), s.items);
+  applyMessage(s, { type: "result", subtype: "success", is_error: true, num_turns: 1, result: "Not logged in · Please run /login", terminal_reason: "api_error", duration_ms: 76, total_cost_usd: 0 });
+  const r = s.items.find((i) => i.kind === "result");
+  check("auth: result reworded with claude auth login", r?.kind === "result" && r.isError && /claude auth login/.test(r.text) && !/\/login/.test(r.text), r);
+  check("auth: not busy afterwards", s.busy === false);
+  const s2 = emptySession();
+  applyMessage(s2, { type: "result", subtype: "success", is_error: true, result: "API Error: fetch failed" });
+  const r2 = s2.items.find((i) => i.kind === "result");
+  check("offline: reworded", r2?.kind === "result" && /internet connection/.test(r2.text), r2);
+}
+
+// 3c. Rate limit rejected: one notice with the reset time, not repeated for the same event.
+{
+  const s = emptySession();
+  const ev = { type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1_900_000_000, unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1_900_000_000 } } } };
+  applyMessage(s, ev);
+  applyMessage(s, ev);
+  const notices = s.items.filter((i) => i.kind === "notice");
+  check("rate limit: one notice", notices.length === 1 && /plan limit/.test(notices[0].kind === "notice" ? notices[0].text : ""), notices);
+  check("rate limit: usage recorded", s.usage?.utilization === 1, s.usage);
+  const s3 = emptySession();
+  applyMessage(s3, { type: "rate_limit_event", rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.3 } } } });
+  check("rate limit: allowed adds no notice", s3.items.length === 0 && s3.usage?.utilization === 0.3);
+}
+
 // 4. Files touched in a turn: Edit/Write since the last user message, failures excluded, deduped.
 {
   const items: Item[] = [

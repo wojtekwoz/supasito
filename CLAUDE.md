@@ -24,6 +24,8 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - `src-tauri/src/agent/claude.rs` — the only place that speaks Claude Code's stream-json control
   protocol (verified on 2.1.257: `--permission-prompt-tool stdio` → `control_request/can_use_tool`).
   Keep protocol details here; the UI only sees `agent://message|permission|exit` events.
+- `src-tauri/src/toolchain.rs` — first-run checks (Node, pnpm/npm, git, Claude Code + `claude auth status`).
+  The UI's `Checklist.tsx` renders it; mock switches `?tools=missing|nologin|nonode|nogit|nopnpm`, `?sites=none`.
 - `src-tauri/src/devserver.rs` — dev-server supervisor. Readiness must stay dual-stack
   (Vite/Astro bind `[::1]` only); the port the server prints wins.
 - `src-tauri/src/picker.js` — injected into every frame (`initialization_script_for_all_frames`);

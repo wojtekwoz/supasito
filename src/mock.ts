@@ -68,8 +68,16 @@ export function mockBackend(): Backend {
   return {
     settingsGet: async () => ({ model: null, permissionMode: "acceptEdits" }),
     settingsSet: async () => {},
-    claudeCheck: async () => ({ ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257" }),
-    sitesList: async () => [site],
+    // `?tools=missing|nologin|nonode|nogit` simulates a Mac that lacks something, for checking the checklist.
+    toolchainCheck: async () => {
+      const sim = new URLSearchParams(location.search).get("tools");
+      const claude = sim === "missing" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai" };
+      const node = sim === "missing" || sim === "nonode" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/node", version: "24.4.0" };
+      const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
+      const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
+      return { claude, node, git, packageManager };
+    },
+    sitesList: async () => (new URLSearchParams(location.search).get("sites") === "none" ? [] : [site]),
     sitePickFolder: async () => "/Users/you/Sites/another",
     siteAdd: async (path) => ({ ...site, id: "site-" + Math.random().toString(36).slice(2), path, name: path.split("/").pop() || "site", lastSessionId: null }),
     siteRemove: async () => {},

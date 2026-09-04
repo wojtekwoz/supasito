@@ -5,6 +5,7 @@ mod sites;
 #[cfg(debug_assertions)]
 mod smoke;
 mod state;
+mod toolchain;
 
 use serde_json::{json, Value};
 use state::AppState;
@@ -35,18 +36,11 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
     state.save()
 }
 
+/// What this Mac has (Node, package manager, git, Claude Code and its login), for the checklist.
 #[tauri::command]
-async fn claude_check(state: State<'_, AppState>) -> Result<Value, String> {
+async fn toolchain_check(state: State<'_, AppState>) -> Result<toolchain::Toolchain, String> {
     let configured = state.persisted.lock().unwrap().claude_path.clone();
-    let path_env = state.path_env.clone();
-    let found = agent::claude::locate(configured.as_deref(), &path_env).await;
-    match found {
-        Some(path) => {
-            let version = agent::claude::version(&path, &path_env).await.unwrap_or_default();
-            Ok(json!({ "ok": true, "path": path, "version": version }))
-        }
-        None => Ok(json!({ "ok": false })),
-    }
+    Ok(toolchain::check(configured.as_deref(), &state.path_env).await)
 }
 
 // ---------- sites ----------
@@ -265,7 +259,8 @@ fn site_set_last_session(state: State<'_, AppState>, site_id: String, session_id
 #[tauri::command]
 async fn site_new(app: AppHandle, state: State<'_, AppState>, parent: String, name: String) -> Result<sites::Site, String> {
     let starter = starter_dir(&app).ok_or("starter template not found")?;
-    let site = sites::create_from_starter(&starter, &parent, &name, &state.path_env).await?;
+    let log_app = app.clone();
+    let site = sites::create_from_starter(&starter, &parent, &name, &state.path_env, move |line| { let _ = log_app.emit("install://log", json!({ "siteId": null, "line": line })); }).await?;
     sites::mark_trusted(&site.path);
     {
         let mut p = state.persisted.lock().unwrap();
@@ -452,7 +447,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            settings_get, settings_set, claude_check,
+            settings_get, settings_set, toolchain_check,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
             dev_start, dev_stop, dev_status, dev_log,
             publish_run, publish_cancel,

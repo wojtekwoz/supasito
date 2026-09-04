@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store";
 import { Check } from "../ui/Icons";
+import { Checklist } from "./Checklist";
 
 export function NewSiteDialog() {
   const ns = useStore((s) => s.newSite);
@@ -204,7 +205,6 @@ export function SettingsDialog() {
   const open = useStore((s) => s.settingsOpen);
   const setOpen = useStore((s) => s.setSettingsOpen);
   const settings = useStore((s) => s.settings);
-  const claude = useStore((s) => s.claude);
   const save = useStore((s) => s.saveSettings);
   const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits" });
   useEffect(() => { if (open) setForm({ claudePath: settings.claudePath ?? "", model: settings.model ?? "", permissionMode: settings.permissionMode ?? "acceptEdits" }); }, [open, settings]);
@@ -213,8 +213,8 @@ export function SettingsDialog() {
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
       <div className="modal">
         <h2>Settings</h2>
-        <div className="row2"><label>Claude Code</label><div style={{ color: "var(--ink-2)", fontSize: 12 }}>{claude?.ok ? `${claude.version} at ${claude.path}` : "Not found. Install from claude.com/claude-code, sign in once in a terminal."}</div></div>
-        <div className="row2"><label>Path override</label><input className="text-input" placeholder="Leave empty to use PATH" value={form.claudePath} onChange={(e) => setForm({ ...form, claudePath: e.target.value })} /></div>
+        <div className="row2"><label>On this Mac</label><Checklist compact /></div>
+        <div className="row2"><label>Claude path</label><input className="text-input" placeholder="Leave empty to find claude on your PATH" value={form.claudePath} onChange={(e) => setForm({ ...form, claudePath: e.target.value })} /></div>
         <div className="row2"><label>Model</label>
           <div style={{ display: "grid", gap: 6 }}>
             <select className="text-input" value={MODELS.some((m) => m.value === form.model) ? form.model : "custom"} onChange={(e) => setForm({ ...form, model: e.target.value === "custom" ? (MODELS.some((m) => m.value === form.model) ? "" : form.model) : e.target.value })}>

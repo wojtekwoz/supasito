@@ -57,7 +57,11 @@ export type Attachment = { id: string; name: string; mediaType: string; data: st
 
 export type GitStatus = { isGit: boolean; changed: number; files: string[]; branch?: string | null; remote?: string | null };
 export type PublishTarget = "preview" | "production";
-export type ClaudeStatus = { ok: boolean; path?: string; version?: string };
+export type Tool = { ok: boolean; path?: string | null; version?: string | null };
+/** `loggedIn` comes from `claude auth status`; null when the CLI is too old to answer. */
+export type ClaudeStatus = Tool & { loggedIn?: boolean | null; authMethod?: string | null };
+/** What this Mac has. `packageManager` is the one New site will use: pnpm if present, else npm. */
+export type Toolchain = { claude: ClaudeStatus; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null };
 export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
 

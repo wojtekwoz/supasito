@@ -271,3 +271,21 @@ a { color: var(--accent); }
 .suggest-item { text-align: left; padding: 6px 8px; border-radius: 5px; font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
 .suggest-item:hover, .suggest-item.on { background: var(--accent-soft); color: var(--accent); }
 .suggest-hint { padding: 4px 8px 2px; font-size: 11px; color: var(--ink-3); }
+
+/* Toolchain checklist (first run, settings) */
+.checklist { display: grid; gap: 10px; text-align: left; }
+.checklist .check { display: grid; grid-template-columns: 10px 96px 1fr; column-gap: 10px; align-items: baseline; font-size: 13px; }
+.checklist .check .label { color: var(--ink); font-weight: 600; }
+.checklist .check .detail { color: var(--ink-2); }
+.checklist .check.missing .detail { color: var(--err); }
+.checklist .check .fix { grid-column: 3; color: var(--ink-2); font-size: 12.5px; line-height: 1.5; }
+.checklist .check .fix code { font-family: var(--mono); font-size: 11.5px; background: var(--elev); border: 1px solid var(--line-2); border-radius: 4px; padding: 1px 5px; }
+.checklist .check-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); align-self: center; }
+.checklist .check-dot.ok { background: var(--ok); }
+.checklist .check-dot.no { background: var(--err); }
+.checklist .actions { display: flex; gap: 8px; justify-content: flex-start; margin-top: 4px; }
+.checklist.compact { gap: 6px; }
+.checklist.compact .check { grid-template-columns: 8px 80px 1fr; font-size: 12px; }
+.checklist.compact .check .fix { font-size: 12px; }
+.welcome .box.wide { max-width: 460px; }
+.welcome .box .checklist { padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--elev); }

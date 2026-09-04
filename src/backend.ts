@@ -1,5 +1,5 @@
 import type {
-  Attachment, ClaudeStatus, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, Settings, Site,
+  Attachment, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, Settings, Site, Toolchain,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -7,7 +7,7 @@ export type Unlisten = () => void;
 export interface Backend {
   settingsGet(): Promise<Settings>;
   settingsSet(patch: Settings): Promise<void>;
-  claudeCheck(): Promise<ClaudeStatus>;
+  toolchainCheck(): Promise<Toolchain>;
   sitesList(): Promise<Site[]>;
   sitePickFolder(): Promise<string | null>;
   siteAdd(path: string): Promise<Site>;
@@ -60,7 +60,7 @@ async function tauriBackend(): Promise<Backend> {
   return {
     settingsGet: () => invoke("settings_get"),
     settingsSet: (patch) => invoke("settings_set", { patch }),
-    claudeCheck: () => invoke("claude_check"),
+    toolchainCheck: () => invoke("toolchain_check"),
     sitesList: () => invoke("sites_list"),
     sitePickFolder: () => invoke("site_pick_folder"),
     siteAdd: (path) => invoke("site_add", { path }),

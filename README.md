@@ -6,7 +6,7 @@ Read [PLAN.md](PLAN.md) for the thesis, the research behind it, and the architec
 
 ## Run it
 
-Prerequisites: Rust (stable), Node 20+, pnpm, Xcode command line tools, and [Claude Code](https://claude.com/claude-code) installed and signed in (`claude` on your PATH).
+Prerequisites for building Open: Rust (stable), Node 20+, pnpm, Xcode command line tools. To use it: [Claude Code](https://claude.com/claude-code) signed in, Node.js and git. Open checks for these on launch and shows one line per missing tool.
 
 ```bash
 pnpm install
@@ -20,7 +20,20 @@ pnpm release            # builds Open.app
 pnpm release --install  # …and copies it to /Applications
 ```
 
-Add `--bundles dmg` from an interactive terminal session if you want a disk image; the DMG step drives Finder and fails in headless shells.
+`pnpm release --dmg` also builds a disk image (from an interactive terminal: the DMG step drives Finder).
+
+## Distribute it
+
+An unsigned `Open.app` runs on the Mac that built it; any other Mac shows Gatekeeper's "damaged" warning. To hand it to someone else, sign and notarize it. The Tauri CLI does both when these variables are set; put them in `.env.release` (gitignored) and `pnpm release` picks them up:
+
+```bash
+APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"  # from Xcode → Settings → Accounts → Manage Certificates; `security find-identity -v -p codesigning` lists it
+APPLE_ID=you@example.com          # the Apple ID of that developer account
+APPLE_PASSWORD=xxxx-xxxx-xxxx-xxxx  # an app-specific password from appleid.apple.com, not your real one
+APPLE_TEAM_ID=TEAMID
+```
+
+Then `pnpm release --dmg` from an interactive terminal: the app is signed with the hardened runtime, submitted to Apple's notary service, stapled, and packed into a DMG. The script prints whether it is signing and notarizing and verifies the signature afterwards. This path is set up but has not yet been exercised with a real Developer ID (see PLAN.md).
 
 ## How it works
 
@@ -38,6 +51,7 @@ Add `--bundles dmg` from an interactive terminal session if you want a disk imag
 - **What changed:** "N files changed" on a turn's completion line opens the diff for that turn.
 - **Show Claude the preview:** the camera button in the preview toolbar attaches a screenshot of the preview pane to your next message. It uses the webview's own snapshot, so there is no permission prompt.
 - **Site rules:** the book icon on the current site opens its `CLAUDE.md` (voice, brand, what not to touch) in a dialog. Double-click a site to rename it.
+- **First-run checks:** on launch Open looks for Claude Code (and whether it is signed in, via `claude auth status`), Node.js, git and a package manager. Anything missing gets one line saying how to get it, in the session pane, the welcome screen and Settings. **New site** installs with pnpm when it is present and with npm otherwise (the starter's permission rules are rewritten to match).
 - **Slash commands:** type `/` in the composer to pick from the skills and commands your Claude Code reports for the session.
 - **Permission mode per session:** the session header switches a running session between "Ask before commands", "Don't ask this session", "Plan first" and "Ask about everything".
 - **One dev server at a time:** switching sites stops the previous site's dev server unless one of its sessions is still working.

@@ -148,6 +148,18 @@ function bump(transcripts: Record<string, SessionState>, id: string): Record<str
 /** Control requests in flight whose rejection should fall back to restarting the process, by request id. */
 const pendingControl = new Map<string, () => void>();
 const waitUntil = async (cond: () => boolean, ms: number) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 100)); return cond(); };
+/** Dev servers being killed, by site. The backend forgets a server as soon as its stop begins but reports `stopped`
+ *  only once the process is gone, so anything that restarts the same site waits for the kill first — otherwise
+ *  the old server's `stopped` event lands on the new one. A second stop while one is in flight is the same stop. */
+const devStops = new Map<string, Promise<void>>();
+function stopDevServer(siteId: string): Promise<void> {
+  const pending = devStops.get(siteId);
+  if (pending) return pending;
+  const p: Promise<void> = api.devStop(siteId).catch(() => {}).finally(() => { if (devStops.get(siteId) === p) devStops.delete(siteId); });
+  devStops.set(siteId, p);
+  return p;
+}
+const siteBusy = (st: Store, siteId: string) => (st.sessions[siteId] ?? []).some((x) => st.transcripts[x.id]?.busy);
 
 /** Record a model / effort / fast-mode choice for the current session. A running, idle session gets the
  *  control request (`set_model`, `apply_flag_settings`); if the CLI rejects it, or the choice has no request
@@ -330,11 +342,11 @@ export const useStore = create<Store>((set, get) => ({
     // Stop the dev server of the site we are leaving unless one of its sessions is still working.
     if (previous && previous !== id) {
       const st = get();
-      const busy = (st.sessions[previous] ?? []).some((x) => st.transcripts[x.id]?.busy);
       const d = st.dev[previous];
-      if (!busy && d && (d.status === "ready" || d.status === "starting")) void api.devStop(previous).catch(() => {});
+      if (!siteBusy(st, previous) && d && (d.status === "ready" || d.status === "starting")) void stopDevServer(previous);
     }
-    const [sessions, devInfo] = await Promise.all([api.sessionsList(id), api.devStatus(id)]);
+    const stopping = devStops.get(id);
+    const [sessions, devInfo] = await Promise.all([api.sessionsList(id), stopping ? stopping.then(() => api.devStatus(id)) : api.devStatus(id)]);
     set({ sessions: { ...get().sessions, [id]: sessions } });
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
     if (get().currentSiteId !== id) return; // the user moved on while we were loading
@@ -368,7 +380,7 @@ export const useStore = create<Store>((set, get) => ({
     for (const sid of ids) delete running[sid];
     set({ transcripts, running });
     get().syncBadge();
-    await api.devStop(id).catch(() => {});
+    await stopDevServer(id);
     await api.siteRemove(id);
     const sites = get().sites.filter((s) => s.id !== id);
     set({ sites });
@@ -498,12 +510,14 @@ export const useStore = create<Store>((set, get) => ({
       const newer = get().dev[siteId];
       // a status event for this very server may have arrived before the reply; keep it
       if (!(newer && newer.port === info.port && newer.status !== "starting")) set({ dev: { ...get().dev, [siteId]: info } });
+      // the user may have left the site while the server was spawning, before a switch could know to stop it
+      if (get().currentSiteId !== siteId && !siteBusy(get(), siteId)) void stopDevServer(siteId);
     } catch (e) {
       set({ dev: { ...get().dev, [siteId]: { siteId, port: 0, url: "", status: "error", command: "" } }, devLogs: { ...get().devLogs, [siteId]: [String(e)] } });
     }
   },
-  async stopDev(siteId) { await api.devStop(siteId).catch(() => {}); },
-  async restartDev(siteId) { await api.devStop(siteId).catch(() => {}); set({ devLogs: { ...get().devLogs, [siteId]: [] } }); await get().startDev(siteId); },
+  async stopDev(siteId) { await stopDevServer(siteId); },
+  async restartDev(siteId) { await stopDevServer(siteId); set({ devLogs: { ...get().devLogs, [siteId]: [] } }); await get().startDev(siteId); },
   toggleDevLog() { set({ devLogOpen: !get().devLogOpen }); },
 
   async refreshGit(siteId) {

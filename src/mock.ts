@@ -12,11 +12,29 @@ const site: Site = {
   id: "site-demo", path: "/Users/you/Sites/clarityops", name: "ClarityOps", dev: "node_modules/.bin/next dev -p {port}",
   publish: "vercel deploy --prod --yes", preview: "vercel deploy --yes", lastSessionId: "sess-1", isGit: true, needsInstall: false, framework: "next", packageManager: "pnpm",
 };
-const sessions: SessionInfo[] = [
-  { id: "sess-1", title: "Roll out the new elevated Card style", lastModified: Date.now() - 3600e3, messageCount: 6 },
-  { id: "sess-2", title: "Update pricing FAQ for the Enterprise tier", lastModified: Date.now() - 86400e3 * 2, messageCount: 4 },
-];
-let dev: DevInfo = { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! };
+const query = new URLSearchParams(location.search);
+// `?sites=none` starts with no site, `?sites=two` with a second one, for checking site switching.
+const mockSites: Site[] = query.get("sites") === "none" ? [] : query.get("sites") === "two"
+  ? [site, { ...site, id: "site-2", path: "/Users/you/Sites/second", name: "Second", lastSessionId: null }]
+  : [site];
+const siteOf = (id: string) => mockSites.find((s) => s.id === id) ?? site;
+const sessions: Record<string, SessionInfo[]> = {
+  [site.id]: [
+    { id: "sess-1", title: "Roll out the new elevated Card style", lastModified: Date.now() - 3600e3, messageCount: 6 },
+    { id: "sess-2", title: "Update pricing FAQ for the Enterprise tier", lastModified: Date.now() - 86400e3 * 2, messageCount: 4 },
+  ],
+  "site-2": [{ id: "sess-second-1", title: "Draft the About page", lastModified: Date.now() - 7200e3, messageCount: 2 }],
+};
+// Per-site dev servers, shaped like the Rust registry: `?devDelay=<ms>` is how long a start takes to become ready
+// (a stale start never reports ready, like the real one), `?stopDelay=<ms>` how long the kill takes — while it is
+// in flight the entry is gone for `devStatus` (Registry::stop removes it before killing) and `stopped` is emitted at the end.
+const devs = new Map<string, DevInfo>();
+const devStarts = new Map<string, number>();
+const devStopping = new Set<string>();
+const devDelay = Number(query.get("devDelay")) || 0;
+const stopDelay = Number(query.get("stopDelay")) || 0;
+if (mockSites[0]) devs.set(site.id, { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! });
+(window as any).__mock = { devs };
 
 export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title>ClarityOps</title>
 <style>body{margin:0;font:16px/1.5 Georgia,serif;color:#141414;background:#f7f6f2}header{display:flex;justify-content:space-between;padding:20px 32px;font:600 13px/1 -apple-system,system-ui}nav a{margin-left:18px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#333;text-decoration:none}.hero{text-align:center;padding:72px 24px 40px}.hero .kicker{font:600 10px/1 -apple-system;letter-spacing:.2em;text-transform:uppercase;color:#666}h1{font-size:64px;line-height:1;margin:14px 0 18px;font-weight:400}.hero p{max-width:520px;margin:0 auto 24px;font-size:18px;color:#333}.btn{display:inline-block;padding:10px 16px;background:#141414;color:#fff;font:600 11px/1 -apple-system;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;margin:0 4px}.btn.ghost{background:transparent;color:#141414;border:1px solid #141414}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:24px 32px 64px}.card{background:#fff;border:1px solid #e3e1da;padding:22px;min-height:160px}.card h3{margin:0 0 8px;font-weight:500}.card p{margin:0;color:#555;font-size:15px}.card.dark{background:#141414;color:#fff}.card.dark p{color:#bbb}</style></head>
@@ -25,7 +43,8 @@ export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title
 <section class="grid"><div class="card"><h3>Context intake</h3><p>Capture the why before the what.</p></div><div class="card"><h3>Ownership map</h3><p>Every decision has a name on it.</p></div><div class="card dark"><h3>Pricing expansion approved for EMEA.</h3><p>Owner: Revenue Operations · Friday 09:00</p></div></section></main>
 <script>${pickerSource}</script></body></html>`;
 
-const running = new Set<string>();
+// session id → site id, like the Rust side's running map
+const running = new Map<string, string>();
 let mockPublishCancelled = false;
 let mockChanged = 5;
 // Context grows by a fixed amount per turn (`?context=full` starts near the top) and compacts past 170k; cost is cumulative like the CLI's.
@@ -62,6 +81,7 @@ async function fakeTurn(sessionId: string, text: string) {
     emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, model: mockModel, role: "assistant", content: [{ type: "text", text: s }], usage: mockUsage() }, parent_tool_use_id: null } });
   };
   await wait(300);
+  const path = siteOf(running.get(sessionId) ?? site.id).path;
   mockTurns++;
   mockCtx += 22_000;
   if (mockCtx > 170_000) {
@@ -69,20 +89,20 @@ async function fakeTurn(sessionId: string, text: string) {
     mockCtx = 12_000;
   }
   const fastOn = mockFast && /opus/.test(mockModel);
-  emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: mockModel, cwd: site.path, session_id: sessionId, tools: [], permissionMode: "acceptEdits", slash_commands: ["compact", "cost", "review", "impeccable", "web-typography", "cro-methodology"], fast_mode_state: fastOn ? "on" : "off", ...(fastOn ? {} : { fast_mode_disabled_reason: mockFast ? "model_not_supported" : "sdk_opt_in_required" }) } });
+  emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: mockModel, cwd: path, session_id: sessionId, tools: [], permissionMode: "acceptEdits", slash_commands: ["compact", "cost", "review", "impeccable", "web-typography", "cro-methodology"], fast_mode_state: fastOn ? "on" : "off", ...(fastOn ? {} : { fast_mode_disabled_reason: mockFast ? "model_not_supported" : "sdk_opt_in_required" }) } });
   await say("Checking the hero section first — the headline lives in components/hero.tsx.", THINKING);
   const t1 = "toolu_1" + Math.random().toString(36).slice(2);
-  emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m2", role: "assistant", content: [{ type: "tool_use", id: t1, name: "Read", input: { file_path: site.path + "/components/hero.tsx" } }] }, parent_tool_use_id: null } });
+  emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m2", role: "assistant", content: [{ type: "tool_use", id: t1, name: "Read", input: { file_path: path + "/components/hero.tsx" } }] }, parent_tool_use_id: null } });
   await wait(500);
   emit("agent://message", { sessionId, message: { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: t1, content: "export function Hero() { … }" }] }, parent_tool_use_id: null } });
   const t2 = "toolu_2" + Math.random().toString(36).slice(2);
-  emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m3", role: "assistant", content: [{ type: "tool_use", id: t2, name: "Edit", input: { file_path: site.path + "/components/hero.tsx", old_string: "Decisions, made durable", new_string: text.slice(0, 40) } }] }, parent_tool_use_id: null } });
+  emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m3", role: "assistant", content: [{ type: "tool_use", id: t2, name: "Edit", input: { file_path: path + "/components/hero.tsx", old_string: "Decisions, made durable", new_string: text.slice(0, 40) } }] }, parent_tool_use_id: null } });
   await wait(600);
   emit("agent://message", { sessionId, message: { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: t2, content: "The file has been updated." }] }, parent_tool_use_id: null } });
   emit("agent://message", { sessionId, message: { type: "rate_limit_event", rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.82, resetsAt: Math.floor(Date.now() / 1000) + 5400 }, seven_day: { utilization: 0.31, resetsAt: Math.floor(Date.now() / 1000) + 86400 } } } } });
   if (/pricing/i.test(text)) {
     const t2b = "toolu_2b" + Math.random().toString(36).slice(2);
-    emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m3b", role: "assistant", content: [{ type: "tool_use", id: t2b, name: "Edit", input: { file_path: site.path + "/app/pricing/page.tsx", old_string: "Plans", new_string: "Pricing" } }] }, parent_tool_use_id: null } });
+    emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m3b", role: "assistant", content: [{ type: "tool_use", id: t2b, name: "Edit", input: { file_path: path + "/app/pricing/page.tsx", old_string: "Plans", new_string: "Pricing" } }] }, parent_tool_use_id: null } });
     await wait(400);
     emit("agent://message", { sessionId, message: { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: t2b, content: "The file has been updated." }] }, parent_tool_use_id: null } });
   }
@@ -103,9 +123,9 @@ export function mockBackend(): Backend {
       const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
       return { claude, node, git, packageManager };
     },
-    sitesList: async () => (new URLSearchParams(location.search).get("sites") === "none" ? [] : [site]),
+    sitesList: async () => [...mockSites],
     sitePickFolder: async () => "/Users/you/Sites/another",
-    siteAdd: async (path) => ({ ...site, id: "site-" + Math.random().toString(36).slice(2), path, name: path.split("/").pop() || "site", lastSessionId: null }),
+    siteAdd: async (path) => { const s = { ...site, id: "site-" + Math.random().toString(36).slice(2), path, name: path.split("/").pop() || "site", lastSessionId: null }; mockSites.push(s); return s; },
     siteRemove: async () => {},
     siteRefresh: async () => site,
     siteInstall: async () => site,
@@ -132,10 +152,36 @@ export function mockBackend(): Backend {
     siteUndoFiles: async (_siteId, files, created) => ({ restored: files.filter((f) => !created.includes(f)).map((f) => f.replace(site.path + "/", "")), deleted: created.map((f) => f.replace(site.path + "/", "")), skipped: [] }),
     previewEvent: async (kind, detail) => { console.debug("[preview]", kind, detail); },
     siteSetLastSession: async () => {},
-    siteNew: async (parent, name) => ({ ...site, id: "site-new", path: parent + "/" + name, name, lastSessionId: null }),
-    devStart: async () => { dev = { ...dev, status: "ready" }; emit("dev://status", dev); return dev; },
-    devStop: async () => { dev = { ...dev, status: "stopped" }; emit("dev://status", dev); },
-    devStatus: async () => dev,
+    siteNew: async (parent, name) => { const s = { ...site, id: "site-new", path: parent + "/" + name, name, lastSessionId: null }; mockSites.push(s); return s; },
+    devStart: async (siteId) => {
+      const cur = devs.get(siteId);
+      if (cur && !devStopping.has(siteId) && (cur.status === "ready" || cur.status === "starting")) return cur;
+      const token = (devStarts.get(siteId) ?? 0) + 1;
+      devStarts.set(siteId, token);
+      // one port per site, reused on restart like `last_port`
+      const info: DevInfo = { siteId, port: 3000 + Math.max(0, mockSites.findIndex((s) => s.id === siteId)), url: "mock:", status: "starting", command: siteOf(siteId).dev ?? "" };
+      devs.set(siteId, info);
+      emit("dev://status", info);
+      void wait(devDelay).then(() => {
+        if (devStarts.get(siteId) !== token || devs.get(siteId) !== info) return;
+        const ready = { ...info, status: "ready" as const };
+        devs.set(siteId, ready);
+        emit("dev://status", ready);
+      });
+      return info;
+    },
+    devStop: async (siteId) => {
+      const cur = devs.get(siteId);
+      if (!cur || cur.status === "stopped" || devStopping.has(siteId)) return;
+      devStopping.add(siteId);
+      devStarts.set(siteId, (devStarts.get(siteId) ?? 0) + 1); // a start in flight never reports ready
+      await wait(stopDelay);
+      devStopping.delete(siteId);
+      const stopped = { ...cur, status: "stopped" as const };
+      if (devs.get(siteId) === cur) devs.set(siteId, stopped);
+      emit("dev://status", stopped); // the old server's event fires even when a newer start replaced it, like the Rust side
+    },
+    devStatus: async (siteId) => (devStopping.has(siteId) ? null : devs.get(siteId) ?? null),
     devLog: async () => ["▲ Next.js 16.3.4", "- Local: http://localhost:3000", "✓ Ready in 1.2s"],
     publishRun: async (siteId, target) => {
       mockPublishCancelled = false;
@@ -144,9 +190,9 @@ export function mockBackend(): Backend {
       return { ok: true, code: 0, url, log: [] };
     },
     publishCancel: async () => { mockPublishCancelled = true; },
-    agentStart: async (_siteId, resume, overrides) => {
+    agentStart: async (siteId, resume, overrides) => {
       const id = resume ?? "sess-" + Math.random().toString(36).slice(2);
-      running.add(id);
+      running.set(id, siteId);
       // like the Rust side: the session's own choice, else the saved default
       mockModel = overrides?.model || mockSettings.model || mockModel;
       mockFast = overrides?.fastMode ?? !!mockSettings.fastMode;
@@ -167,10 +213,10 @@ export function mockBackend(): Backend {
     },
     agentInterrupt: async () => {},
     agentStop: async (sessionId) => { running.delete(sessionId); emit("agent://exit", { sessionId, code: 0 }); },
-    agentRunning: async () => [...running].map((sessionId) => ({ sessionId, siteId: site.id })),
-    sessionsList: async () => sessions,
-    sessionTranscript: async (_siteId, sessionId) => [
-      { type: "user", message: { role: "user", content: sessions.find((s) => s.id === sessionId)?.title ?? "Hello" } },
+    agentRunning: async () => [...running].map(([sessionId, siteId]) => ({ sessionId, siteId })),
+    sessionsList: async (siteId) => sessions[siteId] ?? [],
+    sessionTranscript: async (siteId, sessionId) => [
+      { type: "user", message: { role: "user", content: (sessions[siteId] ?? []).find((s) => s.id === sessionId)?.title ?? "Hello" } },
       { type: "assistant", message: { id: "old1", role: "assistant", content: [{ type: "text", text: "Home is done. Pricing next — its plan tiers extend the same Card base, so they inherit the new style." }], usage: { input_tokens: 12, cache_creation_input_tokens: 1200, cache_read_input_tokens: 61000, output_tokens: 60 } } },
     ],
     openExternal: async (url) => { window.open(url, "_blank"); },

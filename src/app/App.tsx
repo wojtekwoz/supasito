@@ -30,8 +30,9 @@ export default function App() {
         if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(false); st.newSession(); }
         return;
       }
-      // ⌘\ shows the preview at full width, and back.
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === "\\") {
+      // ⌘\ shows the preview at full width, and back. Matched by key position: on layouts where the
+      // backslash needs Option (German, French) `key` is something else and `altKey` is set.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.code === "Backslash") {
         const st = useStore.getState();
         if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(!st.previewFull); }
         return;

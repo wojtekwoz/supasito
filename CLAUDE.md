@@ -17,7 +17,12 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).
 - Real-CLI checks: `OPEN_SMOKE_PROMPT=… pnpm tauri dev` (see src-tauri/src/smoke.rs; scenarios
-  `queue|interrupt|pointing`, `OPEN_SMOKE_SITE_PATH` for a scratch site, `OPEN_SMOKE_MODEL=haiku`).
+  `queue|interrupt|pointing|mode|tools`, `OPEN_SMOKE_SITE_PATH` for a scratch site, `OPEN_SMOKE_MODEL=haiku`).
+  The built debug binary can be run directly with a fake `HOME` (signed out, empty app state) or
+  `OPEN_PATH=/usr/bin:/bin` (bare Mac) while `pnpm dev` serves the UI on 1420.
+- Recording a CLI failure shape: `ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p … --output-format stream-json`
+  for offline (10 retries, ~3 min), `HOME=<empty dir>` for signed out. Put the recorded lines in a reducer test.
+- `pnpm release --install --zip` = the unsigned "underground" build; signing needs a Developer ID (see README).
 - `pnpm release [--install]` builds Open.app (and copies it to /Applications).
 
 ## Where things are
@@ -31,7 +36,10 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - `src-tauri/src/picker.js` — injected into every frame (`initialization_script_for_all_frames`);
   posts selections to the parent. Server Component owners come from React 19 component-info objects.
 - `src/agent/transcript.ts` — reducer from stream-json to transcript items. Items are immutable
-  (replace, never mutate) because rows are memoised.
+  (replace, never mutate) because rows are memoised. Also derives context fullness (the last API call's
+  `usage` input + cache tokens; the result's `usage` is the turn's sum, don't use it) and per-turn cost
+  from the CLI's cumulative `total_cost_usd` (0 on interrupt; reset when the process restarts).
+- `src/app/Usage.tsx` — the usage ring by the composer, its popover, and the plan rows Settings shows.
 - `src/routes.ts` — file → route mapping for follow-the-page.
 - `starters/next/` — the bundled "New site" starter (Next 16 + Tailwind 4). Commit files that
   `next dev` rewrites (tsconfig, CLAUDE.md block) so a fresh site starts clean.

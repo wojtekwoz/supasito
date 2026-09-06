@@ -27,9 +27,61 @@ export type SessionState = {
   commands: string[];
   /** Permission mode the session runs with (acceptEdits, bypassPermissions, plan, default). */
   mode: string | null;
+  /** The CLI is retrying a failed API call (offline, overloaded, rate limited); cleared when the turn moves on. */
+  retry: { attempt: number; max: number; delayMs: number; reason: string } | null;
+  /** Every plan window from the last rate_limit_event (five_hour, seven_day, …), for the usage popover. */
+  plan: PlanWindow[];
+  /** How full Claude's context is: tokens in the prompt of its last API call against the model's window. */
+  context: { used: number; window: number } | null;
+  /** USD. `session` sums the turns seen since this session was opened in Open; `process` mirrors the CLI's cumulative total_cost_usd for the running process. */
+  cost: { session: number; process: number; turns: number };
+  /** True when the transcript was re-rendered from Claude's store, so cost only covers this sitting. */
+  resumed: boolean;
 };
 
-export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null });
+export type PlanWindow = { name: string; utilization: number; resetsAt: number | null };
+
+export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null, retry: null, plan: [], context: null, cost: { session: 0, process: 0, turns: 0 }, resumed: false });
+
+/** The model's context window. The result's modelUsage carries the exact size; until then, 1M for "[1m]" models, else 200k. */
+export function contextWindowFor(model: string | null): number {
+  return model && /\[1m\]|-1m$/i.test(model) ? 1_000_000 : 200_000;
+}
+
+/** Tokens in the prompt of one API call, counted the way Claude Code's status line counts context:
+ *  fresh input plus everything read from or written to the prompt cache. */
+export function usageTokens(u: any): number {
+  if (!u || typeof u !== "object") return 0;
+  return (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0);
+}
+
+function noteContext(state: SessionState, usage: any): boolean {
+  const used = usageTokens(usage);
+  if (used <= 0) return false;
+  const window = state.context?.window ?? contextWindowFor(state.model);
+  if (state.context && state.context.used === used && state.context.window === window) return false;
+  state.context = { used, window };
+  return true;
+}
+
+/** The plan windows in a rate_limit_event (recorded 2.1.257): rate_limit_info.unifiedWindows.{five_hour,seven_day}.{utilization,resetsAt}. */
+export function parseRateLimit(info: any): PlanWindow[] {
+  const windows = info?.unifiedWindows;
+  if (!windows || typeof windows !== "object") return [];
+  const out: PlanWindow[] = [];
+  for (const [name, w] of Object.entries<any>(windows)) {
+    if (typeof w?.utilization !== "number") continue;
+    out.push({ name, utilization: w.utilization, resetsAt: typeof w.resetsAt === "number" ? w.resetsAt : null });
+  }
+  return out;
+}
+
+/** A new claude process starts its cumulative total_cost_usd at zero; call this when one is (re)started or exits. */
+export function resetProcessCost(state: SessionState) {
+  state.cost = { ...state.cost, process: 0 };
+}
+
+export const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 const RESULT_ERRORS: Record<string, string> = {
   error_max_turns: "Stopped: the turn limit was reached.",
@@ -42,9 +94,19 @@ const RESULT_ERRORS: Record<string, string> = {
 export function friendlyError(raw: string, subtype: string): string {
   if (/not logged in|authentication_failed|please run \/login/i.test(raw)) return "Claude Code isn't signed in on this Mac. In Terminal, run `claude auth login`, then send your message again.";
   if (/invalid api key|authentication/i.test(raw)) return `Claude Code could not authenticate: ${raw}. Run \`claude auth login\` in Terminal, then try again.`;
-  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|network|ETIMEDOUT/i.test(raw)) return "Claude couldn't reach the API. Check your internet connection and send the message again.";
+  // recorded (2.1.257, API unreachable): "API Error: Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)"
+  if (/connection ?refused|fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT|timed out|getaddrinfo|unable to connect|could not connect|network|firewall|proxy/i.test(raw)) return `Claude couldn't reach the API (${raw.replace(/^API Error:\s*/i, "")}). Check your internet connection, then send the message again.`;
   if (/rate.?limit|429|usage limit|limit reached/i.test(raw)) return `Your Claude plan limit is reached for now: ${raw}`;
+  if (/overloaded|529/i.test(raw)) return "Claude's API is overloaded right now. Wait a minute, then send the message again.";
+  if (/credit balance|billing/i.test(raw)) return `Claude Code reports a billing problem: ${raw}`;
   return raw || RESULT_ERRORS[subtype] || "The turn ended with an error.";
+}
+
+/** One line for the "Working…" row while the CLI retries an API call. */
+export function retryText(r: NonNullable<SessionState["retry"]>): string {
+  const wait = r.delayMs >= 1000 ? `${Math.round(r.delayMs / 1000)}s` : "a moment";
+  const why = r.reason === "rate_limit" || r.reason === "429" ? "Claude's API is rate limiting" : r.reason === "overloaded" || r.reason === "529" ? "Claude's API is overloaded" : /^5\d\d$/.test(r.reason) ? "Claude's API returned an error" : "Can't reach Claude's API";
+  return `${why}; retrying in ${wait} (${r.attempt} of ${r.max}). Esc stops the turn.`;
 }
 
 let counter = 0;
@@ -113,6 +175,22 @@ export function applyMessage(state: SessionState, msg: any): boolean {
   const parent: string | null = msg.parent_tool_use_id ?? null;
   switch (msg.type) {
     case "system": {
+      if (msg.subtype === "api_retry") {
+        // {"subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":528,"error_status":null,"error":"unknown"} (recorded, 2.1.257, API unreachable)
+        const reason = msg.error_status != null ? String(msg.error_status) : typeof msg.error === "string" ? msg.error : "unknown";
+        state.retry = { attempt: Number(msg.attempt) || 1, max: Number(msg.max_retries) || 10, delayMs: Number(msg.retry_delay_ms) || 0, reason };
+        state.busy = true;
+        return true;
+      }
+      if (msg.subtype === "compact_boundary") {
+        // stream-json: compact_metadata{trigger, pre_tokens, post_tokens?}; Claude's saved JSONL: compactMetadata{preTokens, postTokens?}
+        const meta = msg.compact_metadata ?? msg.compactMetadata ?? {};
+        const pre = Number(meta.pre_tokens ?? meta.preTokens) || 0;
+        const post = Number(meta.post_tokens ?? meta.postTokens) || 0;
+        state.context = { used: post, window: state.context?.window ?? contextWindowFor(state.model) };
+        items.push({ kind: "notice", id: msg.uuid || uid("n"), text: `Claude Code summarised the older part of this conversation to make room${pre ? ` (it was holding ${fmtTokens(pre)} tokens)` : ""}. Nothing on the site changed.`, tone: "info" });
+        return true;
+      }
       if (msg.subtype === "init") {
         state.model = msg.model ?? state.model;
         if (typeof msg.permissionMode === "string") state.mode = msg.permissionMode;
@@ -124,10 +202,12 @@ export function applyMessage(state: SessionState, msg: any): boolean {
     }
     case "stream_event": {
       const ev = msg.event || {};
+      state.retry = null;
       if (parent) return false; // subagent tokens are not shown live
       if (ev.type === "message_start") {
         const id = ev.message?.id || uid("m");
         if (!findAssistant(items, id)) items.push({ kind: "assistant", id, text: "", thinking: "", streaming: true, parentToolUseId: parent });
+        if (ev.message?.usage) noteContext(state, ev.message.usage); // the prompt size is known as soon as the call starts
         state.busy = true;
         return true;
       }
@@ -146,12 +226,14 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       return false;
     }
     case "assistant": {
+      state.retry = null;
       // API failures (signed out, offline, rate limit) arrive as a synthetic assistant message and
       // again as the result; the result row carries the reworded text, so skip the bubble.
       if (msg.is_api_error_message === true || typeof msg.error === "string") { state.busy = true; return false; }
       const m = msg.message || {};
       const id: string = m.id || uid("m");
       let changed = false;
+      if (!parent && m.usage && noteContext(state, m.usage)) changed = true;
       const blocks: any[] = Array.isArray(m.content) ? m.content : [];
       const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
       const thinking = blocks.filter((b) => b.type === "thinking").map((b) => b.thinking).join("\n");
@@ -213,19 +295,16 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         const last = items[items.length - 1];
         if (!(last?.kind === "notice" && last.text === text)) { items.push({ kind: "notice", id: uid("n"), text, tone: "error" }); changed = true; }
       }
-      const windows = info.unifiedWindows;
-      if (!windows || typeof windows !== "object") return changed;
-      let best: { utilization: number; resetsAt: number | null; window: string } | null = null;
-      for (const [name, w] of Object.entries<any>(windows)) {
-        const u = typeof w?.utilization === "number" ? w.utilization : null;
-        if (u == null) continue;
-        if (!best || u > best.utilization) best = { utilization: u, resetsAt: typeof w.resetsAt === "number" ? w.resetsAt : null, window: name };
-      }
-      if (!best) return false;
+      const windows = parseRateLimit(info);
+      if (windows.length === 0) return changed;
+      state.plan = windows;
+      let best: SessionState["usage"] = null;
+      for (const w of windows) if (!best || w.utilization > best.utilization) best = { utilization: w.utilization, resetsAt: w.resetsAt, window: w.name };
       state.usage = best;
       return true;
     }
     case "result": {
+      state.retry = null;
       for (let k = 0; k < items.length; k++) {
         const it = items[k];
         if (it.kind === "assistant" && it.streaming) items[k] = { ...it, streaming: false };
@@ -241,7 +320,19 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       const q = items.findIndex((it) => it.kind === "user" && it.queued);
       if (q >= 0) { items[q] = { ...(items[q] as Extract<Item, { kind: "user" }>), queued: false }; state.busy = true; }
       expirePermissions(state);
-      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: touched.files, created: touched.created, undone: false, at: Date.now() });
+      // total_cost_usd is cumulative for the running claude process (verified 2.1.257: the second turn's result
+      // carried turn 1 + turn 2), and an interrupted turn reports 0; the completion line wants this turn's share.
+      const total = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null;
+      let turnCost: number | null = null;
+      if (total != null && total > state.cost.process) { turnCost = total - state.cost.process; state.cost = { session: state.cost.session + turnCost, process: total, turns: state.cost.turns + (failed ? 0 : 1) }; }
+      else if (!failed) state.cost = { ...state.cost, turns: state.cost.turns + 1 };
+      // modelUsage.<model>.contextWindow is the exact window for the model that ran
+      const mu = msg.modelUsage;
+      if (state.context && mu && typeof mu === "object") {
+        const win = Math.max(0, ...Object.values<any>(mu).map((m) => Number(m?.contextWindow) || 0));
+        if (win > 0 && win !== state.context.window) state.context = { ...state.context, window: win };
+      }
+      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: turnCost, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: touched.files, created: touched.created, undone: false, at: Date.now() });
       if (q >= 0) return true;
       state.busy = false;
       return true;

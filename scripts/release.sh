@@ -2,8 +2,11 @@
 # Build the release app.
 #   pnpm release              Open.app (unsigned unless the Apple variables below are set)
 #   pnpm release --install    …and copy it into /Applications (replacing an older copy)
-#   pnpm release --dmg        …also a DMG for other Macs (needs an interactive session: the DMG
-#                             step drives Finder)
+#   pnpm release --zip        …also release/Open-<version>-macos.zip to hand to other Macs. Unsigned
+#                             ("underground") builds: the recipient runs
+#                             xattr -dr com.apple.quarantine /Applications/Open.app once, or uses
+#                             System Settings → Privacy & Security → Open Anyway.
+#   pnpm release --dmg        …also a DMG (needs an interactive session: the DMG step drives Finder)
 #
 # Signing and notarization are picked up by the Tauri CLI from the environment. Put these in
 # .env.release (gitignored) or export them before running:
@@ -15,11 +18,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ -f .env.release ]]; then set -a; source .env.release; set +a; fi
 
-INSTALL=0; DMG=0
+INSTALL=0; DMG=0; ZIP=0
 for arg in "$@"; do
   case "$arg" in
     --install) INSTALL=1 ;;
     --dmg) DMG=1 ;;
+    --zip) ZIP=1 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -49,6 +53,21 @@ fi
 if [[ $DMG -eq 1 ]]; then
   DMGFILE=$(ls -t src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1 || true)
   [[ -n "$DMGFILE" ]] && echo "Disk image: $DMGFILE ($(du -sh "$DMGFILE" | cut -f1))"
+fi
+if [[ $ZIP -eq 1 ]]; then
+  VERSION=$(node -p "require('./package.json').version")
+  mkdir -p release
+  ZIPFILE="release/Open-$VERSION-macos.zip"
+  rm -f "$ZIPFILE"
+  ditto -c -k --keepParent "$APP" "$ZIPFILE"
+  echo "Zip: $ZIPFILE ($(du -sh "$ZIPFILE" | cut -f1))"
+  if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+    cat <<'MSG'
+This zip is unsigned. Tell whoever installs it: drag Open.app to /Applications, then run
+  xattr -dr com.apple.quarantine /Applications/Open.app
+in Terminal (or open it once, dismiss the warning, and use System Settings → Privacy & Security → Open Anyway).
+MSG
+  fi
 fi
 if [[ $INSTALL -eq 1 ]]; then
   rm -rf /Applications/Open.app

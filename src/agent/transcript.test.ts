@@ -1,6 +1,6 @@
 // Run with: node --experimental-strip-types src/agent/transcript.test.ts
 import { readFileSync } from "node:fs";
-import { addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, filesTouchedInTurn, settlePermission, type Item } from "./transcript.ts";
+import { addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, filesTouchedInTurn, fmtTokens, parseRateLimit, resetProcessCost, retryText, settlePermission, usageTokens, type Item } from "./transcript.ts";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail?: unknown) => {
@@ -64,10 +64,34 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
   const r = s.items.find((i) => i.kind === "result");
   check("auth: result reworded with claude auth login", r?.kind === "result" && r.isError && /claude auth login/.test(r.text) && !/\/login/.test(r.text), r);
   check("auth: not busy afterwards", s.busy === false);
+  // recorded from 2.1.257 with ANTHROPIC_BASE_URL pointing at a closed port, after 10 retries (~3 min)
   const s2 = emptySession();
-  applyMessage(s2, { type: "result", subtype: "success", is_error: true, result: "API Error: fetch failed" });
+  applyMessage(s2, { type: "assistant", message: { id: "a2", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "API Error: Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)" }] }, parent_tool_use_id: null, error: "server_error", is_api_error_message: true });
+  applyMessage(s2, { type: "result", subtype: "success", is_error: true, terminal_reason: "api_error", result: "API Error: Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)" });
   const r2 = s2.items.find((i) => i.kind === "result");
-  check("offline: reworded", r2?.kind === "result" && /internet connection/.test(r2.text), r2);
+  check("offline: synthetic bubble skipped", !s2.items.some((i) => i.kind === "assistant"), s2.items);
+  check("offline: reworded and keeps the CLI's hint", r2?.kind === "result" && /internet connection/.test(r2.text) && /firewall or proxy/.test(r2.text) && !/API Error:/.test(r2.text), r2);
+  const s2b = emptySession();
+  applyMessage(s2b, { type: "result", subtype: "success", is_error: true, result: "API Error: fetch failed" });
+  check("offline: fetch failed reworded", s2b.items.some((i) => i.kind === "result" && /internet connection/.test(i.text)), s2b.items);
+}
+
+// 3d. API retries (recorded 2.1.257 with ANTHROPIC_BASE_URL pointing at a closed port): the CLI
+// emits system/api_retry up to 10 times with growing delays; the session shows it and stays busy.
+{
+  const s = emptySession();
+  addUser(s, "hi", null);
+  applyMessage(s, { type: "system", subtype: "api_retry", attempt: 3, max_retries: 10, retry_delay_ms: 2134, error_status: null, error: "unknown" });
+  check("retry: recorded and busy", s.busy && s.retry?.attempt === 3 && s.retry.max === 10, s.retry);
+  check("retry: text names the cause and the count", s.retry ? /Can't reach Claude's API; retrying in 2s \(3 of 10\)/.test(retryText(s.retry)) : false, s.retry && retryText(s.retry));
+  applyMessage(s, { type: "system", subtype: "api_retry", attempt: 4, max_retries: 10, retry_delay_ms: 4045, error_status: 529, error: "overloaded" });
+  check("retry: overloaded wording", s.retry ? /overloaded/.test(retryText(s.retry)) : false, s.retry && retryText(s.retry));
+  applyMessage(s, { type: "stream_event", event: { type: "message_start", message: { id: "m9" } }, parent_tool_use_id: null });
+  check("retry: cleared once the turn moves on", s.retry === null);
+  const s2 = emptySession();
+  applyMessage(s2, { type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 429, error: "rate_limit" });
+  applyMessage(s2, { type: "result", subtype: "success", is_error: true, result: "API Error: 529 overloaded_error" });
+  check("retry: cleared by the result, which is reworded", s2.retry === null && s2.items.some((i) => i.kind === "result" && /overloaded/.test(i.text)), s2.items);
 }
 
 // 3c. Rate limit rejected: one notice with the reset time, not repeated for the same event.
@@ -136,6 +160,52 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
   applyMessage(s, { type: "user", message: { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "iVBOR" } }, { type: "text", text: "make it like this" }, { type: "text", text: "Selected element (clicked in the live preview):\n- element: <h1>" }] }, parent_tool_use_id: null });
   const u = s.items[0];
   check("saved: image + text + selection split", u.kind === "user" && u.text === "make it like this" && u.images?.length === 1 && !!u.selectionSummary, u);
+}
+
+// 7. Context fullness, plan windows and cost. Cost numbers recorded from 2.1.257: two haiku turns in one
+// process reported total_cost_usd 0.030972 then 0.0395562, i.e. the total is cumulative per process.
+{
+  const lines = readFileSync(new URL("./fixtures/claude-2.1.257-write-turn.jsonl", import.meta.url), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const s = emptySession();
+  for (const l of lines) applyMessage(s, l);
+  const lastUsage = [...lines].reverse().find((l) => l.type === "assistant" && l.message?.usage)?.message.usage;
+  check("context: last API call's input + cache tokens (not the turn's sum)", s.context?.used === usageTokens(lastUsage) && s.context.used > 40000 && s.context.used < 60000, s.context);
+  check("context: window from the result's modelUsage", s.context?.window === 200000, s.context);
+  check("cost: first result of a process is its own cost", s.cost.session > 0.05 && s.cost.process === s.cost.session && s.cost.turns === 1, s.cost);
+
+  const t = emptySession();
+  applyMessage(t, { type: "result", subtype: "success", is_error: false, result: "ONE", total_cost_usd: 0.030972 });
+  applyMessage(t, { type: "result", subtype: "success", is_error: false, result: "TWO", total_cost_usd: 0.0395562 });
+  const costs = t.items.map((i) => (i.kind === "result" ? i.costUsd : null));
+  check("cost: completion lines show each turn's share, not the running total", Math.abs((costs[0] ?? 0) - 0.030972) < 1e-9 && Math.abs((costs[1] ?? 0) - 0.0085842) < 1e-6, costs);
+  t.interrupting = true;
+  applyMessage(t, { type: "result", subtype: "error_during_execution", is_error: true, result: null, total_cost_usd: 0 });
+  const last = t.items[t.items.length - 1];
+  check("cost: an interrupted turn (total 0) shows no cost and keeps the totals", last.kind === "result" && last.costUsd === null && Math.abs(t.cost.session - 0.0395562) < 1e-9 && t.cost.turns === 2, t.cost);
+  resetProcessCost(t);
+  applyMessage(t, { type: "result", subtype: "success", is_error: false, result: "THREE", total_cost_usd: 0.02 });
+  check("cost: a restarted process counts from zero again", Math.abs(t.cost.session - 0.0595562) < 1e-9 && t.cost.process === 0.02 && t.cost.turns === 3, t.cost);
+
+  const c = emptySession();
+  applyMessage(c, { type: "system", subtype: "init", model: "claude-sonnet-4-6[1m]" });
+  applyMessage(c, { type: "stream_event", event: { type: "message_start", message: { id: "m1", usage: { input_tokens: 4, cache_creation_input_tokens: 1000, cache_read_input_tokens: 30000, output_tokens: 1 } } }, parent_tool_use_id: null });
+  check("context: known from message_start; 1M window for [1m] models", c.context?.used === 31004 && c.context.window === 1_000_000, c.context);
+  applyMessage(c, { type: "stream_event", event: { type: "message_start", message: { id: "sub", usage: { input_tokens: 4, cache_read_input_tokens: 90000 } } }, parent_tool_use_id: "toolu_parent" });
+  check("context: subagent calls don't count", c.context?.used === 31004, c.context);
+  applyMessage(c, { type: "assistant", message: { id: "err", role: "assistant", content: [{ type: "text", text: "API Error" }], usage: { input_tokens: 0, cache_read_input_tokens: 0 } }, parent_tool_use_id: null, error: "server_error", is_api_error_message: true });
+  check("context: synthetic error messages don't count", c.context?.used === 31004, c.context);
+  applyMessage(c, { type: "system", subtype: "compact_boundary", uuid: "cb1", compact_metadata: { trigger: "auto", pre_tokens: 180000, post_tokens: 9000 } });
+  const n1 = c.items[c.items.length - 1];
+  check("compact: notice added and context reset (stream-json shape)", c.context?.used === 9000 && n1.kind === "notice" && /summarised/.test(n1.text) && /180k/.test(n1.text), n1);
+  applyMessage(c, { type: "system", subtype: "compact_boundary", uuid: "cb2", compactMetadata: { trigger: "manual", preTokens: 84665 } });
+  const n2 = c.items[c.items.length - 1];
+  check("compact: saved-transcript shape; zero until the next call when post tokens are unknown", c.context?.used === 0 && n2.kind === "notice" && /85k/.test(n2.text), n2);
+
+  const r = emptySession();
+  applyMessage(r, { type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1788690000, rateLimitType: "five_hour", overageStatus: "rejected", overageDisabledReason: "out_of_credits", isUsingOverage: false, unifiedWindows: { five_hour: { utilization: 0.19, resetsAt: 1788690000 }, seven_day: { utilization: 0.13, resetsAt: 1789002000 } } } });
+  check("plan: both windows kept, the highest drives the chip", r.plan.length === 2 && r.usage?.window === "five_hour" && r.usage.utilization === 0.19, r.plan);
+  check("plan: parseRateLimit tolerates a missing payload", parseRateLimit(null).length === 0 && parseRateLimit({ unifiedWindows: { x: {} } }).length === 0);
+  check("tokens: formatting", fmtTokens(950) === "950" && fmtTokens(41125) === "41k" && fmtTokens(1_000_000) === "1M" && fmtTokens(1_250_000) === "1.3M", [fmtTokens(950), fmtTokens(41125), fmtTokens(1_000_000), fmtTokens(1_250_000)]);
 }
 
 console.log(failures === 0 ? "transcript: all checks pass" : `transcript: ${failures} failure(s)`);

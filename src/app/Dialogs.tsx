@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "./store";
 import { Check } from "../ui/Icons";
 import { Checklist } from "./Checklist";
+import { PlanRows } from "./Usage";
 
 export function NewSiteDialog() {
   const ns = useStore((s) => s.newSite);
@@ -206,6 +207,7 @@ export function SettingsDialog() {
   const setOpen = useStore((s) => s.setSettingsOpen);
   const settings = useStore((s) => s.settings);
   const save = useStore((s) => s.saveSettings);
+  const planUsage = useStore((s) => s.planUsage);
   const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits" });
   useEffect(() => { if (open) setForm({ claudePath: settings.claudePath ?? "", model: settings.model ?? "", permissionMode: settings.permissionMode ?? "acceptEdits" }); }, [open, settings]);
   if (!open) return null;
@@ -233,6 +235,7 @@ export function SettingsDialog() {
           </select>
         </div>
         <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Applies to sessions started after saving; an open session keeps its model. The chip in the session header shows which one is in use.</p>
+        <div className="row2" style={{ alignItems: "start" }}><label style={{ paddingTop: 2 }}>Plan usage</label><PlanRows windows={planUsage?.windows ?? []} at={planUsage?.at ?? null} /></div>
         <div className="foot">
           <button className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
           <button className="btn primary" onClick={() => { void save(form).then(() => setOpen(false)); }}>Save</button>

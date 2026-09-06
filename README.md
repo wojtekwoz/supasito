@@ -24,7 +24,15 @@ pnpm release --install  # …and copies it to /Applications
 
 ## Distribute it
 
-An unsigned `Open.app` runs on the Mac that built it; any other Mac shows Gatekeeper's "damaged" warning. To hand it to someone else, sign and notarize it. The Tauri CLI does both when these variables are set; put them in `.env.release` (gitignored) and `pnpm release` picks them up:
+**Unsigned, for now.** `pnpm release --zip` writes `release/Open-<version>-macos.zip`. Whoever installs it drags `Open.app` to `/Applications` and, because the app is not notarized, clears the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Open.app
+```
+
+(or opens it once, dismisses the warning, then System Settings → Privacy & Security → "Open Anyway"). Nothing else differs from a signed build.
+
+**Signed and notarized, later.** The Tauri CLI signs and notarizes when these variables are set; put them in `.env.release` (gitignored) and `pnpm release` picks them up. It needs a *Developer ID Application* certificate (paid Apple Developer membership), not the *Apple Development* one Xcode creates for free:
 
 ```bash
 APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"  # from Xcode → Settings → Accounts → Manage Certificates; `security find-identity -v -p codesigning` lists it
@@ -58,7 +66,7 @@ Then `pnpm release --dmg` from an interactive terminal: the app is signed with t
 - **Getting called back:** the Dock badge shows how many approvals are waiting, and the Dock icon bounces when Claude needs you or finishes while Open is in the background.
 - **Model:** Settings offers your Claude Code default, Sonnet, Opus, Haiku, or a custom model name. It applies to sessions started after saving; the chip in the session header shows the model in use.
 - **The preview follows the work:** when Claude edits a page file (`app/pricing/page.tsx`, `src/pages/pricing.astro`, `src/routes/pricing/+page.svelte`, `pages/pricing.vue`), the preview switches to that page.
-- **Plan usage** from Claude Code's rate-limit events shows as a chip in the session header once it passes 50%.
+- **Usage:** the small ring at the bottom of the composer shows how full the conversation is (how much of Claude's working memory this session uses; it fills as the conversation grows and Claude Code summarises older messages by itself when it is full). Click it for the numbers, your plan's 5-hour and weekly limits with their reset times, and the cost so far. Settings shows the plan limits too, and the header chip still appears once a plan limit passes 50%.
 
 ## Layout
 

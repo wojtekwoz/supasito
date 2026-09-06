@@ -7,7 +7,10 @@
 //! - OPEN_SMOKE_SITE       pick the registered site whose name or path contains this
 //! - OPEN_SMOKE_SITE_PATH  use this folder as the site (registered in memory only, never saved)
 //! - OPEN_SMOKE_MODEL      model alias for the run (e.g. haiku)
-//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode
+//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | tools
+//!                         (tools: print the first-run toolchain check as JSON and exit; combine
+//!                         with HOME=<empty dir> for "signed out" and OPEN_PATH=/usr/bin:/bin for
+//!                         "no Node, no Claude Code")
 //!
 //! Permission prompts are auto-allowed. Everything is printed to stderr with a [smoke] prefix.
 
@@ -59,6 +62,15 @@ pub async fn run(app: AppHandle, prompt: String) {
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     let state = app.state::<AppState>();
 
+    if std::env::var("OPEN_SMOKE_SCENARIO").as_deref() == Ok("tools") {
+        let configured = state.persisted.lock().unwrap().claude_path.clone();
+        let t = crate::toolchain::check(configured.as_deref(), &state.path_env).await;
+        eprintln!("[smoke] PATH: {}", state.path_env);
+        eprintln!("[smoke] toolchain: {}", serde_json::to_string_pretty(&t).unwrap_or_default());
+        app.exit(0);
+        return;
+    }
+
     if let Ok(p) = std::env::var("OPEN_SMOKE_SITE_PATH") {
         match crate::sites::Site::from_path(&p) {
             Ok(site) => { eprintln!("[smoke] using ad-hoc site {} (not saved)", site.path); state.persisted.lock().unwrap().sites.insert(0, site); }
@@ -81,7 +93,8 @@ pub async fn run(app: AppHandle, prompt: String) {
         Ok(info) => eprintln!("[smoke] dev server starting on {}", info.url),
         Err(e) => eprintln!("[smoke] dev server failed: {e}"),
     }
-    for _ in 0..120 {
+    // long enough to see the 90 s "never opened its port" timeout become an error
+    for _ in 0..240 {
         if let Some(d) = state.dev.status(&site.id).await { if d.status == "ready" || d.status == "error" { break; } }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }

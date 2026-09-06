@@ -110,6 +110,8 @@ pub fn transcript(cwd: &str, session_id: &str) -> Result<Vec<Value>, String> {
                 if is_tool_result || is_real_user_message(&v) { out.push(v); }
             }
             Some("assistant") => out.push(v),
+            // a compaction boundary lets the UI reset its context estimate and say so
+            Some("system") if v.get("subtype").and_then(|s| s.as_str()) == Some("compact_boundary") => out.push(v),
             _ => {}
         }
     }

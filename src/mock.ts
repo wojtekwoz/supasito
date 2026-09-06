@@ -28,6 +28,10 @@ export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title
 const running = new Set<string>();
 let mockPublishCancelled = false;
 let mockChanged = 5;
+// Context grows by a fixed amount per turn (`?context=full` starts near the top) and compacts past 170k; cost is cumulative like the CLI's.
+let mockCtx = new URLSearchParams(location.search).get("context") === "full" ? 140_000 : 24_000;
+let mockTurns = 0;
+const mockUsage = () => ({ input_tokens: 10, cache_creation_input_tokens: 2400, cache_read_input_tokens: mockCtx, output_tokens: 80 });
 let mockRules = "# This site\n\n## Brand\n- Voice: plain, confident, short sentences.\n- Type: display serif for headlines.\n";
 (window as any).__openMockDoc = demoHtml;
 
@@ -40,9 +44,15 @@ async function fakeTurn(sessionId: string, text: string) {
       emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: word + " " } }, parent_tool_use_id: null } });
       await wait(25);
     }
-    emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, role: "assistant", content: [{ type: "text", text: s }] }, parent_tool_use_id: null } });
+    emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, role: "assistant", content: [{ type: "text", text: s }], usage: mockUsage() }, parent_tool_use_id: null } });
   };
   await wait(300);
+  mockTurns++;
+  mockCtx += 22_000;
+  if (mockCtx > 170_000) {
+    emit("agent://message", { sessionId, message: { type: "system", subtype: "compact_boundary", uuid: "cb" + mockTurns, compact_metadata: { trigger: "auto", pre_tokens: mockCtx, post_tokens: 12_000 } } });
+    mockCtx = 12_000;
+  }
   emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: "claude-sonnet-5", cwd: site.path, session_id: sessionId, tools: [], permissionMode: "acceptEdits", slash_commands: ["compact", "cost", "review", "impeccable", "web-typography", "cro-methodology"] } });
   await say("Checking the hero section first — the headline lives in components/hero.tsx.");
   const t1 = "toolu_1" + Math.random().toString(36).slice(2);
@@ -125,8 +135,9 @@ export function mockBackend(): Backend {
       emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m4", role: "assistant", content: [{ type: "tool_use", id: "toolu_3", name: "Bash", input: { command: "pnpm exec tsc --noEmit", description: "Type-check the project" } }] }, parent_tool_use_id: null } });
       emit("agent://message", { sessionId, message: { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_3", content: denied ? "User denied this action" : "", is_error: denied }] }, parent_tool_use_id: null } });
       await wait(200);
-      emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m5", role: "assistant", content: [{ type: "text", text: "Done. The headline in `components/hero.tsx` now reads as you asked; the preview has reloaded." }] }, parent_tool_use_id: null } });
-      emit("agent://message", { sessionId, message: { type: "result", subtype: "success", is_error: false, duration_ms: 6120, num_turns: 3, total_cost_usd: 0.031, session_id: sessionId, result: "Done." } });
+      emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m5", role: "assistant", content: [{ type: "text", text: "Done. The headline in `components/hero.tsx` now reads as you asked; the preview has reloaded." }], usage: mockUsage() }, parent_tool_use_id: null } });
+      const total = +(0.031 * mockTurns).toFixed(4);
+      emit("agent://message", { sessionId, message: { type: "result", subtype: "success", is_error: false, duration_ms: 6120, num_turns: 3, total_cost_usd: total, modelUsage: { "claude-sonnet-5": { costUSD: total, contextWindow: 200000 } }, session_id: sessionId, result: "Done." } });
     },
     agentInterrupt: async () => {},
     agentStop: async (sessionId) => { running.delete(sessionId); emit("agent://exit", { sessionId, code: 0 }); },
@@ -134,7 +145,7 @@ export function mockBackend(): Backend {
     sessionsList: async () => sessions,
     sessionTranscript: async (_siteId, sessionId) => [
       { type: "user", message: { role: "user", content: sessions.find((s) => s.id === sessionId)?.title ?? "Hello" } },
-      { type: "assistant", message: { id: "old1", role: "assistant", content: [{ type: "text", text: "Home is done. Pricing next — its plan tiers extend the same Card base, so they inherit the new style." }] } },
+      { type: "assistant", message: { id: "old1", role: "assistant", content: [{ type: "text", text: "Home is done. Pricing next — its plan tiers extend the same Card base, so they inherit the new style." }], usage: { input_tokens: 12, cache_creation_input_tokens: 1200, cache_read_input_tokens: 61000, output_tokens: 60 } } },
     ],
     openExternal: async (url) => { window.open(url, "_blank"); },
     revealPath: async (path) => { console.debug("[reveal]", path); },

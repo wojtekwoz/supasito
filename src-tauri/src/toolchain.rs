@@ -77,8 +77,13 @@ async fn git(path_env: &str) -> Tool {
     if cfg!(target_os = "macos") && path == "/usr/bin/git" && run("/usr/bin/xcode-select", &["-p"], path_env, 8).await.is_none() {
         return Tool { ok: false, path: Some(path), version: None };
     }
-    let version = run(&path, &["--version"], path_env, 8).await.map(|v| v.split_whitespace().last().unwrap_or("").to_string());
+    let version = run(&path, &["--version"], path_env, 8).await.map(|v| git_version(&v));
     Tool { ok: true, path: Some(path), version }
+}
+
+/// "git version 2.50.1 (Apple Git-155)" → "2.50.1"
+fn git_version(out: &str) -> String {
+    out.split_whitespace().nth(2).unwrap_or(out.trim()).to_string()
 }
 
 async fn package_manager(path_env: &str) -> Option<PackageManager> {
@@ -128,6 +133,12 @@ mod tests {
     fn which_walks_the_path_in_order() {
         assert_eq!(which("sh", "/nonexistent:/bin:/usr/bin"), Some(PathBuf::from("/bin/sh")));
         assert_eq!(which("definitely-not-a-binary", "/bin:/usr/bin"), None);
+    }
+
+    #[test]
+    fn git_version_ignores_apples_suffix() {
+        assert_eq!(git_version("git version 2.50.1 (Apple Git-155)"), "2.50.1");
+        assert_eq!(git_version("git version 2.51.0"), "2.51.0");
     }
 
     #[test]

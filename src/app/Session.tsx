@@ -1,11 +1,12 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { DRAFT, useSession, useSessionsOfCurrentSite, useSite, useStore } from "./store";
-import type { Item } from "../agent/transcript";
+import { retryText, type Item } from "../agent/transcript";
 import { Markdown } from "../ui/Markdown";
 import { Crosshair, Doc, Globe, Pen, Search, Send, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
 import { Checklist, claudeBlocked, toolsMissing } from "./Checklist";
+import { UsageButton } from "./Usage";
 import type { Selection } from "../types";
 
 export function SessionPane() {
@@ -105,6 +106,7 @@ function Welcome() {
 }
 
 function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boolean; root: string; sessionId: string | null }) {
+  const retry = useStore((s) => (sessionId ? s.transcripts[sessionId]?.retry ?? null : null));
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   useEffect(() => {
@@ -139,7 +141,7 @@ function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boo
         ? <Steps key={"g" + i} items={g} root={root} />
         : <Entry key={g.id} item={g} sessionId={sessionId} />)}
       {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && !items.some((i) => i.kind === "permission" && i.status === "pending") && (
-        <div className="step" style={{ color: "var(--ink-3)" }}><span className="st running" /><span className="label">Working…</span></div>
+        <div className="step" style={{ color: retry ? "var(--warn)" : "var(--ink-3)" }}><span className="st running" /><span className="label">{retry ? retryText(retry) : "Working…"}</span></div>
       )}
     </div>
   );
@@ -368,6 +370,7 @@ function Composer() {
           <button className={cx("icon-btn", picking && "on")} disabled={!canPick} title={canPick ? "Pick an element in the preview (⌘⇧E)" : "Preview must be running to pick"} onClick={() => setPicking(!picking)}><Crosshair /></button>
           <span className="hint">{dragging ? "Drop the image to attach it" : picking ? "Click an element in the preview · Esc to cancel" : busy ? "Claude is working · Enter queues your message · Esc to stop" : "Enter to send · Shift+Enter for a new line · paste or drop an image"}</span>
           <span className="sp" />
+          <UsageButton />
           {busy && <button className="send stop" title="Stop" onClick={() => void interrupt()}><Stop /></button>}
           <button className="send" title={busy ? "Queue" : "Send"} disabled={!canSend} onClick={submit}><Send /></button>
         </div>

@@ -156,7 +156,7 @@ a { color: var(--accent); }
 .composer textarea::placeholder { color: var(--ink-3); }
 .composer .bar { display: flex; align-items: center; gap: 4px; }
 .composer .bar .sp { flex: 1; }
-.composer .hint { font-size: 11px; color: var(--ink-3); }
+.composer .hint { font-size: 11px; color: var(--ink-3); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .send { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-2); color: white; }
 .send:hover { background: var(--accent); }
 .send.stop { background: var(--elev-2); color: var(--ink); }
@@ -289,3 +289,32 @@ a { color: var(--accent); }
 .checklist.compact .check .fix { font-size: 12px; }
 .welcome .box.wide { max-width: 460px; }
 .welcome .box .checklist { padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--elev); }
+
+/* Usage: the context ring in the composer bar, its popover, and plan rows (also in Settings) */
+.usage-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px; border-radius: 6px; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-btn:hover, .usage-btn.on { background: var(--elev-2); color: var(--ink-2); }
+.usage-btn.warn, .usage-btn.warn:hover { color: var(--warn); }
+.usage-btn.err, .usage-btn.err:hover { color: var(--err); }
+.ring { width: 14px; height: 14px; flex: none; }
+.usage-pop { position: absolute; right: 8px; bottom: calc(100% + 6px); width: min(380px, calc(100% - 16px)); background: var(--elev-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); z-index: 6; font-size: 12px; user-select: text; cursor: default; }
+.usage-pop section { display: flex; flex-direction: column; gap: 6px; }
+.usage-pop h4 { margin: 0; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.usage-pop .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.usage-pop .big { font-size: 13px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+.usage-pop .big.warn { color: var(--warn); }
+.usage-pop .big.err { color: var(--err); }
+.usage-pop .dim { color: var(--ink-3); text-align: right; }
+.usage-pop p, .plan-rows p, .plan-empty { margin: 0; color: var(--ink-2); line-height: 1.45; font-size: 12px; }
+.meter { display: block; height: 4px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.meter.warn i { background: var(--warn); }
+.meter.err i { background: var(--err); }
+.plan-rows { display: grid; gap: 8px; font-size: 12px; }
+.plan-row { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px; align-items: baseline; }
+.plan-row .k { color: var(--ink); }
+.plan-row .v { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.plan-row .v.warn { color: var(--warn); }
+.plan-row .v.err { color: var(--err); }
+.plan-row .r { color: var(--ink-3); }
+.plan-row .meter { grid-column: 1 / -1; }
+.plan-rows .when { font-size: 11px; color: var(--ink-3); }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
 import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site, Toolchain } from "../types";
-import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, settlePermission, type SessionState } from "../agent/transcript";
+import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
@@ -46,6 +46,8 @@ export type Store = {
   committedAt: number;
   newSite: NewSiteState;
   toast: string | null;
+  /** Plan usage is per account, not per session: the last rate_limit_event any session received, for Settings and new sessions. */
+  planUsage: { windows: PlanWindow[]; at: number } | null;
 
   init: () => Promise<void>;
   selectSite: (id: string) => Promise<void>;
@@ -168,6 +170,7 @@ export const useStore = create<Store>((set, get) => ({
   committedAt: 0,
   newSite: { open: false, running: false, log: [], error: null },
   toast: null,
+  planUsage: null,
 
   async init() {
     // React StrictMode runs effects twice in dev; listeners must only be registered once.
@@ -188,6 +191,10 @@ export const useStore = create<Store>((set, get) => ({
         const changed = applyMessage(cur, message);
         if (!st.transcripts[sessionId]) st.transcripts[sessionId] = cur;
         if (changed) set({ transcripts: bump(st.transcripts, sessionId) });
+        if (message?.type === "rate_limit_event") {
+          const windows = parseRateLimit(message.rate_limit_info);
+          if (windows.length) set({ planUsage: { windows, at: now() } });
+        }
         // Follow the page Claude is editing, for the session that is on screen.
         if (cur.lastWrite && cur.lastWrite.seq !== before && sessionId === st.currentSessionId && st.currentSiteId) {
           const site = st.sites.find((x) => x.id === st.currentSiteId);
@@ -218,6 +225,7 @@ export const useStore = create<Store>((set, get) => ({
         delete running[sessionId];
         const cur = st.transcripts[sessionId];
         if (cur) {
+          resetProcessCost(cur);
           const expired = expirePermissions(cur);
           if (cur.busy) {
             const tail = cur.stderr.slice(-3).map((l) => l.trim()).filter(Boolean).join(" · ");
@@ -363,7 +371,7 @@ export const useStore = create<Store>((set, get) => ({
       const lines = await api.sessionTranscript(siteId, id);
       if (get().currentSiteId !== siteId) return;
       const st = get().transcripts[id] ?? emptySession();
-      if (st.items.length === 0) for (const l of lines) applyMessage(st, l);
+      if (st.items.length === 0) { for (const l of lines) applyMessage(st, l); st.resumed = st.items.length > 0; }
       st.loaded = true;
       st.busy = st.busy && !!get().running[id];
       set({ transcripts: { ...get().transcripts, [id]: { ...st, items: [...st.items] } } });
@@ -396,6 +404,8 @@ export const useStore = create<Store>((set, get) => ({
         sessionId = id;
       } else if (!st.running[sessionId]) {
         await api.agentStart(siteId, sessionId);
+        const t = get().transcripts[sessionId];
+        if (t) resetProcessCost(t);
         set({ running: { ...get().running, [sessionId]: true } });
       }
       const cur = get().transcripts[sessionId] ?? emptySession();

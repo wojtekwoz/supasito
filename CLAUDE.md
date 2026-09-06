@@ -13,11 +13,13 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   kills running agents and dev servers (they are reaped on the next launch).
 - `pnpm dev` alone serves the UI at http://localhost:1420 against a **mock backend** (src/mock.ts) —
   use this for UI work and browser-driven checks; `window.__store` exposes the zustand store in dev.
+  Mock switches: `?tools=missing|nologin|nonode|nogit|nopnpm`, `?sites=none|two`, `?devDelay=<ms>` and
+  `?stopDelay=<ms>` (dev-server start/kill timing; `window.__mock.devs` is the registry), `?context=full`, `?fast=on`.
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).
 - Real-CLI checks: `SUPASITO_SMOKE_PROMPT=… pnpm tauri dev` (see src-tauri/src/smoke.rs; scenarios
-  `queue|interrupt|pointing|mode|tools`, `SUPASITO_SMOKE_SITE_PATH` for a scratch site, `SUPASITO_SMOKE_MODEL=haiku`).
+  `queue|interrupt|pointing|mode|model|fast|undo|tools`, `SUPASITO_SMOKE_SITE_PATH` for a scratch site, `SUPASITO_SMOKE_MODEL=haiku`).
   The built debug binary can be run directly with a fake `HOME` (signed out, empty app state) or
   `SUPASITO_PATH=/usr/bin:/bin` (bare Mac) while `pnpm dev` serves the UI on 1420.
 - Recording a CLI failure shape: `ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p … --output-format stream-json`
@@ -30,7 +32,7 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   protocol (verified on 2.1.257: `--permission-prompt-tool stdio` → `control_request/can_use_tool`).
   Keep protocol details here; the UI only sees `agent://message|permission|exit` events.
 - `src-tauri/src/toolchain.rs` — first-run checks (Node, pnpm/npm, git, Claude Code + `claude auth status`).
-  The UI's `Checklist.tsx` renders it; mock switches `?tools=missing|nologin|nonode|nogit|nopnpm`, `?sites=none`.
+  The UI's `Checklist.tsx` renders it; the mock simulates each failure with `?tools=…` (list under `pnpm dev` above).
 - `src-tauri/src/devserver.rs` — dev-server supervisor. Readiness must stay dual-stack
   (Vite/Astro bind `[::1]` only); the port the server prints wins.
 - `src-tauri/src/picker.js` — injected into every frame (`initialization_script_for_all_frames`);

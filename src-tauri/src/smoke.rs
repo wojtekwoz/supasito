@@ -9,9 +9,11 @@
 //! - SUPASITO_SMOKE_MODEL      model alias for the run (e.g. haiku)
 //! - SUPASITO_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
 //! - SUPASITO_SMOKE_FAST       1 = start with fast mode on (Opus only)
-//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | tools
+//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools
 //!                         (model: set_model sonnet between two turns, start with SUPASITO_SMOKE_MODEL=haiku;
 //!                         fast: apply_flag_settings fastMode between two turns, start with SUPASITO_SMOKE_MODEL=opus)
+//!                         (undo: one turn that edits a tracked file and creates a new one, then the same
+//!                         `undo_files` call the Undo button makes; needs a clean git repo as the site)
 //!                         (tools: print the first-run toolchain check as JSON and exit; combine
 //!                         with HOME=<empty dir> for "signed out" and SUPASITO_PATH=/usr/bin:/bin for
 //!                         "no Node, no Claude Code")
@@ -65,6 +67,37 @@ async fn wait_turn(rx: &mut mpsc::Receiver<Value>, secs: u64) -> (Option<Value>,
             }
             Ok(None) => return (None, model),
             Err(_) => { eprintln!("[smoke] timed out waiting for a result"); return (None, model); }
+        }
+    }
+}
+
+/// Like `wait_result`, also collecting the files the turn's Edit/MultiEdit/Write/NotebookEdit calls
+/// named (absolute paths as the CLI sent them, deduplicated, in order) — what the UI's Undo hands to
+/// `undo_files` as `files`.
+async fn wait_turn_files(rx: &mut mpsc::Receiver<Value>, secs: u64) -> (Option<Value>, Vec<String>) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(secs);
+    let mut files: Vec<String> = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() { eprintln!("[smoke] timed out waiting for a result"); return (None, files); }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(m)) => {
+                if m["type"] == "__exit" { eprintln!("[smoke] process exited while waiting"); return (None, files); }
+                if m["type"] == "assistant" {
+                    for b in m["message"]["content"].as_array().cloned().unwrap_or_default() {
+                        if b["type"] != "tool_use" { continue; }
+                        let path = match b["name"].as_str() {
+                            Some("Edit") | Some("MultiEdit") | Some("Write") => b["input"]["file_path"].as_str(),
+                            Some("NotebookEdit") => b["input"]["notebook_path"].as_str(),
+                            _ => None,
+                        };
+                        if let Some(p) = path { if !files.iter().any(|f| f == p) { files.push(p.to_string()); } }
+                    }
+                }
+                if m["type"] == "result" { return (Some(m), files); }
+            }
+            Ok(None) => return (None, files),
+            Err(_) => { eprintln!("[smoke] timed out waiting for a result"); return (None, files); }
         }
     }
 }
@@ -248,6 +281,59 @@ pub async fn run(app: AppHandle, prompt: String) {
             let speed = r2.as_ref().map(|r| r["usage"]["speed"].to_string()).unwrap_or("none".into());
             eprintln!("[smoke] fast_mode_state: before={before} after={after} · usage.speed={speed}");
             eprintln!("[smoke] FAST {}", if after == "\"on\"" { "OK: apply_flag_settings turned fast mode on mid-session" } else { "FAILED: fast mode did not turn on (Opus only; see CONTROL ERROR lines)" });
+        }
+        "undo" => {
+            eprintln!("[smoke] scenario undo: edit a tracked file and create a new one, then undo the turn the way the Undo button does");
+            let git = |label: &str| -> Option<crate::sites::GitStatus> {
+                match crate::sites::git_status(&site.path, &state.path_env) {
+                    Ok(g) => { eprintln!("[smoke] git {label}: {}", if !g.is_git { "not a git repo".to_string() } else if g.files.is_empty() { "clean".to_string() } else { format!("{:?}", g.files) }); Some(g) }
+                    Err(e) => { eprintln!("[smoke] git {label}: status failed: {e}"); None }
+                }
+            };
+            let clean = git("before").map(|g| g.is_git && g.files.is_empty()).unwrap_or(false);
+            if !clean {
+                eprintln!("[smoke] UNDO SKIPPED: site is not a clean git repo");
+            } else {
+                // what the UI keeps from `agent://fs`: Write calls whose target did not exist yet
+                let created = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+                {
+                    let created = created.clone();
+                    app.listen_any("agent://fs", move |e| {
+                        let v: Value = serde_json::from_str(e.payload()).unwrap_or(Value::Null);
+                        if v["existed"] == false { if let Some(f) = v["file"].as_str() { created.lock().unwrap().push(f.to_string()); } }
+                    });
+                }
+                let _ = send("Create a new file `smoke-undo.txt` at the site root containing the single line `undo me` (use the Write tool), and use the Edit tool to append the line `// smoke-undo` to the end of `components/footer.tsx`. Do not run any commands. Reply with one sentence.", None).await;
+                let (r, files) = wait_turn_files(&mut rx, 240).await;
+                let created: Vec<String> = created.lock().unwrap().clone();
+                eprintln!("[smoke] touched: {files:?} created: {created:?}");
+                let after_turn = git("after turn").map(|g| g.files).unwrap_or_default();
+                let edited = "components/footer.tsx".to_string();
+                let new_file = "smoke-undo.txt".to_string();
+                let mut failed: Option<String> = None;
+                if r.is_none() { failed = Some("the turn did not complete".into()); }
+                else if !(after_turn.iter().any(|f| f == "components/footer.tsx") && after_turn.iter().any(|f| f == "smoke-undo.txt")) { failed = Some(format!("git status after the turn should list both files, got {after_turn:?}")); }
+                else if !(files.iter().any(|f| f.ends_with(&edited)) && files.iter().any(|f| f.ends_with(&new_file))) { failed = Some(format!("the turn's tool_use blocks should name both files, got {files:?}")); }
+                else if created.len() != 1 || !created[0].ends_with(&new_file) { failed = Some(format!("agent://fs should report only smoke-undo.txt as created, got {created:?}")); }
+                if failed.is_none() {
+                    match crate::undo_files(&app, &site.id, files.clone(), created.clone()).await {
+                        Ok(rep) => {
+                            eprintln!("[smoke] undo report: restored={:?} deleted={:?} skipped={:?}", rep.restored, rep.deleted, rep.skipped);
+                            let after_undo = git("after undo").map(|g| g.files).unwrap_or_default();
+                            if rep.restored != vec!["components/footer.tsx".to_string()] { failed = Some(format!("restored should be [components/footer.tsx], got {:?}", rep.restored)); }
+                            else if rep.deleted != vec!["smoke-undo.txt".to_string()] { failed = Some(format!("deleted should be [smoke-undo.txt], got {:?}", rep.deleted)); }
+                            else if !rep.skipped.is_empty() { failed = Some(format!("skipped should be empty, got {:?}", rep.skipped)); }
+                            else if !after_undo.is_empty() { failed = Some(format!("git status after undo should be clean, got {after_undo:?}")); }
+                            else if std::path::Path::new(&site.path).join(&new_file).exists() { failed = Some("smoke-undo.txt still exists after undo".into()); }
+                        }
+                        Err(e) => failed = Some(format!("undo_files failed: {e}")),
+                    }
+                }
+                match failed {
+                    None => eprintln!("[smoke] UNDO OK: tracked file restored, created file removed, git status clean"),
+                    Some(why) => eprintln!("[smoke] UNDO FAILED: {why}"),
+                }
+            }
         }
         "pointing" => {
             eprintln!("[smoke] scenario pointing: message with an attached selection (the starter's hero h1)");

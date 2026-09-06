@@ -120,11 +120,17 @@ async fn site_git_status(state: State<'_, AppState>, site_id: String) -> Result<
     tauri::async_runtime::spawn_blocking(move || sites::git_status(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-async fn site_undo_files(state: State<'_, AppState>, site_id: String, files: Vec<String>, created: Option<Vec<String>>) -> Result<sites::RestoreReport, String> {
-    let site = state.site(&site_id)?;
+/// Shared by the `site_undo_files` command (the Undo button) and the debug smoke test.
+pub(crate) async fn undo_files(app: &AppHandle, site_id: &str, files: Vec<String>, created: Vec<String>) -> Result<sites::RestoreReport, String> {
+    let state = app.state::<AppState>();
+    let site = state.site(site_id)?;
     let env = state.path_env.clone();
-    tauri::async_runtime::spawn_blocking(move || sites::git_restore(&site.path, &files, &created.unwrap_or_default(), &env)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || sites::git_restore(&site.path, &files, &created, &env)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn site_undo_files(app: AppHandle, site_id: String, files: Vec<String>, created: Option<Vec<String>>) -> Result<sites::RestoreReport, String> {
+    undo_files(&app, &site_id, files, created.unwrap_or_default()).await
 }
 
 /// Diagnostics from the preview pane (visible when the app is launched from a terminal).

@@ -52,8 +52,8 @@ export default function App() {
     return () => { window.removeEventListener("dragover", block); window.removeEventListener("drop", block); };
   }, []);
 
-  if (!ready) return <div className="boot">Starting Open…</div>;
-  if (fatal) return <div className="boot"><div>Open could not start.<br /><span style={{ color: "var(--err)" }}>{fatal}</span></div></div>;
+  if (!ready) return <div className="boot">Starting Supasito…</div>;
+  if (fatal) return <div className="boot"><div>Supasito could not start.<br /><span style={{ color: "var(--err)" }}>{fatal}</span></div></div>;
   return (
     <div className="app">
       <ErrorBoundary label="rail"><Rail /></ErrorBoundary>

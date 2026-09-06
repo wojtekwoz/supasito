@@ -1,4 +1,4 @@
-// The models Open offers and helpers shared by Settings, the session header and turn lines.
+// The models Supasito offers and helpers shared by Settings, the session header and turn lines.
 // Ids and aliases are what Claude Code 2.1.x accepts for `--model`; the CLI resolves an alias and
 // reports the exact id in system/init (e.g. haiku → claude-haiku-4-5-20251001).
 export type ModelOption = { value: string; label: string; hint: string };

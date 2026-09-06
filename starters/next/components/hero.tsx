@@ -6,7 +6,7 @@ export function Hero() {
         Say what you want. Watch it change.
       </h1>
       <p className="mx-auto mt-6 max-w-xl text-lg text-ink-2">
-        This is your new site. Tell Open what it should say and look like, or click any element in the preview and describe the change.
+        This is your new site. Tell Supasito what it should say and look like, or click any element in the preview and describe the change.
       </p>
       <div className="mt-8 flex justify-center gap-3">
         <a href="#contact" className="bg-ink px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-paper">

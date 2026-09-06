@@ -10,7 +10,7 @@ pub struct Site {
     pub id: String,
     pub path: String,
     pub name: String,
-    /// Dev command. May contain `{port}`; otherwise Open appends a port flag it infers.
+    /// Dev command. May contain `{port}`; otherwise Supasito appends a port flag it infers.
     pub dev: Option<String>,
     /// Production publish command.
     pub publish: Option<String>,
@@ -300,7 +300,7 @@ pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_
     };
     let _ = git(&["init", "-q"]).await;
     let _ = git(&["add", "-A"]).await;
-    let _ = git(&["commit", "-qm", "New site from Open starter"]).await;
+    let _ = git(&["commit", "-qm", "New site from Supasito starter"]).await;
     let mut site = Site::from_path(&dest_s)?;
     site.name = name.trim().to_string();
     Ok(site)
@@ -397,7 +397,7 @@ fn pump_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(reader: R, tx: t
     });
 }
 
-/// Opening a folder in Open is the user's trust decision, so mirror it into Claude Code's own
+/// Opening a folder in Supasito is the user's trust decision, so mirror it into Claude Code's own
 /// config: otherwise `claude -p` ignores the site's `.claude/settings.json` permission rules.
 pub fn mark_trusted(path: &str) {
     let Some(home) = dirs::home_dir() else { return };

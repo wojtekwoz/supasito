@@ -5,12 +5,12 @@ use serde_json::{json, Value};
 
 use crate::sites::Site;
 
-/// Extra system prompt so Claude knows it is working inside Open.
+/// Extra system prompt so Claude knows it is working inside Supasito.
 pub fn system_prompt(site: &Site, preview_url: Option<&str>) -> String {
-    let preview = preview_url.unwrap_or("the Open preview pane");
+    let preview = preview_url.unwrap_or("the Supasito preview pane");
     format!(
-        "You are working inside Open, a desktop app where the user builds the website in this folder ({name}) by talking to you and watching a live preview.\n\
-- The site's dev server is already running at {preview}. Do not start another dev server and do not run long-lived or watch processes; Open manages them.\n\
+        "You are working inside Supasito, a desktop app where the user builds the website in this folder ({name}) by talking to you and watching a live preview.\n\
+- The site's dev server is already running at {preview}. Do not start another dev server and do not run long-lived or watch processes; Supasito manages them.\n\
 - When a message includes a 'Selected element' block, it describes the DOM element the user clicked in the preview, including the source file and line when the framework provides them. Treat that element as the target of the request and edit the code that produces it.\n\
 - Prefer small, direct edits in the existing style of the codebase. Do not add dependencies unless asked.\n\
 - After editing, verify cheaply when you can (type check or build) but keep it quick.\n\

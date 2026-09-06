@@ -279,7 +279,7 @@ impl Registry {
                                 // Anything we don't implement must still be answered or the CLI blocks.
                                 let _ = h.write(json!({
                                     "type": "control_response",
-                                    "response": { "subtype": "error", "request_id": request_id, "error": format!("{subtype} is not supported by Open") }
+                                    "response": { "subtype": "error", "request_id": request_id, "error": format!("{subtype} is not supported by Supasito") }
                                 })).await;
                             }
                         }

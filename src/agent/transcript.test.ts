@@ -54,7 +54,7 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 }
 
 // 3b. Signed out: the CLI sends a synthetic assistant message and an error result (recorded from
-// 2.1.257 with an empty HOME). The bubble is skipped and the result says what to do in Open's terms.
+// 2.1.257 with an empty HOME). The bubble is skipped and the result says what to do in Supasito's terms.
 {
   const s = emptySession();
   addUser(s, "say hi", null);

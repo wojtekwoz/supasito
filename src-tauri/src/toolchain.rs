@@ -24,7 +24,7 @@ pub struct ClaudeStatus {
     /// From `claude auth status`; None when the CLI is too old to answer.
     pub logged_in: Option<bool>,
     pub auth_method: Option<String>,
-    /// The user's own defaults from `~/.claude/settings.json`, so Open can say what "your default" is.
+    /// The user's own defaults from `~/.claude/settings.json`, so Supasito can say what "your default" is.
     pub defaults: Option<ClaudeDefaults>,
 }
 

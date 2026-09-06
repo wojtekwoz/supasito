@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { DRAFT, useSessionsOfCurrentSite, useStore } from "./store";
 import { ago, cx } from "../util";
-import { Book, Code, Folder, Gear, Plus, Sparkle, Trash } from "../ui/Icons";
+import { Book, Code, Folder, Gear, Mark, Plus, Sparkle, Trash } from "../ui/Icons";
 
 const SESSION_CAP = 12;
 
@@ -30,7 +30,7 @@ export function Rail() {
   return (
     <aside className="pane rail">
       <div className="titlebar drag" data-tauri-drag-region>
-        <div className="brand" data-tauri-drag-region><span className="dot" />Open</div>
+        <div className="brand" data-tauri-drag-region><Mark className="mark" />Supasito</div>
       </div>
       <div className="rail-body">
         <div>
@@ -59,7 +59,7 @@ export function Rail() {
                 {site.id === currentSiteId && <span className="icon-btn x" title="Site rules (CLAUDE.md): voice, brand, conventions" onClick={(e) => { e.stopPropagation(); void openRules(); }}><Book /></span>}
                 <span className="icon-btn x" title="Open in your code editor" onClick={(e) => { e.stopPropagation(); void openSiteInEditor(site.id); }}><Code /></span>
                 <span className="icon-btn x" title="Reveal in Finder" onClick={(e) => { e.stopPropagation(); void revealSite(site.id); }}><Folder /></span>
-                <span className="icon-btn x" title="Remove from Open (keeps the folder)" onClick={(e) => { e.stopPropagation(); if (confirm(`Remove ${site.name} from Open? The folder stays on disk.`)) void removeSite(site.id); }}><Trash /></span>
+                <span className="icon-btn x" title="Remove from Supasito (keeps the folder)" onClick={(e) => { e.stopPropagation(); if (confirm(`Remove ${site.name} from Supasito? The folder stays on disk.`)) void removeSite(site.id); }}><Trash /></span>
               </button>
             ))}
           </div>

@@ -1,5 +1,5 @@
 //! Reads Claude Code's own session store (~/.claude/projects/<encoded cwd>/*.jsonl)
-//! so Open never duplicates transcripts.
+//! so Supasito never duplicates transcripts.
 
 use std::{io::{BufRead, BufReader}, path::PathBuf};
 

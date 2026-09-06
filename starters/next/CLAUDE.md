@@ -1,6 +1,6 @@
 # This site
 
-A marketing site built with Next.js (App Router), Tailwind v4 and TypeScript. It is edited through Open: the person you are talking to sees the live preview, not the code.
+A marketing site built with Next.js (App Router), Tailwind v4 and TypeScript. It is edited through Supasito: the person you are talking to sees the live preview, not the code.
 
 ## Where things are
 - `app/page.tsx` composes the page from `components/*`. One component per section; keep it that way.
@@ -15,7 +15,7 @@ A marketing site built with Next.js (App Router), Tailwind v4 and TypeScript. It
 ## Conventions
 - Prefer small, direct edits. Do not add dependencies unless asked.
 - After editing, run `pnpm typecheck` when the change touched more than copy.
-- Never start the dev server; Open runs it.
+- Never start the dev server; Supasito runs it.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

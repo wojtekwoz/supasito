@@ -31,3 +31,12 @@ export const Code = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="m
 export const Book = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2.5 3.5A1.5 1.5 0 0 1 4 2h3.5v11.5H4a1.5 1.5 0 0 0-1.5 1.5zM13.5 3.5A1.5 1.5 0 0 0 12 2H8.5v11.5H12a1.5 1.5 0 0 1 1.5 1.5z" /></svg>;
 export const Robot = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="2.5" y="5" width="11" height="8.5" rx="2" /><path d="M8 5V2.75M5.75 8.5V11M10.25 8.5V11" /><circle cx="8" cy="2" r="0.8" fill="currentColor" stroke="none" /></svg>;
 export const Signal = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 13v-2.5M6.5 13V8M10 13V5.5M13.5 13V3" /></svg>;
+
+/** The app mark: the Supasito "s" on its coral tile (a flat cut of the app icon in src-tauri/icons/Supasito.icon). */
+export const Mark = (p: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 16 16" fill="none" {...p}>
+    <defs><linearGradient id="mark-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#FF7B5F" /><stop offset="1" stopColor="#EE4A31" /></linearGradient></defs>
+    <rect width="16" height="16" rx="4" fill="url(#mark-g)" />
+    <svg x="2.5" y="2.5" width="11" height="11" viewBox="221 168 900 900"><path fill="#FFE6DD" d="M620 226H919C940 226 945 245 932 260L705 471C692 483 698 496 716 496C862 496 979 604 979 743C979 889 862 1010 712 1010H385C363 1010 356 990 373 973L616 752C628 741 622 731 605 730C469 728 363 623 363 488C363 342 475 226 620 226Z" /></svg>
+  </svg>
+);

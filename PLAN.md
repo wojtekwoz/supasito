@@ -1,19 +1,19 @@
-# Open — plan (v2, 2026-09-05)
+# Supasito — plan (v2, 2026-09-05)
 
-*Open is a macOS desktop app that builds websites with the Claude Code you already have. This document is the current state and the next steps; the session-by-session history is in CHANGELOG.md, and agent-facing conventions are in CLAUDE.md.*
+*Supasito is a macOS desktop app that builds websites with the Claude Code you already have. This document is the current state and the next steps; the session-by-session history is in CHANGELOG.md, and agent-facing conventions are in CLAUDE.md.*
 
 ---
 
 ## 1. One paragraph
 
-Three panes: your sites, a conversation with Claude Code, and a live preview of the site. You describe a change, or click the element you mean in the preview, Claude edits the code, the preview hot-reloads, you approve anything risky, and you press Publish. The site is an ordinary code repository; the agent is the `claude` binary on your machine; history is git. Open owns nothing except the loop between you, the agent and the browser.
+Three panes: your sites, a conversation with Claude Code, and a live preview of the site. You describe a change, or click the element you mean in the preview, Claude edits the code, the preview hot-reloads, you approve anything risky, and you press Publish. The site is an ordinary code repository; the agent is the `claude` binary on your machine; history is git. Supasito owns nothing except the loop between you, the agent and the browser.
 
 ## 2. The thesis: subtraction
 
 HF0's Dave Fontenot: *"our whole thesis at HF0 is all about subtraction, not addition"*; *"the most dangerous distraction is the second most important thing in your business."* Applied here:
 
 1. **One artifact: the code.** No proprietary site format, no abstraction layer. (Webflow Source reached the same conclusion: "code is the native language of AI".)
-2. **One agent runtime: yours.** Open ships no model, no key flow, no agent loop. Your subscription, skills, MCP servers, memory and `CLAUDE.md` all apply.
+2. **One agent runtime: yours.** Supasito ships no model, no key flow, no agent loop. Your subscription, skills, MCP servers, memory and `CLAUDE.md` all apply.
 3. **One loop: say → change → see → approve → publish.** Every feature must shorten it. The cut list from Webflow Source (Inbox, Workflows, Agents, CMS, Brand, Campaigns, custom views, multiplayer, analytics) stays cut.
 4. **Nothing to learn.** Describe a change and click the thing you mean.
 5. **Nothing to host.** Sites are folders. Sessions live in `~/.claude/projects`. History is git. App state is one JSON file.
@@ -65,7 +65,7 @@ pnpm dev                       # UI only, mock backend, for browser-driven check
 pnpm test                      # transcript reducer, route mapping, cargo test
 cd src-tauri && cargo test -- --ignored   # + creates a real site from the starter
 OPEN_SMOKE_SCENARIO=queue OPEN_SMOKE_SITE_PATH=/path OPEN_SMOKE_MODEL=haiku OPEN_SMOKE_PROMPT=x pnpm tauri dev
-pnpm release [--install]       # Open.app (optionally into /Applications)
+pnpm release [--install]       # Supasito.app (optionally into /Applications)
 ```
 
 ## 6. What's built (all verified; see CHANGELOG.md for how)
@@ -93,15 +93,15 @@ pnpm release [--install]       # Open.app (optionally into /Applications)
 - Failure paths: "not logged in" and "offline" were recorded from the real CLI and are handled; rate limit is covered from the CLI's own strings and has not been provoked.
 - Session listing re-reads JSONL heads on every site switch (fine below a few hundred sessions).
 - Last review round's fixes were verified in the mock and by smoke tests, not yet by a person.
-- Fast mode has been switched on and reported by the CLI, but no recorded turn has actually run at `usage.speed: "fast"` (one-word answers stay standard); a longer Opus turn with fast on has not been tried, so the cost and speed claims come from the docs, not from Open.
+- Fast mode has been switched on and reported by the CLI, but no recorded turn has actually run at `usage.speed: "fast"` (one-word answers stay standard); a longer Opus turn with fast on has not been tried, so the cost and speed claims come from the docs, not from Supasito.
 - Context fullness follows Claude Code's own status-line rule (last API call's input + cache tokens) and compaction is handled from the CLI's schema and a saved transcript; neither has been watched live through a full 200k session.
 
 ## 8. Next milestone — v0.2 "usable by someone who isn't you"
 
-1. **Live on the release app for a week.** `pnpm release --install`, quit `tauri dev`, use Open.app for real work. Log every papercut. Acceptance: a list of things that bit, or the honest absence of one.
+1. **Live on the release app for a week.** `pnpm release --install`, quit `tauri dev`, use Supasito.app for real work. Log every papercut. Acceptance: a list of things that bit, or the honest absence of one.
 2. **First-run checks that name what's missing.** *Built (session 12):* `toolchain.rs` + the checklist (session pane, welcome, Settings); Claude sign-in via `claude auth status`. Acceptance still open: a fresh macOS user account reaches a working preview following only the app's own text.
 3. **npm fallback for New site.** *Built (session 12):* pnpm if present, else npm, starter rules rewritten; the starter stays lockfile-free. Acceptance still open: try it on a machine without pnpm (`PATH` without pnpm is enough to simulate).
-4. **Distributable build.** *Decision (session 12): unsigned for now.* `pnpm release --install --zip` builds, installs and writes `release/Open-<version>-macos.zip`; recipients clear quarantine once (`xattr -dr com.apple.quarantine`). Signing/notarization is wired in the script for when a Developer ID Application certificate exists (the keychain has only an Apple Development one). Acceptance for now: a second Mac runs the zip after the one-line fix.
+4. **Distributable build.** *Decision (session 12): unsigned for now.* `pnpm release --install --zip` builds, installs and writes `release/Supasito-<version>-macos.zip`; recipients clear quarantine once (`xattr -dr com.apple.quarantine`). Signing/notarization is wired in the script for when a Developer ID Application certificate exists (the keychain has only an Apple Development one). Acceptance for now: a second Mac runs the zip after the one-line fix.
 5. **Failure-path pass.** *Done except rate limit (session 12):* not logged in and offline recorded from the real CLI (offline = 10 silent retries over ~3 min, now shown live in the Working row); rate limit covered by the CLI's own strings, not provoked; publish sign-in failure and dev server without Node have hints. A dev server crash mid-session is the existing "stopped" card.
 6. **Exercise the review fixes by hand.** *Session 12:* never-opens-a-port verified in the real app (error after 90 s, child killed); cancel during commit verified in the mock (deploy never ran); undo with untracked files is unit-tested in Rust. Still by hand: undo in the real UI, fast site switching.
 
@@ -113,10 +113,10 @@ Three knobs on the same loop: which model makes the change, how hard it thinks, 
 
 **Facts (CLI 2.1.257, verified 2026-09-06 with `-p` probes; recordings are reducer fixtures)**
 - **Model.** `--model` takes an alias (`fable`, `opus`, `sonnet`, `haiku`, `best`, `opusplan`, `default`) or a full id (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`), optionally with `[1m]`. The resolved id is `system/init.model`, every assistant `message.model`, and per turn `result.modelUsage`. The user's own default is `model` in `~/.claude/settings.json`.
-- **Effort.** `--effort low|medium|high|xhigh|max` (also settings `effortLevel`, env `CLAUDE_CODE_EFFORT_LEVEL`). Not reported back; Open remembers what it passed.
+- **Effort.** `--effort low|medium|high|xhigh|max` (also settings `effortLevel`, env `CLAUDE_CODE_EFFORT_LEVEL`). Not reported back; Supasito remembers what it passed.
 - **Thinking text** is withheld in `-p` mode unless `--settings '{"showThinkingSummaries":true}'`; then `thinking_delta.thinking` streams and the block arrives as its own assistant message before the text.
 - **Fast mode.** `--settings '{"fastMode":true}'`, Opus 5 / 4.8 only. `system/init` and `result` carry `fast_mode_state` (`on|off|cooldown`) and `fast_mode_disabled_reason`; `result.usage.speed` is `fast|standard` per request. About twice the cost of standard Opus ($10/$50 per MTok); a one-word answer cost $0.257.
-- `--settings` merges over the user's settings. Mid-session: `set_model {model}` and `apply_flag_settings {settings}` control requests exist in the binary; Open sends them for an idle session and falls back to stop + `--resume` with new flags when the CLI rejects one.
+- `--settings` merges over the user's settings. Mid-session: `set_model {model}` and `apply_flag_settings {settings}` control requests exist in the binary; Supasito sends them for an idle session and falls back to stop + `--resume` with new flags when the CLI rejects one.
 
 **Verified live (smoke `model`, `fast`):** `set_model` and `apply_flag_settings{fastMode}` take effect on the next turn, and that turn's `system/init` reports the new model / `fast_mode_state`. Not yet seen: a real turn with `usage.speed: "fast"` (both one-word probes stayed "standard" even with fast mode on), so the `fast` mark on the turn line is tested only from a synthetic result.
 

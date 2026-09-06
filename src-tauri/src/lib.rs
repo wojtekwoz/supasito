@@ -461,7 +461,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move { smoke::run(handle, prompt).await });
             }
             let builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
-                .title("Open")
+                .title("Supasito")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(980.0, 620.0)
                 .initialization_script_for_all_frames(PICKER_JS)

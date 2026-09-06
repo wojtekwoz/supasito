@@ -71,7 +71,7 @@ function ModeSelect({ mode }: { mode: string | null }) {
   );
 }
 
-/** Model, effort and fast mode for this session. What the CLI reported (system/init) wins over what Open
+/** Model, effort and fast mode for this session. What the CLI reported (system/init) wins over what Supasito
  *  asked for; a draft shows the defaults it will start with. Changes wait for an idle session. */
 function Knobs({ session, mode }: { session: SessionState | null; mode?: string | null }) {
   const settings = useStore((s) => s.settings);
@@ -118,8 +118,8 @@ function Setup() {
   return (
     <div className="welcome">
       <div className="box wide" style={{ textAlign: "left" }}>
-        <h2>{signedOut ? "Sign in to Claude Code" : "Open needs Claude Code"}</h2>
-        <p>Open drives the Claude Code you already use, with your own subscription. {signedOut ? "It's installed but not signed in on this Mac." : "It isn't on this Mac yet, or it isn't on the PATH."} Follow the line below, then check again.</p>
+        <h2>{signedOut ? "Sign in to Claude Code" : "Supasito needs Claude Code"}</h2>
+        <p>Supasito drives the Claude Code you already use, with your own subscription. {signedOut ? "It's installed but not signed in on this Mac." : "It isn't on this Mac yet, or it isn't on the PATH."} Follow the line below, then check again.</p>
         <Checklist />
       </div>
     </div>
@@ -139,7 +139,7 @@ function Welcome() {
           {missing ? (
             <>
               <h2>Before you start</h2>
-              <p>Open builds sites with tools already on your Mac. Get the missing ones, then check again.</p>
+              <p>Supasito builds sites with tools already on your Mac. Get the missing ones, then check again.</p>
               <Checklist />
             </>
           ) : (
@@ -405,7 +405,7 @@ function Composer() {
         <textarea
           ref={ref}
           value={text}
-          placeholder={attachments.length ? "What should Claude do with this image?" : selection ? "What should change about this element?" : "Tell Open what to change…"}
+          placeholder={attachments.length ? "What should Claude do with this image?" : selection ? "What should change about this element?" : "Tell Supasito what to change…"}
           onChange={(e) => setText(e.target.value)}
           onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); onFiles(files); } }}
           onKeyDown={(e) => {

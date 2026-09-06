@@ -35,11 +35,11 @@ export type SessionState = {
   plan: PlanWindow[];
   /** How full Claude's context is: tokens in the prompt of its last API call against the model's window. */
   context: { used: number; window: number } | null;
-  /** USD. `session` sums the turns seen since this session was opened in Open; `process` mirrors the CLI's cumulative total_cost_usd for the running process. */
+  /** USD. `session` sums the turns seen since this session was opened in Supasito; `process` mirrors the CLI's cumulative total_cost_usd for the running process. */
   cost: { session: number; process: number; turns: number };
   /** True when the transcript was re-rendered from Claude's store, so cost only covers this sitting. */
   resumed: boolean;
-  /** Model, effort and fast mode Open passes when it (re)starts this session's process; unset = the Settings default. */
+  /** Model, effort and fast mode Supasito passes when it (re)starts this session's process; unset = the Settings default. */
   overrides: SessionOverrides;
   /** Fast mode as the CLI reports it in system/init and result (`on`, `off`, `cooldown`; verified 2.1.257) with its reason when off. */
   fast: { state: string; reason: string | null } | null;
@@ -330,7 +330,7 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       let changed = false;
       if (info.status === "rejected") {
         const at = typeof info.resetsAt === "number" ? new Date(info.resetsAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
-        const text = `Your Claude plan limit is reached${at ? `; it resets at ${at}` : ""}. Open will keep the session; send again after the reset.`;
+        const text = `Your Claude plan limit is reached${at ? `; it resets at ${at}` : ""}. Supasito will keep the session; send again after the reset.`;
         const last = items[items.length - 1];
         if (!(last?.kind === "notice" && last.text === text)) { items.push({ kind: "notice", id: uid("n"), text, tone: "error" }); changed = true; }
       }

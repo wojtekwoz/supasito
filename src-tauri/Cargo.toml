@@ -1,12 +1,12 @@
 [package]
-name = "open"
+name = "supasito"
 version = "0.1.0"
-description = "Open — build websites with your local coding agent"
+description = "Supasito — build websites with your local coding agent"
 authors = ["wozu"]
 edition = "2021"
 
 [lib]
-name = "open_lib"
+name = "supasito_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

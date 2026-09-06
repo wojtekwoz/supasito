@@ -42,7 +42,7 @@ export type Store = {
   publish: PublishState;
   diff: DiffState;
   rules: RulesState;
-  /** Time of the last commit made from Open; turns before it can no longer be undone. */
+  /** Time of the last commit made from Supasito; turns before it can no longer be undone. */
   committedAt: number;
   newSite: NewSiteState;
   toast: string | null;
@@ -124,7 +124,7 @@ Notes Claude reads before every change. Keep them short and true.
 ## Conventions
 - One component per section. Small, direct edits.
 - Do not add dependencies unless asked.
-- Never start the dev server; Open runs it.
+- Never start the dev server; Supasito runs it.
 `;
 const now = () => Date.now();
 /** Explain a failed publish command from its output: most first failures are a hosting CLI that isn't signed in or installed. */

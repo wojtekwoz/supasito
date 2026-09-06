@@ -2363,26 +2363,6 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "open"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "block2",
- "dirs",
- "libc",
- "objc2",
- "objc2-foundation",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "open"
 version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c603ab8300cf18bc3b14146b19fe3dfcc4843ae5a400cd0e7a30b95aa366634"
@@ -3292,6 +3272,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "supasito"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "dirs",
+ "libc",
+ "objc2",
+ "objc2-foundation",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "swift-rs"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3605,7 +3605,7 @@ dependencies = [
  "glob",
  "objc2-app-kit",
  "objc2-foundation",
- "open 5.4.3",
+ "open",
  "schemars 0.8.22",
  "serde",
  "serde_json",

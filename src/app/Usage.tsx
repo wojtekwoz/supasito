@@ -39,7 +39,7 @@ function Meter({ pct }: { pct: number }) {
 
 /** One line per plan window, with its reset time. Used in the popover and in Settings. */
 export function PlanRows({ windows, at }: { windows: PlanWindow[]; at: number | null }) {
-  if (windows.length === 0) return <p className="plan-empty">Claude Code reports plan usage while it works; nothing has come in since Open started.</p>;
+  if (windows.length === 0) return <p className="plan-empty">Claude Code reports plan usage while it works; nothing has come in since Supasito started.</p>;
   return (
     <div className="plan-rows">
       {windows.map((w) => (

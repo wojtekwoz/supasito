@@ -177,7 +177,7 @@ export function Preview() {
                 </>
               )}
               {!site.isGit && !site.needsInstall && (
-                <p>This folder isn't a git repository yet, so Open can't count changes. <button className="btn sm" onClick={() => void gitInit(site.id)}>Initialise git</button></p>
+                <p>This folder isn't a git repository yet, so Supasito can't count changes. <button className="btn sm" onClick={() => void gitInit(site.id)}>Initialise git</button></p>
               )}
             </div>
           </div>

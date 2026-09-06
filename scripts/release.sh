@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Build the release app.
-#   pnpm release              Open.app (unsigned unless the Apple variables below are set)
+#   pnpm release              Supasito.app (unsigned unless the Apple variables below are set)
 #   pnpm release --install    …and copy it into /Applications (replacing an older copy)
-#   pnpm release --zip        …also release/Open-<version>-macos.zip to hand to other Macs. Unsigned
+#   pnpm release --zip        …also release/Supasito-<version>-macos.zip to hand to other Macs. Unsigned
 #                             ("underground") builds: the recipient runs
-#                             xattr -dr com.apple.quarantine /Applications/Open.app once, or uses
+#                             xattr -dr com.apple.quarantine /Applications/Supasito.app once, or uses
 #                             System Settings → Privacy & Security → Open Anyway.
 #   pnpm release --dmg        …also a DMG (needs an interactive session: the DMG step drives Finder)
 #
@@ -28,8 +28,8 @@ for arg in "$@"; do
   esac
 done
 
-if pgrep -f "target/debug/open" >/dev/null; then
-  echo "A dev instance of Open is running (pnpm tauri dev). Quit it first so the two don't share state at once." >&2
+if pgrep -f "target/debug/supasito" >/dev/null; then
+  echo "A dev instance of Supasito is running (pnpm tauri dev). Quit it first so the two don't share state at once." >&2
   exit 1
 fi
 
@@ -44,7 +44,7 @@ BUNDLES="app"
 [[ $DMG -eq 1 ]] && BUNDLES="app,dmg"
 pnpm tauri build --bundles "$BUNDLES"
 
-APP="src-tauri/target/release/bundle/macos/Open.app"
+APP="src-tauri/target/release/bundle/macos/Supasito.app"
 echo "Built $APP ($(du -sh "$APP" | cut -f1))"
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   codesign --verify --deep --strict "$APP" && echo "Signature verifies."
@@ -57,20 +57,20 @@ fi
 if [[ $ZIP -eq 1 ]]; then
   VERSION=$(node -p "require('./package.json').version")
   mkdir -p release
-  ZIPFILE="release/Open-$VERSION-macos.zip"
+  ZIPFILE="release/Supasito-$VERSION-macos.zip"
   rm -f "$ZIPFILE"
   ditto -c -k --keepParent "$APP" "$ZIPFILE"
   echo "Zip: $ZIPFILE ($(du -sh "$ZIPFILE" | cut -f1))"
   if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
     cat <<'MSG'
-This zip is unsigned. Tell whoever installs it: drag Open.app to /Applications, then run
-  xattr -dr com.apple.quarantine /Applications/Open.app
+This zip is unsigned. Tell whoever installs it: drag Supasito.app to /Applications, then run
+  xattr -dr com.apple.quarantine /Applications/Supasito.app
 in Terminal (or open it once, dismiss the warning, and use System Settings → Privacy & Security → Open Anyway).
 MSG
   fi
 fi
 if [[ $INSTALL -eq 1 ]]; then
-  rm -rf /Applications/Open.app
-  cp -R "$APP" /Applications/Open.app
-  echo "Installed /Applications/Open.app"
+  rm -rf /Applications/Supasito.app
+  cp -R "$APP" /Applications/Supasito.app
+  echo "Installed /Applications/Supasito.app"
 fi

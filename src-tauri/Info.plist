@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The layered app icon compiled from icons/Supasito.icon into Resources/Assets.car (scripts/icon.sh);
+	     macOS 26 draws it in light, dark and tinted appearances. Older systems fall back to icon.icns. -->
+	<key>CFBundleIconName</key>
+	<string>Supasito</string>
+</dict>
+</plist>

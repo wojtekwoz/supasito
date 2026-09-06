@@ -190,7 +190,7 @@ impl Registry {
                         if r.info.status == "starting" {
                             let port = r.info.port;
                             r.info.status = "error".into();
-                            r.log.push(format!("Open waited 90s but nothing answered on port {port}. Is this the right dev command?"));
+                            r.log.push(format!("Supasito waited 90s but nothing answered on port {port}. Is this the right dev command?"));
                             let _ = app.emit("dev://status", &r.info);
                         }
                         break;

@@ -1,5 +1,5 @@
 {
-  "name": "open",
+  "name": "supasito",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "test": "pnpm run test:ui && cd src-tauri && cargo test",
     "test:ui": "node --experimental-strip-types --no-warnings src/routes.test.ts && node --experimental-strip-types --no-warnings src/agent/transcript.test.ts",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "icon": "bash scripts/icon.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

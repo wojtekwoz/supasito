@@ -46,7 +46,7 @@ a { color: var(--accent); }
 .rail { background: var(--rail); border-right: 1px solid var(--line); }
 .rail .titlebar { padding-left: var(--lights); }
 .brand { font-weight: 700; letter-spacing: -0.01em; font-size: 13px; display: flex; align-items: center; gap: 8px; }
-.brand .dot { width: 14px; height: 14px; border-radius: 4px; background: linear-gradient(135deg, #7C90FF, #4F6BEA); }
+.brand .mark { width: 14px; height: 14px; flex: none; }
 .rail-body { flex: 1; overflow-y: auto; padding: 4px 8px 12px; display: flex; flex-direction: column; gap: 14px; }
 .section-h { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 2px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .section-h .actions { display: flex; gap: 2px; }

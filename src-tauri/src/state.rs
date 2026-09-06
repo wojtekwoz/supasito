@@ -34,6 +34,15 @@ impl AppState {
         let dir = app.path().app_data_dir()?;
         std::fs::create_dir_all(&dir)?;
         let file = dir.join("state.json");
+        // The app was called Open until 2026-09-06 and the app data dir follows the bundle identifier,
+        // so the first start of Supasito on a Mac that ran Open carries its sites and settings over.
+        if !file.exists() {
+            if let Some(old) = dir.parent().map(|p| p.join("co.wozu.open").join("state.json")) {
+                if old.exists() {
+                    let _ = std::fs::copy(&old, &file);
+                }
+            }
+        }
         let persisted = std::fs::read_to_string(&file)
             .ok()
             .and_then(|s| serde_json::from_str::<Persisted>(&s).ok())

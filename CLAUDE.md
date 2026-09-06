@@ -1,6 +1,6 @@
-# Open — notes for agents working on this repo
+# Supasito — notes for agents working on this repo
 
-Open is a macOS desktop app (Tauri 2, Rust core, React UI) that builds websites by driving the
+Supasito is a macOS desktop app (Tauri 2, Rust core, React UI) that builds websites by driving the
 user's own Claude Code binary. Read PLAN.md for the current state, decisions and next milestone;
 CHANGELOG.md for what was built and verified when; README.md for usage.
 
@@ -23,7 +23,7 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - Recording a CLI failure shape: `ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p … --output-format stream-json`
   for offline (10 retries, ~3 min), `HOME=<empty dir>` for signed out. Put the recorded lines in a reducer test.
 - `pnpm release --install --zip` = the unsigned "underground" build; signing needs a Developer ID (see README).
-- `pnpm release [--install]` builds Open.app (and copies it to /Applications).
+- `pnpm release [--install]` builds Supasito.app (and copies it to /Applications).
 
 ## Where things are
 - `src-tauri/src/agent/claude.rs` — the only place that speaks Claude Code's stream-json control
@@ -41,6 +41,11 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   from the CLI's cumulative `total_cost_usd` (0 on interrupt; reset when the process restarts).
 - `src/app/Usage.tsx` — the usage ring by the composer, its popover, and the plan rows Settings shows.
 - `src/routes.ts` — file → route mapping for follow-the-page.
+- `src-tauri/icons/Supasito.icon` — the app icon, an Icon Composer document (the coral tile with the "s").
+  `pnpm icon` compiles it with actool into `icons/Assets.car` (the layered icon macOS 26 draws in light,
+  dark and tinted; `src-tauri/Info.plist` names it via `CFBundleIconName`) and regenerates the flat
+  PNG/icns/ico set from `icons/default-1024.png`, Icon Composer's 1024px export. `Mark` in `Icons.tsx`
+  is the same glyph, flat, for the rail. Design source: see CHANGELOG session 15.
 - `starters/next/` — the bundled "New site" starter (Next 16 + Tailwind 4). Commit files that
   `next dev` rewrites (tsconfig, CLAUDE.md block) so a fresh site starts clean.
 

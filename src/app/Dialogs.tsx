@@ -15,7 +15,7 @@ export function NewSiteDialog() {
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !ns.running) openNewSite(false); }}>
       <div className="modal">
         <h2>New site</h2>
-        <p style={{ margin: 0, color: "var(--ink-2)" }}>Open copies its Next.js starter into a folder you choose, installs packages, and starts a session. Describe the site in your first message.</p>
+        <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito copies its Next.js starter into a folder you choose, installs packages, and starts a session. Describe the site in your first message.</p>
         <div className="row2">
           <label>Name</label>
           <input className="text-input" autoFocus placeholder="e.g. ClarityOps" value={name} onChange={(e) => setName(e.target.value)} disabled={ns.running} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) void createSite(name); }} />
@@ -82,7 +82,7 @@ export function PublishDialog() {
         <h2>{title}</h2>
         {phase === "editing" && (
           <>
-            <p style={{ margin: 0, color: "var(--ink-2)" }}>Open runs one command from the site folder for each target and shows you the result. Both are saved in <code>open.json</code>.</p>
+            <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito runs one command from the site folder for each target and shows you the result. Both are saved in <code>open.json</code>.</p>
             <div className="presets">{PRESETS.map((x) => <button key={x.label} className={"btn sm" + (prod === x.production ? " primary" : "")} onClick={() => { setProd(x.production); setPrev(x.preview); }}>{x.label}</button>)}</div>
             <div className="row2"><label>Production</label><input className="text-input" autoFocus placeholder="e.g. vercel deploy --prod --yes" value={prod} onChange={(e) => setProd(e.target.value)} /></div>
             <div className="row2"><label>Preview</label><input className="text-input" placeholder="optional, e.g. vercel deploy --yes" value={prev} onChange={(e) => setPrev(e.target.value)} /></div>

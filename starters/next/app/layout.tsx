@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "New site",
-  description: "A site built with Open.",
+  description: "A site built with Supasito.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

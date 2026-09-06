@@ -176,12 +176,19 @@ pub fn git_status(path: &str, path_env: &str) -> Result<GitStatus, String> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    let out = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "status", "--porcelain", "--", "."]).output().map_err(|e| e.to_string())?;
+    // `-z`: NUL-separated and never quoted (plain porcelain quotes paths with spaces, which diff and undo then cannot find)
+    let out = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "status", "--porcelain", "-z", "--", "."]).output().map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
     let site_relative = |p: &str| p.strip_prefix(prefix.as_str()).unwrap_or(p).to_string();
-    let files: Vec<String> = text.lines().filter(|l| l.len() > 3)
-        .map(|l| l[3..].trim().split(" -> ").map(site_relative).collect::<Vec<_>>().join(" -> "))
-        .collect();
+    let mut files: Vec<String> = Vec::new();
+    let mut fields = text.split('\0');
+    while let Some(entry) = fields.next() {
+        if entry.len() <= 3 { continue; } // `XY ` + path; the trailing NUL leaves an empty field
+        let (xy, p) = entry.split_at(3);
+        // a rename or copy is `XY new\0old\0`: keep the new path only — it is the file in the working tree, the one diff and undo can act on
+        if xy[..2].contains(['R', 'C']) { fields.next(); }
+        files.push(site_relative(p));
+    }
     let branch = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
@@ -684,6 +691,47 @@ mod tests {
         std::fs::remove_file(dir.join("pnpm-lock.yaml")).unwrap();
         assert_eq!(git(&["status", "--porcelain"]).trim(), "", "repo clean");
         let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    /// Paths with spaces and renames come back plain (no porcelain quoting, no `old -> new`), so
+    /// diff and undo find the files; also covers the prefix strip for a workspace package.
+    #[test]
+    fn status_paths_with_spaces_and_renames() {
+        if std::process::Command::new("git").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+            eprintln!("git not on PATH; skipping"); return;
+        }
+        let dir = std::env::temp_dir().join(format!("supasito-quoted-{}", uuid::Uuid::new_v4()));
+        let web = dir.join("apps/web");
+        std::fs::create_dir_all(web.join("sub dir")).unwrap();
+        let path = dir.to_str().unwrap();
+        let site = web.to_str().unwrap();
+        let env = std::env::var("PATH").unwrap_or_default();
+        let git = |args: &[&str]| {
+            let o = std::process::Command::new("git").args(["-C", path, "-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        git(&["init", "-q"]);
+        std::fs::write(web.join("sub dir/my file.txt"), "one").unwrap();
+        std::fs::write(web.join("a.txt"), "a").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "init"]);
+
+        std::fs::write(web.join("sub dir/my file.txt"), "two").unwrap();
+        std::fs::write(web.join("new file.txt"), "created").unwrap();
+        git(&["mv", "apps/web/a.txt", "apps/web/b.txt"]);
+        let g = git_status(site, &env).unwrap();
+        let mut files = g.files.clone();
+        files.sort();
+        assert_eq!(g.changed, 3);
+        assert_eq!(files, vec!["b.txt", "new file.txt", "sub dir/my file.txt"], "site-relative, unquoted, the new name of a rename");
+
+        let diff = git_diff(site, &["sub dir/my file.txt".into()], &env).unwrap();
+        assert!(diff.contains("-one") && diff.contains("+two"), "diff finds the file: {diff}");
+        let r = git_restore(site, &["sub dir/my file.txt".into()], &[], &env).unwrap();
+        assert_eq!(r.restored, vec!["sub dir/my file.txt"]);
+        assert!(r.skipped.is_empty());
+        assert_eq!(std::fs::read_to_string(web.join("sub dir/my file.txt")).unwrap(), "one");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Slow (runs pnpm install); run with `cargo test -- --ignored create_site`.

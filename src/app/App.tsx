@@ -30,11 +30,11 @@ export default function App() {
         if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(false); st.newSession(); }
         return;
       }
-      // ⌘\ shows the preview at full width, and back. Matched by key position (the US backslash key) or by
-      // the character: on German and French layouts no key at that position produces `\` (it is `#` or a
-      // backtick), and the real backslash is ⌥⇧7, `code: "Digit7"`. Chords that need Shift still stop at
-      // the shift guard.
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.code === "Backslash" || e.key === "\\")) {
+      // ⌘\ shows the preview at full width, and back. Matched by key position (the US backslash key, unshifted
+      // so ⌘| stays free) or by the character, whatever modifiers produced it: on German and French layouts no
+      // key at that position produces `\` (it is `#` or a backtick) and the real backslash is ⌥⇧7, which sets
+      // shiftKey, so the shift guard applies to the position match only.
+      if ((e.metaKey || e.ctrlKey) && ((e.code === "Backslash" && !e.shiftKey) || e.key === "\\")) {
         const st = useStore.getState();
         if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(!st.previewFull); }
         return;

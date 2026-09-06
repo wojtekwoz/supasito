@@ -50,7 +50,7 @@ src-tauri/src/
   sites.rs               detection (package.json, lockfile, host), supasito.json, git status/commit/push/diff/restore
   capture.rs             WKWebView snapshot of the preview rect
   picker.js              injected into every frame: hover/click selection, React owner chain
-  smoke.rs               debug-only real-CLI scenarios (prompt|queue|interrupt|pointing|mode, capture)
+  smoke.rs               debug-only real-CLI scenarios (prompt|queue|interrupt|pointing|mode|model|fast|undo|tools, capture)
 starters/next/           bundled "New site" (Next 16 + Tailwind 4 + CLAUDE.md + permission allowlist)
 ```
 
@@ -89,10 +89,11 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 - Only used seriously on one machine with two real sites (Astro, Next) plus scratch projects. SvelteKit, Nuxt, plain Vite and monorepos were reasoned about, not used.
 - The release app has been launched by a script, never used day to day. Dev mode is what has been tested.
 - Not signed or notarized: anyone else gets Gatekeeper's "damaged" dialog.
-- The first-run checklist was verified in the real app under a fake HOME (signed out) and a stripped PATH (no Node, no Claude Code), plus the mock; the npm path for New site is unit-tested but has not created a site on a pnpm-less machine.
+- The first-run checklist was verified in the real app under a fake HOME (signed out) and a stripped PATH (no Node, no Claude Code), plus the mock; the npm path for New site created and served a site on a PATH without pnpm (the ignored cargo test, session 17), not through the New site dialog.
 - Failure paths: "not logged in" and "offline" were recorded from the real CLI and are handled; rate limit is covered from the CLI's own strings and has not been provoked.
 - Session listing re-reads JSONL heads on every site switch (fine below a few hundred sessions).
 - Last review round's fixes were verified in the mock and by smoke tests, not yet by a person.
+- Fast site switching was raced against a registry-shaped mock, not in the Tauri window; ⌘\ reaching the page in the Tauri window is argued from the default menu's accelerators, not pressed.
 - Fast mode has been switched on and reported by the CLI, but no recorded turn has actually run at `usage.speed: "fast"` (one-word answers stay standard); a longer Opus turn with fast on has not been tried, so the cost and speed claims come from the docs, not from Supasito.
 - Context fullness follows Claude Code's own status-line rule (last API call's input + cache tokens) and compaction is handled from the CLI's schema and a saved transcript; neither has been watched live through a full 200k session.
 
@@ -100,10 +101,10 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 1. **Live on the release app for a week.** `pnpm release --install`, quit `tauri dev`, use Supasito.app for real work. Log every papercut. Acceptance: a list of things that bit, or the honest absence of one.
 2. **First-run checks that name what's missing.** *Built (session 12):* `toolchain.rs` + the checklist (session pane, welcome, Settings); Claude sign-in via `claude auth status`. Acceptance still open: a fresh macOS user account reaches a working preview following only the app's own text.
-3. **npm fallback for New site.** *Built (session 12):* pnpm if present, else npm, starter rules rewritten; the starter stays lockfile-free. Acceptance still open: try it on a machine without pnpm (`PATH` without pnpm is enough to simulate).
+3. **npm fallback for New site.** *Built (session 12):* pnpm if present, else npm, starter rules rewritten; the starter stays lockfile-free. *Acceptance closed (session 17):* on a PATH without pnpm the ignored cargo test created the site with npm (package-lock.json, rules rewritten) and its `next dev` answered.
 4. **Distributable build.** *Decision (session 12): unsigned for now.* `pnpm release --install --zip` builds, installs and writes `release/Supasito-<version>-macos.zip`; recipients clear quarantine once (`xattr -dr com.apple.quarantine`). Signing/notarization is wired in the script for when a Developer ID Application certificate exists (the keychain has only an Apple Development one). Acceptance for now: a second Mac runs the zip after the one-line fix.
 5. **Failure-path pass.** *Done except rate limit (session 12):* not logged in and offline recorded from the real CLI (offline = 10 silent retries over ~3 min, now shown live in the Working row); rate limit covered by the CLI's own strings, not provoked; publish sign-in failure and dev server without Node have hints. A dev server crash mid-session is the existing "stopped" card.
-6. **Exercise the review fixes by hand.** *Session 12:* never-opens-a-port verified in the real app (error after 90 s, child killed); cancel during commit verified in the mock (deploy never ran); undo with untracked files is unit-tested in Rust. Still by hand: undo in the real UI, fast site switching.
+6. **Exercise the review fixes by hand.** *Session 12:* never-opens-a-port verified in the real app (error after 90 s, child killed); cancel during commit verified in the mock (deploy never ran); undo with untracked files is unit-tested in Rust. *Session 17:* undo verified against the real CLI by the `undo` smoke scenario (the command's own `undo_files`: tracked file restored, created file deleted, repo clean); fast site switching verified in the mock, which found a real race (the old server's `stopped` landing on the restart), fixed in the store. Remaining: `undoTurn`'s UI guards (isGit, committedAt, markUndone) and site switching in the Tauri window are mock-verified only.
 
 Then decide from use whether anything else deserves building. Default answer: no.
 

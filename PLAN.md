@@ -86,7 +86,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 ## 7. Known gaps (honest)
 
-- Only used seriously on one machine with two real sites (Astro, Next) plus scratch projects. SvelteKit, Nuxt, plain Vite and monorepos were reasoned about, not used.
+- Only used seriously on one machine with two real sites (Astro, Next) plus scratch projects. Plain Vite and SvelteKit were exercised once each from fresh scaffolds (detection, readiness, port fallback); Nuxt and monorepos remain reasoned about only.
 - The release app has been launched by a script, never used day to day. Dev mode is what has been tested.
 - Not signed or notarized: anyone else gets Gatekeeper's "damaged" dialog.
 - The first-run checklist was verified in the real app under a fake HOME (signed out) and a stripped PATH (no Node, no Claude Code), plus the mock; the npm path for New site created and served a site on a PATH without pnpm (the ignored cargo test, session 17), not through the New site dialog.

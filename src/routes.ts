@@ -40,8 +40,9 @@ export function routeForFile(filePath: string, root?: string | null): string | n
   if ((m = rel.match(/^src\/routes\/(.*?)\/?\+page(?:\.server)?\.(?:svelte|ts|js)$/))) {
     return clean(m[1].split("/"));
   }
-  // Nuxt: pages/pricing.vue
-  if ((m = rel.match(/^pages\/(.*)\.vue$/))) {
+  // Nuxt: pages/pricing.vue; Nuxt 4 keeps them under app/ (srcDir). Cannot collide with the Next
+  // App Router rule above, which needs a page.(tsx|…) file.
+  if ((m = rel.match(/^(?:app\/)?pages\/(.*)\.vue$/))) {
     return clean(m[1].split("/"));
   }
   return null;

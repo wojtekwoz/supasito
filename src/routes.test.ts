@@ -24,6 +24,11 @@ const cases: [string, string | null][] = [
   ["/Users/x/site/src/routes/+layout.server.ts", null],
   ["/Users/x/site/src/routes/api/health/+server.ts", null],
   ["/Users/x/site/pages/about.vue", "/about"],
+  ["/Users/x/site/app/pages/about.vue", "/about"],
+  ["/Users/x/site/app/pages/index.vue", "/"],
+  ["/Users/x/site/app/pages/blog/[slug].vue", null],
+  ["/Users/x/site/app/app.vue", null],
+  ["/Users/x/site/app/layouts/default.vue", null],
   ["app/contact/page.tsx", "/contact"],
 ];
 let fail = 0;

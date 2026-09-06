@@ -72,7 +72,8 @@ impl Site {
         // Plain key lookup, not `pointer()`: a JSON Pointer splits on `/`, so scoped names like `@sveltejs/kit` would never match.
         let deps = |name: &str| ["dependencies", "devDependencies"].iter().any(|k| pkg.get(k).and_then(|d| d.get(name)).is_some());
 
-        self.package_manager = Some(if root.join("pnpm-lock.yaml").exists() { "pnpm" } else if root.join("bun.lock").exists() || root.join("bun.lockb").exists() { "bun" } else if root.join("yarn.lock").exists() { "yarn" } else { "npm" }.to_string());
+        let git_top = git_toplevel(root);
+        self.package_manager = Some(package_manager(root, git_top.as_deref()).to_string());
         self.framework = if deps("astro") { Some("astro".into()) } else if deps("next") { Some("next".into()) } else if deps("@sveltejs/kit") { Some("sveltekit".into()) } else if deps("nuxt") { Some("nuxt".into()) } else if deps("vite") { Some("vite".into()) } else { None };
 
         self.dev = site_json.dev.or_else(|| {
@@ -119,9 +120,38 @@ impl Site {
             Some("netlify") => Some("netlify deploy".into()),
             _ => None,
         });
-        self.is_git = root.join(".git").exists();
+        self.is_git = git_top.is_some();
         Ok(())
     }
+}
+
+/// The nearest ancestor of `root` (itself included) that holds a `.git`: the repository the site
+/// belongs to. A site may be one folder of a larger repository (a workspace package).
+pub fn git_toplevel(root: &Path) -> Option<PathBuf> {
+    root.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf)
+}
+
+/// The package manager the nearest lockfile names, walking up from `root` but not above the
+/// repository (`top`) — a workspace keeps one lockfile at its root — or the filesystem root
+/// without git. No lockfile means npm.
+fn package_manager(root: &Path, top: Option<&Path>) -> &'static str {
+    for dir in root.ancestors() {
+        if dir.join("pnpm-lock.yaml").exists() { return "pnpm"; }
+        if dir.join("bun.lock").exists() || dir.join("bun.lockb").exists() { return "bun"; }
+        if dir.join("yarn.lock").exists() { return "yarn"; }
+        if dir.join("package-lock.json").exists() { return "npm"; }
+        if top.is_some_and(|t| dir == t) { break; }
+    }
+    "npm"
+}
+
+/// True when `root` is the root of a package-manager workspace (pnpm-workspace.yaml or
+/// `workspaces` in package.json) rather than one of its packages.
+pub fn is_workspace_root(root: &Path) -> bool {
+    if root.join("pnpm-workspace.yaml").exists() { return true; }
+    std::fs::read_to_string(root.join("package.json")).ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .is_some_and(|pkg| pkg.get("workspaces").is_some())
 }
 
 #[derive(Serialize, Clone)]
@@ -135,13 +165,23 @@ pub struct GitStatus {
     pub remote: Option<String>,
 }
 
+/// Status of the site folder only (a site may be a subfolder of its repository). `files` are
+/// site-relative, as the UI shows them and hands them back to `git_diff` and `git_restore`.
 pub fn git_status(path: &str, path_env: &str) -> Result<GitStatus, String> {
-    if !Path::new(path).join(".git").exists() {
+    if git_toplevel(Path::new(path)).is_none() {
         return Ok(GitStatus { is_git: false, changed: 0, files: vec![], branch: None, remote: None });
     }
-    let out = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "status", "--porcelain"]).output().map_err(|e| e.to_string())?;
+    // porcelain paths are repo-relative; `--show-prefix` is the site's path inside the repo ("apps/web/", or "" at the top)
+    let prefix = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "rev-parse", "--show-prefix"]).output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let out = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "status", "--porcelain", "--", "."]).output().map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
-    let files: Vec<String> = text.lines().filter(|l| l.len() > 3).map(|l| l[3..].trim().to_string()).collect();
+    let site_relative = |p: &str| p.strip_prefix(prefix.as_str()).unwrap_or(p).to_string();
+    let files: Vec<String> = text.lines().filter(|l| l.len() > 3)
+        .map(|l| l[3..].trim().split(" -> ").map(site_relative).collect::<Vec<_>>().join(" -> "))
+        .collect();
     let branch = std::process::Command::new("git").env("PATH", path_env).args(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
@@ -160,14 +200,14 @@ pub fn git_push(path: &str, path_env: &str) -> Result<String, String> {
     Ok(text.trim().to_string())
 }
 
-/// Stage everything and commit. Returns the new status.
+/// Stage everything under the site folder (what the pending count showed) and commit. Returns the new status.
 pub fn git_commit(path: &str, message: &str, path_env: &str) -> Result<GitStatus, String> {
     let msg = message.trim();
     if msg.is_empty() { return Err("Give the commit a message.".into()); }
     let run = |args: &[&str]| -> Result<std::process::Output, String> {
         std::process::Command::new("git").env("PATH", path_env).args(["-C", path]).args(args).output().map_err(|e| e.to_string())
     };
-    let add = run(&["add", "-A"])?;
+    let add = run(&["add", "-A", "--", "."])?;
     if !add.status.success() { return Err(String::from_utf8_lossy(&add.stderr).trim().to_string()); }
     let commit = run(&["commit", "-q", "-m", msg])?;
     if !commit.status.success() {
@@ -461,7 +501,7 @@ pub struct RestoreReport {
 /// the turn) are deleted; anything else is left alone and reported. Requires a git repo.
 pub fn git_restore(path: &str, files: &[String], created: &[String], path_env: &str) -> Result<RestoreReport, String> {
     let root = Path::new(path);
-    if !root.join(".git").exists() { return Err("This folder is not a git repository, so there is nothing to restore from.".into()); }
+    if git_toplevel(root).is_none() { return Err("This folder is not a git repository, so there is nothing to restore from.".into()); }
     let root_c = root.canonicalize().map_err(|e| e.to_string())?;
     let mut report = RestoreReport::default();
     let created_set: std::collections::HashSet<PathBuf> = created.iter().filter_map(|f| inside_site(root, f)).collect();
@@ -589,6 +629,61 @@ mod tests {
         assert!(!dir.join("new.txt").exists());
         assert!(dir.join("keep.txt").exists(), "untracked files that existed before the turn are left alone");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A site that is one package of a larger repository: status, commit and undo are scoped to
+    /// its folder, and the package manager comes from the workspace's lockfile.
+    #[test]
+    fn workspace_package_is_scoped_to_its_folder() {
+        if std::process::Command::new("git").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+            eprintln!("git not on PATH; skipping"); return;
+        }
+        let outer = std::env::temp_dir().join(format!("supasito-mono-{}", uuid::Uuid::new_v4()));
+        let dir = outer.join("mono");
+        let web = dir.join("apps/web");
+        std::fs::create_dir_all(&web).unwrap();
+        let path = dir.to_str().unwrap();
+        let site = web.to_str().unwrap();
+        let env = std::env::var("PATH").unwrap_or_default();
+        let git = |args: &[&str]| -> String {
+            let o = std::process::Command::new("git").args(["-C", path, "-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).to_string()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(outer.join("pnpm-lock.yaml"), "").unwrap(); // above the repo: must not count
+        std::fs::write(dir.join("pnpm-workspace.yaml"), "packages:\n  - apps/*\n").unwrap();
+        std::fs::write(dir.join("package-lock.json"), "").unwrap();
+        std::fs::write(web.join("package.json"), r#"{"name":"web","scripts":{"dev":"next dev"},"dependencies":{"next":"16"}}"#).unwrap();
+        std::fs::write(web.join("a.txt"), "one").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "init"]);
+
+        let s = Site::from_path(site).unwrap();
+        assert!(s.is_git, "the nearest .git ancestor counts");
+        assert_eq!(s.package_manager.as_deref(), Some("npm"), "nearest lockfile up to the git top; the one above the repo is ignored");
+        assert!(is_workspace_root(&dir) && !is_workspace_root(&web));
+        std::fs::write(dir.join("pnpm-lock.yaml"), "").unwrap();
+        assert_eq!(Site::from_path(site).unwrap().package_manager.as_deref(), Some("pnpm"), "pnpm-lock.yaml at the workspace root wins");
+
+        std::fs::write(web.join("a.txt"), "two").unwrap();
+        std::fs::write(dir.join("outside.txt"), "not the site").unwrap();
+        let g = git_status(site, &env).unwrap();
+        assert!(g.is_git);
+        assert_eq!((g.changed, g.files.clone()), (1, vec!["a.txt".to_string()]), "site-relative, and the change outside apps/web is not counted");
+
+        let r = git_restore(site, &["a.txt".into()], &[], &env).unwrap();
+        assert_eq!(r.restored, vec!["a.txt"]);
+        assert_eq!(std::fs::read_to_string(web.join("a.txt")).unwrap(), "one");
+        assert_eq!(git_status(site, &env).unwrap().changed, 0);
+
+        std::fs::write(web.join("a.txt"), "three").unwrap();
+        assert_eq!(git_commit(site, "scoped", &env).unwrap().changed, 0);
+        assert_eq!(git(&["status", "--porcelain"]).trim(), "?? outside.txt\n?? pnpm-lock.yaml", "commit staged only the site folder");
+        std::fs::remove_file(dir.join("outside.txt")).unwrap();
+        std::fs::remove_file(dir.join("pnpm-lock.yaml")).unwrap();
+        assert_eq!(git(&["status", "--porcelain"]).trim(), "", "repo clean");
+        let _ = std::fs::remove_dir_all(&outer);
     }
 
     /// Slow (runs pnpm install); run with `cargo test -- --ignored create_site`.

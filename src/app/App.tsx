@@ -5,12 +5,14 @@ import { SessionPane } from "./Session";
 import { Preview } from "./Preview";
 import { DiffDialog, NewSiteDialog, PublishDialog, RulesDialog, SettingsDialog } from "./Dialogs";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
+import { cx } from "../util";
 
 export default function App() {
   const init = useStore((s) => s.init);
   const ready = useStore((s) => s.ready);
   const fatal = useStore((s) => s.fatal);
   const toast = useStore((s) => s.toast);
+  const full = useStore((s) => s.previewFull && !!s.currentSiteId);
   useEffect(() => { void init(); }, [init]);
 
   useEffect(() => {
@@ -24,7 +26,14 @@ export default function App() {
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
         const st = useStore.getState();
-        if (st.currentSiteId) { e.preventDefault(); st.newSession(); }
+        // A new session is for talking, so a full-width preview gives way to it.
+        if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(false); st.newSession(); }
+        return;
+      }
+      // ⌘\ shows the preview at full width, and back.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === "\\") {
+        const st = useStore.getState();
+        if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(!st.previewFull); }
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); useStore.getState().setSettingsOpen(true); return; }
@@ -55,7 +64,7 @@ export default function App() {
   if (!ready) return <div className="boot">Starting Supasito…</div>;
   if (fatal) return <div className="boot"><div>Supasito could not start.<br /><span style={{ color: "var(--err)" }}>{fatal}</span></div></div>;
   return (
-    <div className="app">
+    <div className={cx("app", full && "full")}>
       <ErrorBoundary label="rail"><Rail /></ErrorBoundary>
       <ErrorBoundary label="session"><SessionPane /></ErrorBoundary>
       <ErrorBoundary label="preview"><Preview /></ErrorBoundary>

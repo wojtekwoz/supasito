@@ -192,6 +192,11 @@ a { color: var(--accent); }
 /* ---------- preview ---------- */
 .preview { background: var(--preview-bg); }
 .preview .titlebar { background: var(--pane); border-bottom: 1px solid var(--line); gap: 6px; }
+/* Full-width preview (⌘\): the preview pane covers the window. The rail and session keep their layout, scroll positions and
+   streaming underneath, only hidden; the title bar gains room for the traffic lights, which the rail normally holds. */
+.app.full .preview { position: fixed; inset: 0; z-index: 10; }
+.app.full .preview .titlebar { padding-left: var(--lights); }
+.app.full .rail, .app.full .session { visibility: hidden; }
 .seg { display: inline-flex; background: var(--elev); border-radius: 7px; padding: 2px; gap: 2px; }
 .seg .icon-btn { width: 26px; height: 24px; }
 .path { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 6px; height: 28px; background: var(--elev); border: 1px solid transparent; border-radius: 7px; padding: 0 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); }

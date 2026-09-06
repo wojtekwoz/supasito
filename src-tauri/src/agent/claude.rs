@@ -195,7 +195,7 @@ impl Registry {
             .env("PATH", &opts.path_env)
             .env("FORCE_COLOR", "0")
             .env("NO_COLOR", "1")
-            .env("CLAUDE_CODE_ENTRYPOINT", "sdk-open")
+            .env("CLAUDE_CODE_ENTRYPOINT", "sdk-supasito")
             .env_remove("CLAUDECODE")
             .args(ARGS);
         if opts.resume {

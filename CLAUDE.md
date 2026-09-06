@@ -16,10 +16,10 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).
-- Real-CLI checks: `OPEN_SMOKE_PROMPT=… pnpm tauri dev` (see src-tauri/src/smoke.rs; scenarios
-  `queue|interrupt|pointing|mode|tools`, `OPEN_SMOKE_SITE_PATH` for a scratch site, `OPEN_SMOKE_MODEL=haiku`).
+- Real-CLI checks: `SUPASITO_SMOKE_PROMPT=… pnpm tauri dev` (see src-tauri/src/smoke.rs; scenarios
+  `queue|interrupt|pointing|mode|tools`, `SUPASITO_SMOKE_SITE_PATH` for a scratch site, `SUPASITO_SMOKE_MODEL=haiku`).
   The built debug binary can be run directly with a fake `HOME` (signed out, empty app state) or
-  `OPEN_PATH=/usr/bin:/bin` (bare Mac) while `pnpm dev` serves the UI on 1420.
+  `SUPASITO_PATH=/usr/bin:/bin` (bare Mac) while `pnpm dev` serves the UI on 1420.
 - Recording a CLI failure shape: `ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p … --output-format stream-json`
   for offline (10 retries, ~3 min), `HOME=<empty dir>` for signed out. Put the recorded lines in a reducer test.
 - `pnpm release --install --zip` = the unsigned "underground" build; signing needs a Developer ID (see README).
@@ -51,7 +51,8 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 
 ## Conventions
 - No Node sidecar, no Agent SDK: spawn the user's `claude`. No accounts, no cloud.
-- Sites are folders; per-site config is `open.json` (`name`, `dev`, `publish`, `preview`).
+- Sites are folders; per-site config is `supasito.json` (`name`, `dev`, `publish`, `preview`); a site that still has
+  `open.json` from before the rename is read as is and moved to the new name on its next write (sites.rs `config_file`).
 - Git is the history: pending count = `git status`, undo = `git checkout`, publish may commit/push.
 - App state is one JSON file in the app data dir; transcripts stay in `~/.claude/projects`.
 - macOS first. Anything platform-specific (capture, badge) lives behind `#[cfg(target_os)]`.

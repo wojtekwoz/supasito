@@ -82,7 +82,7 @@ export function PublishDialog() {
         <h2>{title}</h2>
         {phase === "editing" && (
           <>
-            <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito runs one command from the site folder for each target and shows you the result. Both are saved in <code>open.json</code>.</p>
+            <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito runs one command from the site folder for each target and shows you the result. Both are saved in <code>supasito.json</code>.</p>
             <div className="presets">{PRESETS.map((x) => <button key={x.label} className={"btn sm" + (prod === x.production ? " primary" : "")} onClick={() => { setProd(x.production); setPrev(x.preview); }}>{x.label}</button>)}</div>
             <div className="row2"><label>Production</label><input className="text-input" autoFocus placeholder="e.g. vercel deploy --prod --yes" value={prod} onChange={(e) => setProd(e.target.value)} /></div>
             <div className="row2"><label>Preview</label><input className="text-input" placeholder="optional, e.g. vercel deploy --yes" value={prev} onChange={(e) => setPrev(e.target.value)} /></div>

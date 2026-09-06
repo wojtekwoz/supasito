@@ -36,6 +36,8 @@ export type Store = {
   previewPath: string;
   previewTitle: string;
   device: Device;
+  /** The preview covers the window and the rail and conversation are hidden (⌘\). */
+  previewFull: boolean;
   previewNonce: number;
   /** Set to make the preview navigate; the Preview pane consumes it. */
   navigateRequest: { path: string; seq: number } | null;
@@ -78,6 +80,7 @@ export type Store = {
   setPreviewPath: (path: string) => void;
   setPreviewInfo: (path: string, title: string) => void;
   setDevice: (d: Device) => void;
+  setPreviewFull: (on: boolean) => void;
   reloadPreview: () => void;
   revealSite: (siteId: string) => Promise<void>;
   openSiteInEditor: (siteId: string) => Promise<void>;
@@ -195,6 +198,7 @@ export const useStore = create<Store>((set, get) => ({
   previewPath: "/",
   previewTitle: "",
   device: "desktop",
+  previewFull: false,
   previewNonce: 0,
   navigateRequest: null,
   previewRect: null,
@@ -255,6 +259,8 @@ export const useStore = create<Store>((set, get) => ({
         addPermission(cur, req);
         st.transcripts[req.sessionId] = cur;
         set({ transcripts: bump(st.transcripts, req.sessionId) });
+        // An approval card behind a full-width preview would stall the turn unseen.
+        if (st.previewFull && req.sessionId === st.currentSessionId) set({ previewFull: false });
         get().syncBadge();
         if (!document.hasFocus()) void api.requestAttention().catch(() => {});
       });
@@ -552,10 +558,16 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) { get().showToast(String(e)); }
   },
   setPicking(on) { set({ picking: on }); },
-  setSelection(sel) { set({ selection: sel, picking: false }); },
+  // A picked element lands in the composer, so a full-width preview gives way to the conversation.
+  setSelection(sel) { set({ selection: sel, picking: false, ...(sel ? { previewFull: false } : {}) }); },
   setPreviewPath(path) { set({ previewPath: path.startsWith("/") ? path : "/" + path }); },
   setPreviewInfo(path, title) { set({ previewPath: path || "/", previewTitle: title }); },
   setDevice(d) { set({ device: d }); },
+  setPreviewFull(on) {
+    // The conversation is about to be covered, so nothing in it should keep the keyboard.
+    if (on) (document.activeElement as HTMLElement | null)?.blur?.();
+    set({ previewFull: on });
+  },
   reloadPreview() { set({ previewNonce: get().previewNonce + 1 }); },
   async revealSite(siteId) {
     const site = get().sites.find((s) => s.id === siteId);

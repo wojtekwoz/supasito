@@ -31,7 +31,7 @@ impl Default for Site {
 }
 
 #[derive(Deserialize, Default)]
-struct OpenJson {
+struct SiteJson {
     dev: Option<String>,
     publish: Option<String>,
     preview: Option<String>,
@@ -58,11 +58,11 @@ impl Site {
     /// Re-detect dev/publish commands, package manager, framework, git.
     pub fn refresh(&mut self) -> Result<(), String> {
         let root = Path::new(&self.path);
-        let open_json: OpenJson = std::fs::read_to_string(root.join("open.json"))
+        let site_json: SiteJson = std::fs::read_to_string(config_file(root))
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        if let Some(n) = open_json.name.clone() { self.name = n; }
+        if let Some(n) = site_json.name.clone() { self.name = n; }
 
         let pkg: Value = std::fs::read_to_string(root.join("package.json"))
             .ok()
@@ -74,7 +74,7 @@ impl Site {
         self.package_manager = Some(if root.join("pnpm-lock.yaml").exists() { "pnpm" } else if root.join("bun.lock").exists() || root.join("bun.lockb").exists() { "bun" } else if root.join("yarn.lock").exists() { "yarn" } else { "npm" }.to_string());
         self.framework = if deps("astro") { Some("astro".into()) } else if deps("next") { Some("next".into()) } else if deps("@sveltejs/kit") { Some("sveltekit".into()) } else if deps("nuxt") { Some("nuxt".into()) } else if deps("vite") { Some("vite".into()) } else { None };
 
-        self.dev = open_json.dev.or_else(|| {
+        self.dev = site_json.dev.or_else(|| {
             dev_script.as_ref()?;
             let pm = self.package_manager.clone().unwrap_or_else(|| "npm".into());
             let (bin, flag) = match self.framework.as_deref() {
@@ -106,13 +106,13 @@ impl Site {
             else if root.join("wrangler.toml").exists() || root.join("wrangler.jsonc").exists() || root.join("wrangler.json").exists() { Some("cloudflare") }
             else if root.join("netlify.toml").exists() { Some("netlify") }
             else { None };
-        self.publish = open_json.publish.or_else(|| match host {
+        self.publish = site_json.publish.or_else(|| match host {
             Some("vercel") => Some("vercel deploy --prod --yes".into()),
             Some("cloudflare") => Some("wrangler deploy".into()),
             Some("netlify") => Some("netlify deploy --prod".into()),
             _ => None,
         });
-        self.preview = open_json.preview.or_else(|| match host {
+        self.preview = site_json.preview.or_else(|| match host {
             Some("vercel") => Some("vercel deploy --yes".into()),
             Some("cloudflare") => Some("wrangler versions upload".into()),
             Some("netlify") => Some("netlify deploy".into()),
@@ -211,9 +211,21 @@ pub fn git_init(path: &str, path_env: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Set one key in the site's `open.json`, creating the file if needed. An empty value removes the key.
-pub fn write_open_json(path: &str, key: &str, value: &str) -> Result<(), String> {
-    let file = Path::new(path).join("open.json");
+/// The per-site config file: `supasito.json`, or `open.json` from before the app was renamed
+/// (2026-09-06) while only that one exists.
+pub fn config_file(root: &Path) -> PathBuf {
+    let new = root.join("supasito.json");
+    let old = root.join("open.json");
+    if !new.exists() && old.exists() { old } else { new }
+}
+
+/// Set one key in the site's `supasito.json`, creating the file if needed. An empty value removes the
+/// key. A site still on `open.json` is moved to the new name first.
+pub fn write_site_json(path: &str, key: &str, value: &str) -> Result<(), String> {
+    let dir = Path::new(path);
+    let file = dir.join("supasito.json");
+    let legacy = dir.join("open.json");
+    if !file.exists() && legacy.exists() { std::fs::rename(&legacy, &file).map_err(|e| e.to_string())?; }
     let mut root: Value = std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}));
     if !root.is_object() { root = json!({}); }
     let obj = root.as_object_mut().unwrap();
@@ -266,9 +278,9 @@ pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_
     copy_dir(starter, &dest).map_err(|e| e.to_string())?;
     // personalise
     let cfg = json!({ "name": name.trim(), "dev": "node_modules/.bin/next dev -p {port}" });
-    std::fs::write(dest.join("open.json"), serde_json::to_string_pretty(&cfg).unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(dest.join("supasito.json"), serde_json::to_string_pretty(&cfg).unwrap()).map_err(|e| e.to_string())?;
     if let Ok(pkg) = std::fs::read_to_string(dest.join("package.json")) {
-        std::fs::write(dest.join("package.json"), pkg.replace("\"name\": \"open-starter\"", &format!("\"name\": \"{slug}\""))).map_err(|e| e.to_string())?;
+        std::fs::write(dest.join("package.json"), pkg.replace("\"name\": \"supasito-starter\"", &format!("\"name\": \"{slug}\""))).map_err(|e| e.to_string())?;
     }
     if pm == "npm" { rewrite_for_npm(&dest); }
     let dest_s = dest.to_string_lossy().to_string();
@@ -484,7 +496,7 @@ mod tests {
         let site = Site::from_path(starter().to_str().unwrap()).unwrap();
         assert_eq!(site.framework.as_deref(), Some("next"));
         assert_eq!(site.dev.as_deref(), Some("node_modules/.bin/next dev -p {port}"));
-        assert_eq!(site.name, "New site"); // from open.json
+        assert_eq!(site.name, "New site"); // from supasito.json
         assert!(site.needs_install || starter().join("node_modules").exists());
     }
 
@@ -522,8 +534,26 @@ mod tests {
     }
 
     #[test]
+    fn site_json_falls_back_to_open_json_and_moves_it_on_write() {
+        let dir = std::env::temp_dir().join(format!("supasito-cfg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(config_file(&dir).ends_with("supasito.json"), "no file yet: the new name");
+        std::fs::write(dir.join("open.json"), r#"{ "name": "Old", "dev": "x" }"#).unwrap();
+        assert!(config_file(&dir).ends_with("open.json"), "a site from before the rename is read as is");
+        write_site_json(dir.to_str().unwrap(), "publish", "vercel deploy --prod").unwrap();
+        assert!(!dir.join("open.json").exists() && dir.join("supasito.json").exists(), "the first write renames it");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("supasito.json")).unwrap()).unwrap();
+        assert_eq!(v["name"], "Old");
+        assert_eq!(v["publish"], "vercel deploy --prod");
+        write_site_json(dir.to_str().unwrap(), "publish", "").unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("supasito.json")).unwrap()).unwrap();
+        assert!(v.get("publish").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn restore_reverts_tracked_and_deletes_only_created() {
-        let dir = std::env::temp_dir().join(format!("open-restore-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("supasito-restore-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.to_str().unwrap();
         let env = std::env::var("PATH").unwrap_or_default();
@@ -551,7 +581,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn create_site_from_starter() {
-        let parent = std::env::temp_dir().join(format!("open-new-{}", uuid::Uuid::new_v4()));
+        let parent = std::env::temp_dir().join(format!("supasito-new-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&parent).unwrap();
         let env = crate::state::login_shell_path();
         let site = create_from_starter(&starter(), parent.to_str().unwrap(), "My Test Site", &env, |l| eprintln!("{l}")).await.unwrap();

@@ -78,9 +78,9 @@ impl AppState {
 /// Ask the user's login shell for its PATH. GUI apps on macOS start with a minimal PATH
 /// that lacks Homebrew, nvm, pnpm, etc.
 pub fn login_shell_path() -> String {
-    // Debug builds can pretend to be a barer Mac: OPEN_PATH=/usr/bin:/bin pnpm tauri dev
+    // Debug builds can pretend to be a barer Mac: SUPASITO_PATH=/usr/bin:/bin pnpm tauri dev
     #[cfg(debug_assertions)]
-    if let Ok(p) = std::env::var("OPEN_PATH") { return p; }
+    if let Ok(p) = std::env::var("SUPASITO_PATH") { return p; }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let out = std::process::Command::new(&shell)
         .args(["-lc", "echo -n \"$PATH\""])

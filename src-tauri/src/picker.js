@@ -1,5 +1,5 @@
-// Open element picker. Injected by Tauri into every frame before the page's own scripts run.
-// Only activates inside a localhost iframe (the site preview); never in the Open UI itself.
+// Supasito element picker. Injected by Tauri into every frame before the page's own scripts run.
+// Only activates inside a localhost iframe (the site preview); never in the Supasito UI itself.
 (() => {
   try {
     if (window.top === window && !window.__openPickerForce) return;

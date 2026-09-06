@@ -1,19 +1,19 @@
 //! Debug-only end-to-end checks against the real Claude Code, run from a terminal:
 //!
-//!   OPEN_SMOKE_PROMPT="Change the hero headline to 'Hello'" pnpm tauri dev
+//!   SUPASITO_SMOKE_PROMPT="Change the hero headline to 'Hello'" pnpm tauri dev
 //!
 //! Environment:
-//! - OPEN_SMOKE_PROMPT     the message to send ("-" = only start the dev server, then exit)
-//! - OPEN_SMOKE_SITE       pick the registered site whose name or path contains this
-//! - OPEN_SMOKE_SITE_PATH  use this folder as the site (registered in memory only, never saved)
-//! - OPEN_SMOKE_MODEL      model alias for the run (e.g. haiku)
-//! - OPEN_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
-//! - OPEN_SMOKE_FAST       1 = start with fast mode on (Opus only)
-//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | tools
-//!                         (model: set_model sonnet between two turns, start with OPEN_SMOKE_MODEL=haiku;
-//!                         fast: apply_flag_settings fastMode between two turns, start with OPEN_SMOKE_MODEL=opus)
+//! - SUPASITO_SMOKE_PROMPT     the message to send ("-" = only start the dev server, then exit)
+//! - SUPASITO_SMOKE_SITE       pick the registered site whose name or path contains this
+//! - SUPASITO_SMOKE_SITE_PATH  use this folder as the site (registered in memory only, never saved)
+//! - SUPASITO_SMOKE_MODEL      model alias for the run (e.g. haiku)
+//! - SUPASITO_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
+//! - SUPASITO_SMOKE_FAST       1 = start with fast mode on (Opus only)
+//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | tools
+//!                         (model: set_model sonnet between two turns, start with SUPASITO_SMOKE_MODEL=haiku;
+//!                         fast: apply_flag_settings fastMode between two turns, start with SUPASITO_SMOKE_MODEL=opus)
 //!                         (tools: print the first-run toolchain check as JSON and exit; combine
-//!                         with HOME=<empty dir> for "signed out" and OPEN_PATH=/usr/bin:/bin for
+//!                         with HOME=<empty dir> for "signed out" and SUPASITO_PATH=/usr/bin:/bin for
 //!                         "no Node, no Claude Code")
 //!
 //! Permission prompts are auto-allowed. Everything is printed to stderr with a [smoke] prefix.
@@ -73,7 +73,7 @@ pub async fn run(app: AppHandle, prompt: String) {
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     let state = app.state::<AppState>();
 
-    if std::env::var("OPEN_SMOKE_SCENARIO").as_deref() == Ok("tools") {
+    if std::env::var("SUPASITO_SMOKE_SCENARIO").as_deref() == Ok("tools") {
         let configured = state.persisted.lock().unwrap().claude_path.clone();
         let t = crate::toolchain::check(configured.as_deref(), &state.path_env).await;
         eprintln!("[smoke] PATH: {}", state.path_env);
@@ -82,13 +82,13 @@ pub async fn run(app: AppHandle, prompt: String) {
         return;
     }
 
-    if let Ok(p) = std::env::var("OPEN_SMOKE_SITE_PATH") {
+    if let Ok(p) = std::env::var("SUPASITO_SMOKE_SITE_PATH") {
         match crate::sites::Site::from_path(&p) {
             Ok(site) => { eprintln!("[smoke] using ad-hoc site {} (not saved)", site.path); state.persisted.lock().unwrap().sites.insert(0, site); }
-            Err(e) => { eprintln!("[smoke] bad OPEN_SMOKE_SITE_PATH: {e}"); app.exit(1); return; }
+            Err(e) => { eprintln!("[smoke] bad SUPASITO_SMOKE_SITE_PATH: {e}"); app.exit(1); return; }
         }
     }
-    let wanted = std::env::var("OPEN_SMOKE_SITE").ok();
+    let wanted = std::env::var("SUPASITO_SMOKE_SITE").ok();
     let site = {
         let sites = state.persisted.lock().unwrap().sites.clone();
         match &wanted {
@@ -112,7 +112,7 @@ pub async fn run(app: AppHandle, prompt: String) {
     if state.dev.status(&site.id).await.map(|d| d.status == "error").unwrap_or(false) {
         for line in state.dev.log(&site.id).await.iter().rev().take(6).rev() { eprintln!("[smoke] dev log: {line}"); }
     }
-    if let Ok(out) = std::env::var("OPEN_SMOKE_CAPTURE") {
+    if let Ok(out) = std::env::var("SUPASITO_SMOKE_CAPTURE") {
         use tauri::Manager;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         if let Some(w) = app.get_webview_window("main") {
@@ -179,7 +179,7 @@ pub async fn run(app: AppHandle, prompt: String) {
     let h = state.agents.get(&session_id).await.expect("handle");
     let send = |text: &str, sel: Option<Value>| h.send_user(agent::compose_user_content(text, sel.as_ref(), &[]));
 
-    let scenario = std::env::var("OPEN_SMOKE_SCENARIO").unwrap_or_else(|_| "prompt".into());
+    let scenario = std::env::var("SUPASITO_SMOKE_SCENARIO").unwrap_or_else(|_| "prompt".into());
     let started = std::time::Instant::now();
     match scenario.as_str() {
         "queue" => {
@@ -224,7 +224,7 @@ pub async fn run(app: AppHandle, prompt: String) {
             eprintln!("[smoke] MODE {}", if r.is_some() && !seen { "OK: bypassPermissions applied mid-session (no prompt)" } else { "FAILED or prompt still shown" });
         }
         "model" => {
-            eprintln!("[smoke] scenario model: one turn, set_model sonnet, another turn (start with OPEN_SMOKE_MODEL=haiku)");
+            eprintln!("[smoke] scenario model: one turn, set_model sonnet, another turn (start with SUPASITO_SMOKE_MODEL=haiku)");
             let _ = send("Reply with the single word ONE and nothing else.", None).await;
             let (r1, m1) = wait_turn(&mut rx, 90).await;
             match h.set_model("sonnet").await { Ok(id) => eprintln!("[smoke] set_model sent ({id})"), Err(e) => eprintln!("[smoke] set_model failed: {e}") }
@@ -236,7 +236,7 @@ pub async fn run(app: AppHandle, prompt: String) {
             eprintln!("[smoke] MODEL {}", if switched { "OK: set_model switched the running session" } else { "FAILED: the second turn did not run on sonnet (see CONTROL ERROR lines)" });
         }
         "fast" => {
-            eprintln!("[smoke] scenario fast: one turn, apply_flag_settings fastMode+effortLevel, another turn (start with OPEN_SMOKE_MODEL=opus; about $0.25 a turn)");
+            eprintln!("[smoke] scenario fast: one turn, apply_flag_settings fastMode+effortLevel, another turn (start with SUPASITO_SMOKE_MODEL=opus; about $0.25 a turn)");
             let _ = send("Reply with the single word ONE and nothing else.", None).await;
             let r1 = wait_result(&mut rx, 90).await;
             let before = r1.as_ref().map(|r| r["fast_mode_state"].to_string()).unwrap_or("none".into());

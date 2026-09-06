@@ -138,7 +138,7 @@ fn preview_event(kind: String, detail: String) {
 fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String, key: Option<String>) -> Result<sites::Site, String> {
     let site = state.site(&site_id)?;
     let key = match key.as_deref() { Some("preview") => "preview", _ => "publish" };
-    sites::write_open_json(&site.path, key, &command)?;
+    sites::write_site_json(&site.path, key, &command)?;
     let mut p = state.persisted.lock().unwrap();
     let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
     s.refresh()?;
@@ -234,7 +234,7 @@ fn site_rename(state: State<'_, AppState>, site_id: String, name: String) -> Res
     let site = state.site(&site_id)?;
     let name = name.trim().to_string();
     if name.is_empty() { return Err("Give the site a name.".into()); }
-    sites::write_open_json(&site.path, "name", &name)?;
+    sites::write_site_json(&site.path, "name", &name)?;
     let mut p = state.persisted.lock().unwrap();
     let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
     s.name = name;
@@ -356,11 +356,11 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     let effort = o.effort.filter(|e| !e.is_empty()).or(effort);
     let fast_mode = o.fast_mode.unwrap_or(fast_mode);
     #[cfg(debug_assertions)]
-    let model = std::env::var("OPEN_SMOKE_MODEL").ok().or(model);
+    let model = std::env::var("SUPASITO_SMOKE_MODEL").ok().or(model);
     #[cfg(debug_assertions)]
-    let effort = std::env::var("OPEN_SMOKE_EFFORT").ok().or(effort);
+    let effort = std::env::var("SUPASITO_SMOKE_EFFORT").ok().or(effort);
     #[cfg(debug_assertions)]
-    let fast_mode = std::env::var("OPEN_SMOKE_FAST").map(|v| v == "1").unwrap_or(fast_mode);
+    let fast_mode = std::env::var("SUPASITO_SMOKE_FAST").map(|v| v == "1").unwrap_or(fast_mode);
     let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
     let preview = state.dev.status(site_id).await.map(|d| d.url);
     let session_id = resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -456,7 +456,7 @@ pub fn run() {
             let state = AppState::load(app.handle())?;
             app.manage(state);
             #[cfg(debug_assertions)]
-            if let Ok(prompt) = std::env::var("OPEN_SMOKE_PROMPT") {
+            if let Ok(prompt) = std::env::var("SUPASITO_SMOKE_PROMPT") {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move { smoke::run(handle, prompt).await });
             }

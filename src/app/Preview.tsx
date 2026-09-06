@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useDev, useDevLogOfCurrentSite, useSite, useStore, type Device } from "./store";
 import { cx } from "../util";
-import { Camera, Crosshair, Desktop, External, Phone, Reload, Tablet, Terminal } from "../ui/Icons";
+import { Camera, Crosshair, Desktop, External, Phone, Reload, Sidebar, Tablet, Terminal } from "../ui/Icons";
 import { isTauri } from "../backend";
 
 const widths: Record<Device, string> = { desktop: "100%", tablet: "834px", phone: "390px" };
@@ -11,6 +11,8 @@ export function Preview() {
   const dev = useDev();
   const device = useStore((s) => s.device);
   const setDevice = useStore((s) => s.setDevice);
+  const full = useStore((s) => s.previewFull);
+  const setPreviewFull = useStore((s) => s.setPreviewFull);
   const picking = useStore((s) => s.picking);
   const setPicking = useStore((s) => s.setPicking);
   const setSelection = useStore((s) => s.setSelection);
@@ -109,6 +111,7 @@ export function Preview() {
   return (
     <section className="pane preview">
       <div className="titlebar drag" data-tauri-drag-region>
+        <button className={cx("icon-btn", full && "on")} title={full ? "Show the sidebar and conversation (⌘\\)" : "Hide the sidebar and conversation (⌘\\)"} onClick={() => setPreviewFull(!full)}><Sidebar /></button>
         <div className="seg">
           {(["desktop", "tablet", "phone"] as Device[]).map((d) => (
             <button key={d} className={cx("icon-btn", device === d && "on")} title={d} onClick={() => setDevice(d)}>
@@ -159,7 +162,7 @@ export function Preview() {
               ) : !site.dev ? (
                 <>
                   <h3>No dev server found</h3>
-                  <p>Add a <code>dev</code> script to package.json, or an <code>open.json</code> with a <code>dev</code> command (use <code>{"{port}"}</code> where the port goes).</p>
+                  <p>Add a <code>dev</code> script to package.json, or an <code>supasito.json</code> with a <code>dev</code> command (use <code>{"{port}"}</code> where the port goes).</p>
                 </>
               ) : dev?.status === "error" || dev?.status === "stopped" ? (
                 <>

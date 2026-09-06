@@ -25,7 +25,7 @@ HF0's Dave Fontenot: *"our whole thesis at HF0 is all about subtraction, not add
 - **D3 Preview is an iframe of the site's dev server**; the element picker is a script Tauri injects into every frame, posting selections to the parent. Works under the release CSP and `tauri://localhost`. Screenshots for Claude come from WKWebView's own snapshot, no Screen Recording permission.
 - **D4 Next.js 16 starter by default; any dev-server project works** (Next, Astro, Vite, SvelteKit, Nuxt detected). Next stamps no source locations, so selections carry the React component chain (`Hero < Page`, including Server Components), text, classes and selector; Claude finds the file. Astro gets exact file:line for free.
 - **D5 Git is the history.** Pending count = `git status`. Undo restores tracked files and removes only files the turn created. Publish can commit and push first. Turns before the last commit lose Undo.
-- **D6 Publish is one command per target** in `open.json`: `publish` (production) and `preview` (a shareable deployment). Inferred for Vercel, Netlify, Cloudflare; editable with presets.
+- **D6 Publish is one command per target** in `supasito.json`: `publish` (production) and `preview` (a shareable deployment). Inferred for Vercel, Netlify, Cloudflare; editable with presets.
 - **D7 One JSON file of app state**; transcripts are Claude's own JSONL, re-rendered on resume.
 - **D8 Trust follows the user's action.** Opening a folder marks it trusted in `~/.claude.json` so its `.claude/settings.json` rules apply; its `dev` and `publish` commands run as given. Same trust model as running `claude` there.
 - **D9 macOS first.** Platform-specific code (snapshot, Dock badge, attention) sits behind `#[cfg(target_os)]`.
@@ -47,14 +47,14 @@ src-tauri/src/
   agent/claude.rs        spawn claude, NDJSON reader/writer, control protocol, orphan reaping
   agent/sessions.rs      read ~/.claude/projects/<encoded cwd>/*.jsonl
   devserver.rs           dev-server supervisor (dual-stack readiness, port announcement, orphan reaping)
-  sites.rs               detection (package.json, lockfile, host), open.json, git status/commit/push/diff/restore
+  sites.rs               detection (package.json, lockfile, host), supasito.json, git status/commit/push/diff/restore
   capture.rs             WKWebView snapshot of the preview rect
   picker.js              injected into every frame: hover/click selection, React owner chain
   smoke.rs               debug-only real-CLI scenarios (prompt|queue|interrupt|pointing|mode, capture)
 starters/next/           bundled "New site" (Next 16 + Tailwind 4 + CLAUDE.md + permission allowlist)
 ```
 
-Per-site config `open.json`: `{ "name", "dev" ("{port}" placeholder), "publish", "preview" }`.
+Per-site config `supasito.json`: `{ "name", "dev" ("{port}" placeholder), "publish", "preview" }`.
 
 ## 5. Run, test, ship
 
@@ -64,7 +64,7 @@ pnpm tauri dev                 # app with hot reload (Rust edits relaunch it; or
 pnpm dev                       # UI only, mock backend, for browser-driven checks
 pnpm test                      # transcript reducer, route mapping, cargo test
 cd src-tauri && cargo test -- --ignored   # + creates a real site from the starter
-OPEN_SMOKE_SCENARIO=queue OPEN_SMOKE_SITE_PATH=/path OPEN_SMOKE_MODEL=haiku OPEN_SMOKE_PROMPT=x pnpm tauri dev
+SUPASITO_SMOKE_SCENARIO=queue SUPASITO_SMOKE_SITE_PATH=/path SUPASITO_SMOKE_MODEL=haiku SUPASITO_SMOKE_PROMPT=x pnpm tauri dev
 pnpm release [--install]       # Supasito.app (optionally into /Applications)
 ```
 
@@ -74,7 +74,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 **Point.** Element picker in the preview: tag, plain class, text, selector, computed styles, HTML, React component chain or Astro file:line. Preview follows the page Claude edits. Device widths, path bar, reload, open in browser.
 
-**See.** Streaming transcript with tool steps ("Editing components/hero.tsx"), expandable step output, per-turn completion line with duration, cost, "N files changed" (opens a diff), Undo. Plan-usage chip from the CLI's rate-limit events. Permission mode per session. Exact model id, effort level and fast mode (Opus) as chips in a bar under the conversation, per session, with defaults in Settings; the turn line names the model when it differs and `fast` when the request ran fast. Claude's reasoning streams as "Thinking…" and folds into a collapsed row (§8a). Usage ring by the composer: context fullness, plan windows with reset times, cost so far; compaction shows as a notice.
+**See.** Streaming transcript with tool steps ("Editing components/hero.tsx"), expandable step output, per-turn completion line with duration, cost, "N files changed" (opens a diff), Undo. Plan-usage chip from the CLI's rate-limit events. Permission mode per session. Exact model id, effort level and fast mode (Opus) as chips in a bar under the conversation, per session, with defaults in Settings; the turn line names the model when it differs and `fast` when the request ran fast. Claude's reasoning streams as "Thinking…" and folds into a collapsed row (§8a). Usage ring by the composer: context fullness, plan windows with reset times, cost so far; compaction shows as a notice. The preview can take the whole window (sidebar button, ⌘\); picking an element, ⌘N or an approval request brings the conversation back.
 
 **Approve.** Approval cards (Allow, Always allow, Deny with reason), clarifying-question cards, Dock badge with pending approvals, Dock bounce when Claude needs you or finishes in the background. Approvals expire when a turn ends.
 

@@ -45,17 +45,18 @@ Then `pnpm release --dmg` from an interactive terminal: the app is signed with t
 
 ## How it works
 
-- **A site is a folder** with a dev server. Supasito detects Next.js, Astro, Vite, SvelteKit and Nuxt from `package.json`, or reads `open.json`:
+- **A site is a folder** with a dev server. Supasito detects Next.js, Astro, Vite, SvelteKit and Nuxt from `package.json`, or reads `supasito.json`:
   ```json
   { "name": "My site", "dev": "node_modules/.bin/next dev -p {port}", "publish": "vercel deploy --prod --yes" }
   ```
 - **Sessions are Claude Code sessions.** Supasito drives your `claude` binary over its stream-json protocol, so your login, skills, MCP servers and CLAUDE.md all apply. Transcripts stay in `~/.claude/projects`, where `claude --resume` also finds them.
 - **The preview is an iframe** of the dev server. A small script injected into every frame powers the element picker; a selection carries the element's tag, classes, text, computed styles and, when the framework exposes it, its source file and React component chain.
+- **Full-width preview:** the sidebar button at the left of the preview toolbar (or ⌘\) hides the sidebar and the conversation so the page fills the window. The same button or ⌘\ brings them back, and so does anything that needs the conversation: picking an element, ⌘N, or Claude asking for an approval.
 - **Publish runs one command** and shows you the URL. The pending-change count is `git status`.
 - **Undo a turn** puts the files that turn wrote back to their committed state and removes files the turn created; other untracked files are left alone. Needs git in the folder. Git is the history; there is no separate undo stack.
 - **Images:** paste or drop a screenshot into the composer and Claude receives it with your message ("make it look like this").
 - **Queueing:** you can keep typing while Claude works; Enter queues the message and it is sent when the current turn ends. Escape stops the current turn.
-- **Publish** offers two targets: **Preview** (a shareable test link; the live site doesn't change) and **Production**. Each is one command in `open.json` (`preview`, `publish`), with presets for Vercel, Cloudflare, Netlify and git push. The dialog can commit the pending changes first (message prefilled from your last request) and push to `origin`, so publishing doubles as a backup. A running publish can be cancelled.
+- **Publish** offers two targets: **Preview** (a shareable test link; the live site doesn't change) and **Production**. Each is one command in `supasito.json` (`preview`, `publish`), with presets for Vercel, Cloudflare, Netlify and git push. The dialog can commit the pending changes first (message prefilled from your last request) and push to `origin`, so publishing doubles as a backup. A running publish can be cancelled.
 - **What changed:** "N files changed" on a turn's completion line opens the diff for that turn.
 - **Show Claude the preview:** the camera button in the preview toolbar attaches a screenshot of the preview pane to your next message. It uses the webview's own snapshot, so there is no permission prompt.
 - **Site rules:** the book icon on the current site opens its `CLAUDE.md` (voice, brand, what not to touch) in a dialog. Double-click a site to rename it.
@@ -81,18 +82,18 @@ starters/next/  the bundled "New site" starter (Next.js 16 + Tailwind 4)
 
 - Enter sends (or queues while Claude works), Shift+Enter inserts a newline.
 - Escape cancels picking, or stops the current turn.
-- ⌘⇧E toggles the element picker; ⌘N starts a new session; ⌘, opens Settings.
+- ⌘⇧E toggles the element picker; ⌘\ shows the preview at full width; ⌘N starts a new session; ⌘, opens Settings.
 
 ## Debug smoke tests
 
 Run real Claude Code turns inside the app process and print the protocol traffic. Scenarios: `prompt` (default), `queue`, `interrupt`, `pointing`.
 
 ```bash
-OPEN_SMOKE_PROMPT="Change the hero headline to say Hello" pnpm tauri dev
-OPEN_SMOKE_SITE_PATH=/path/to/site OPEN_SMOKE_MODEL=haiku OPEN_SMOKE_SCENARIO=queue OPEN_SMOKE_PROMPT=x pnpm tauri dev
+SUPASITO_SMOKE_PROMPT="Change the hero headline to say Hello" pnpm tauri dev
+SUPASITO_SMOKE_SITE_PATH=/path/to/site SUPASITO_SMOKE_MODEL=haiku SUPASITO_SMOKE_SCENARIO=queue SUPASITO_SMOKE_PROMPT=x pnpm tauri dev
 ```
 
-`OPEN_SMOKE_SITE_PATH` registers a folder for the run without saving it; `OPEN_SMOKE_SITE` picks a registered site by name. Debug builds only.
+`SUPASITO_SMOKE_SITE_PATH` registers a folder for the run without saving it; `SUPASITO_SMOKE_SITE` picks a registered site by name. Debug builds only.
 
 ## Tests
 

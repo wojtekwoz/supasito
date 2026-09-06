@@ -116,7 +116,7 @@ impl Registry {
             if existing.status == "ready" || existing.status == "starting" { return Ok(existing); }
             self.stop(&app, &site.id).await.ok();
         }
-        let template = site.dev.clone().ok_or("This folder has no dev command. Add a `dev` script to package.json or a `dev` entry in open.json.")?;
+        let template = site.dev.clone().ok_or("This folder has no dev command. Add a `dev` script to package.json or a `dev` entry in supasito.json.")?;
         let port = free_port(site.last_port);
         let command = template.replace("{port}", &port.to_string());
         let url = format!("http://localhost:{port}");

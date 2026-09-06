@@ -24,7 +24,7 @@ HF0's Dave Fontenot: *"our whole thesis at HF0 is all about subtraction, not add
 - **D2 Drive the user's `claude` binary over stream-json** from Rust; no Node sidecar, no Agent SDK. Verified on Claude Code 2.1.257: `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`; approvals arrive as `control_request{can_use_tool}`; `interrupt` and `set_permission_mode` control requests work mid-session; queued user messages run in order. The protocol lives in one file (`src-tauri/src/agent/claude.rs`); the UI only sees `agent://*` events.
 - **D3 Preview is an iframe of the site's dev server**; the element picker is a script Tauri injects into every frame, posting selections to the parent. Works under the release CSP and `tauri://localhost`. Screenshots for Claude come from WKWebView's own snapshot, no Screen Recording permission.
 - **D4 Next.js 16 starter by default; any dev-server project works** (Next, Astro, Vite, SvelteKit, Nuxt detected). Next stamps no source locations, so selections carry the React component chain (`Hero < Page`, including Server Components), text, classes and selector; Claude finds the file. Astro gets exact file:line for free.
-- **D5 Git is the history.** Pending count = `git status`. Undo restores tracked files and removes only files the turn created. Publish can commit and push first. Turns before the last commit lose Undo.
+- **D5 Git is the history.** Pending count = `git status`. Undo restores tracked files and removes only files the turn created. Publish can commit and push first. Turns before the last commit lose Undo. A site may be one folder of a larger git repository; status, commit and undo are scoped to that folder.
 - **D6 Publish is one command per target** in `supasito.json`: `publish` (production) and `preview` (a shareable deployment). Inferred for Vercel, Netlify, Cloudflare; editable with presets.
 - **D7 One JSON file of app state**; transcripts are Claude's own JSONL, re-rendered on resume.
 - **D8 Trust follows the user's action.** Opening a folder marks it trusted in `~/.claude.json` so its `.claude/settings.json` rules apply; its `dev` and `publish` commands run as given. Same trust model as running `claude` there.
@@ -86,7 +86,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 ## 7. Known gaps (honest)
 
-- Only used seriously on one machine with two real sites (Astro, Next) plus scratch projects. Plain Vite and SvelteKit were exercised once each from fresh scaffolds (detection, readiness, port fallback); Nuxt and monorepos remain reasoned about only.
+- Only used seriously on one machine with two real sites (Astro, Next) plus scratch projects. Plain Vite, SvelteKit and Nuxt 4 were exercised once each from fresh scaffolds (detection, readiness, port fallback), and a pnpm-workspace monorepo with the site at `apps/web` (status, undo, commit and package manager scoped to that folder; session 17). A monorepo with the site at the repository root, and Nuxt with a custom srcDir, are untested.
 - The release app has been launched by a script, never used day to day. Dev mode is what has been tested.
 - Not signed or notarized: anyone else gets Gatekeeper's "damaged" dialog.
 - The first-run checklist was verified in the real app under a fake HOME (signed out) and a stripped PATH (no Node, no Claude Code), plus the mock; the npm path for New site created and served a site on a PATH without pnpm (the ignored cargo test, session 17), not through the New site dialog.

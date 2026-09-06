@@ -55,7 +55,8 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - No Node sidecar, no Agent SDK: spawn the user's `claude`. No accounts, no cloud.
 - Sites are folders; per-site config is `supasito.json` (`name`, `dev`, `publish`, `preview`); a site that still has
   `open.json` from before the rename is read as is and moved to the new name on its next write (sites.rs `config_file`).
-- Git is the history: pending count = `git status`, undo = `git checkout`, publish may commit/push.
+- Git is the history: pending count = `git status`, undo = `git checkout`, publish may commit/push. The site
+  may be a subfolder of the repository; git commands run from the site folder and are scoped to it.
 - App state is one JSON file in the app data dir; transcripts stay in `~/.claude/projects`.
 - macOS first. Anything platform-specific (capture, badge) lives behind `#[cfg(target_os)]`.
 - After changing Rust: `cargo build` in src-tauri. After changing UI: `pnpm exec tsc --noEmit`.

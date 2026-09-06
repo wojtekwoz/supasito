@@ -74,7 +74,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 **Point.** Element picker in the preview: tag, plain class, text, selector, computed styles, HTML, React component chain or Astro file:line. Preview follows the page Claude edits. Device widths, path bar, reload, open in browser.
 
-**See.** Streaming transcript with tool steps ("Editing components/hero.tsx"), expandable step output, per-turn completion line with duration, cost, "N files changed" (opens a diff), Undo. Plan-usage chip from the CLI's rate-limit events. Permission mode per session. Exact model id, effort level and fast mode (Opus) as chips in a bar under the conversation, per session, with defaults in Settings; the turn line names the model when it differs and `fast` when the request ran fast. Claude's reasoning streams as "Thinking…" and folds into a collapsed row (§8a). Usage ring by the composer: context fullness, plan windows with reset times, cost so far; compaction shows as a notice. The preview can take the whole window (sidebar button, ⌘\); picking an element, ⌘N or an approval request brings the conversation back.
+**See.** Streaming transcript with tool steps ("Editing components/hero.tsx"), expandable step output, per-turn completion line with duration, cost, "N files changed" (opens a diff), Undo. Plan-usage chip from the CLI's rate-limit events. Permission mode per session. Exact model id, effort level and fast mode (Opus) as chips in a bar under the composer, per session, with defaults in Settings; the turn line names the model when it differs and `fast` when the request ran fast. Claude's reasoning streams as "Thinking…" and folds into a collapsed row (§8a). Usage ring by the composer: context fullness, plan windows with reset times, cost so far; compaction shows as a notice. The preview can take the whole window (arrows button, ⌘\); picking an element, ⌘N or an approval request brings the conversation back.
 
 **Approve.** Approval cards (Allow, Always allow, Deny with reason), clarifying-question cards, Dock badge with pending approvals, Dock bounce when Claude needs you or finishes in the background. Approvals expire when a turn ends.
 
@@ -109,7 +109,7 @@ Then decide from use whether anything else deserves building. Default answer: no
 
 ## 8a. Exact model, effort, fast mode, reasoning (built 2026-09-06; see CHANGELOG session 14)
 
-Three knobs on the same loop: which model makes the change, how hard it thinks, how fast it streams; plus the reasoning behind each reply. No new pane: Settings holds the defaults, the bar under the conversation changes one session, the turn line reports what ran.
+Three knobs on the same loop: which model makes the change, how hard it thinks, how fast it streams; plus the reasoning behind each reply. No new pane: Settings holds the defaults, the bar under the composer changes one session, the turn line reports what ran.
 
 **Facts (CLI 2.1.257, verified 2026-09-06 with `-p` probes; recordings are reducer fixtures)**
 - **Model.** `--model` takes an alias (`fable`, `opus`, `sonnet`, `haiku`, `best`, `opusplan`, `default`) or a full id (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`), optionally with `[1m]`. The resolved id is `system/init.model`, every assistant `message.model`, and per turn `result.modelUsage`. The user's own default is `model` in `~/.claude/settings.json`.

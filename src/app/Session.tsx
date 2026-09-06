@@ -30,13 +30,13 @@ export function SessionPane() {
       {claudeBlocked(tools)
         ? <Setup />
         : <Transcript items={session?.items ?? []} busy={!!session?.busy} root={site.path} sessionId={currentSessionId} />}
-      {/* The session's knobs sit under the conversation, above the composer: model, effort, fast mode, permission mode. */}
+      <Composer />
+      {/* The session's knobs are the last thing in the pane, under the composer: model, effort, permission mode, fast mode. */}
       {currentSessionId && !claudeBlocked(tools) && (
         <div className="knobs">
           <Knobs session={session} mode={currentSessionId !== DRAFT && running ? session?.mode ?? null : undefined} />
         </div>
       )}
-      <Composer />
     </section>
   );
 }

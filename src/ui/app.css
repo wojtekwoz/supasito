@@ -166,8 +166,7 @@ a { color: var(--accent); }
 .text-input { width: 100%; background: var(--rail); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 8px; color: var(--ink); font-size: 12.5px; }
 .text-input:focus { outline: none; border-color: var(--accent-line); }
 
-.knobs { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--line); }
-.knobs + .composer { border-top: 0; padding-top: 8px; }
+.knobs { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 12px 10px; margin-top: -4px; }
 .composer { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
 .composer .box { background: var(--elev); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 8px 6px; display: flex; flex-direction: column; gap: 6px; }
 .composer .box:focus-within { border-color: var(--accent-line); }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useDev, useDevLogOfCurrentSite, useSite, useStore, type Device } from "./store";
 import { cx } from "../util";
-import { Camera, Crosshair, Desktop, External, Phone, Reload, Sidebar, Tablet, Terminal } from "../ui/Icons";
+import { Camera, Collapse, Crosshair, Desktop, Expand, External, Phone, Reload, Tablet, Terminal } from "../ui/Icons";
 import { isTauri } from "../backend";
 
 const widths: Record<Device, string> = { desktop: "100%", tablet: "834px", phone: "390px" };
@@ -111,7 +111,7 @@ export function Preview() {
   return (
     <section className="pane preview">
       <div className="titlebar drag" data-tauri-drag-region>
-        <button className={cx("icon-btn", full && "on")} title={full ? "Show the sidebar and conversation (⌘\\)" : "Hide the sidebar and conversation (⌘\\)"} onClick={() => setPreviewFull(!full)}><Sidebar /></button>
+        <button className={cx("icon-btn", full && "on")} title={full ? "Back to the sidebar and conversation (⌘\\)" : "Preview at full width (⌘\\)"} onClick={() => setPreviewFull(!full)}>{full ? <Collapse /> : <Expand />}</button>
         <div className="seg">
           {(["desktop", "tablet", "phone"] as Device[]).map((d) => (
             <button key={d} className={cx("icon-btn", device === d && "on")} title={d} onClick={() => setDevice(d)}>

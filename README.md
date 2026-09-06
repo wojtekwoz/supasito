@@ -1,109 +1,190 @@
 # Supasito
 
-A small Mac app for building websites with the coding agent you already have. Three panes: your sites, a conversation with Claude Code, and a live preview. Say what should change (or click the element you mean), the agent edits the code, the preview updates, you approve anything risky, you publish.
+Supasito is a Mac app for changing a website by describing the change. You tell Claude Code what you want, watch the live site update in the same window, and publish when it looks right. The site stays an ordinary code folder on your Mac: no accounts, no cloud, no file format of its own.
 
-Read [PLAN.md](PLAN.md) for the thesis, the research behind it, and the architecture decisions.
+**Version 0.1. macOS only. Not yet signed.** It has been used on one Mac so far. Read [What to expect](#what-to-expect) before you install.
 
-## Run it
+## Is it for you?
 
-Prerequisites for building Supasito: Rust (stable), Node 20+, pnpm, Xcode command line tools. To use it: [Claude Code](https://claude.com/claude-code) signed in, Node.js and git. Supasito checks for these on launch and shows one line per missing tool.
+Supasito fits if:
+
+- You have a **Claude plan that includes Claude Code** (Pro, Max, Team or Enterprise) or an API key. The free plan does not include Claude Code.
+- Your site is a **code project**: Next.js, Astro, Vite, SvelteKit or Nuxt. Or you want a new one; Supasito ships a Next.js starter.
+- You can **run a few commands in Terminal** during setup.
+
+It does not fit if your site lives in WordPress, Squarespace, Webflow or another hosted builder (there is no folder to edit), or if you use Windows or Linux.
+
+## What you need
+
+Supasito checks all of these when it starts and shows one line per missing tool, with the fix.
+
+- **A Mac with Apple silicon (M1 or newer) on macOS 13 or later.** The ready-made zip is built on and for Apple silicon. The app itself allows macOS 12, but Claude Code needs 13.
+- **Claude Code, installed and signed in.** Install it, then run `claude` once and finish the sign-in in your browser:
+
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash
+  ```
+
+- **Node.js.** It runs your site's dev server. Get the LTS from [nodejs.org](https://nodejs.org) or run `brew install node`. npm comes with it.
+- **git.** It keeps the history behind Undo and Publish. Apple's command line tools include it:
+
+  ```bash
+  xcode-select --install
+  ```
+
+- **pnpm, optional.** Faster installs for new sites. npm works otherwise.
+
+## Install
+
+There is no signed download yet. Pick one of the two ways.
+
+### From a zip
+
+Use this when someone built `Supasito-<version>-macos.zip` for you (see [Build a zip for someone else](#working-on-supasito)).
+
+1. Unzip it and drag **Supasito.app** into **Applications**.
+2. Clear the quarantine flag once. macOS refuses to open the app otherwise, because it is not notarized:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Supasito.app
+   ```
+
+   Or open the app once, dismiss the warning, then click **Open Anyway** under System Settings → Privacy & Security.
+3. Open Supasito from Applications.
+
+### From source
+
+You need Rust (stable), Node.js 20.19 or later (Vite's minimum), pnpm and Xcode's command line tools. The first build compiles the Rust core and takes a while.
+
+```bash
+git clone https://github.com/wojtekwoz/supasito.git
+cd supasito
+pnpm install
+pnpm release --install
+```
+
+This builds `Supasito.app` and copies it into Applications. Nothing else on your Mac changes.
+
+## First five minutes
+
+1. **Open Supasito.** If a tool is missing you see a "Before you start" checklist. Fix what it names and click **Check again**. Otherwise you see "Open a site to begin".
+2. **Pick a site.**
+   - **New site** copies the bundled Next.js starter into a folder you choose, installs packages and opens a session. Describe the site in your first message.
+   - **Open a folder…** points Supasito at a project you already have. It detects the framework, offers to install packages when `node_modules` is missing, and offers to set up git when the folder has none.
+3. **Wait for the preview.** The right pane shows the site as soon as its dev server is ready. The terminal icon in the preview toolbar shows the server's log.
+4. **Ask for a change.** Type it and press Enter. Claude's steps stream in the middle pane ("Editing components/hero.tsx") and the preview reloads by itself.
+5. **Approve when asked.** When Claude wants to run a command, a card appears with **Allow**, **Deny** and, when offered, **Always allow**. The turn waits for you.
+6. **Publish.** Click **Publish** in the preview toolbar. The first time, pick a preset (Vercel, Cloudflare, Netlify, git push) or type your own command.
+
+## Everyday use
+
+**Saying what to change**
+
+- **Enter** sends. **Shift+Enter** inserts a newline. **Esc** stops the current turn.
+- **Keep typing while Claude works.** Enter queues the message; it runs when the current turn ends.
+- **Paste or drop a screenshot** into the composer to say "make it look like this".
+- **Camera button** in the preview toolbar attaches a screenshot of the preview to your next message.
+- **Type `/`** to pick from your Claude Code skills and commands.
+
+**Pointing at an element**
+
+- Click the **crosshair** (composer or preview toolbar) or press **⌘⇧E**, then click the element in the preview. A chip lands in the composer; say what should change about it.
+- Claude receives the element's tag, classes, text and styles, plus its source file (Astro) or React component chain (Next.js) when the framework exposes them.
+
+**Watching the result**
+
+- **The preview follows the page** Claude edits.
+- **Device widths**: desktop, tablet (834 px) and phone (390 px). Reload and Open in browser sit next to them.
+- **Full width**: the arrows button at the left of the preview toolbar, or **⌘\**, hides the other panes. Picking an element, ⌘N or an approval request brings them back.
+- **Every turn ends with a line**: duration, cost, "N files changed" (click it for the diff) and **Undo**.
+- **Undo** restores the files that turn changed and removes the files it created. It needs git in the folder. Turns from before your last commit lose it.
+
+**Controlling Claude**
+
+- **Mode**, in the bar under the composer: "Ask before commands" (the default: edits files freely, asks before running commands), "Don't ask this session", "Plan first" and "Ask about everything".
+- **Model, effort and fast mode** sit in the same bar and change the current session. Defaults for new sessions live in Settings (**⌘,**). Fast mode is Opus only and costs about twice as much.
+- **Thinking** streams while Claude reasons and folds into a collapsed row once the answer starts.
+- **Usage ring** at the bottom of the composer fills as the conversation grows. Click it for the numbers, your plan's 5-hour and weekly limits, and the cost so far. When the conversation is full, Claude Code summarises older messages by itself; **⌘N** starts a clean session.
+
+**Publishing**
+
+- **Two targets**: Preview (a shareable test link; the live site does not change) and Production.
+- **Commit and push first**, in the same dialog. Both boxes are ticked when the folder has changes and a remote; untick them to publish the working tree as it is. The commit message is prefilled from your last request.
+- **The URL** appears when the command finishes. A running publish can be cancelled.
+- **Change commands**, at the bottom of the publish dialog, edits both later. They are stored in `supasito.json` in the site folder.
+
+**Managing sites**
+
+- Icons on a site row: **book** (site rules: the `CLAUDE.md` Claude reads, for voice, brand and what not to touch), **code** (open in your editor), **folder** (reveal in Finder) and **trash** (remove from the list; the folder stays). **Double-click** a site to rename it.
+- **One dev server runs at a time.** Switching sites stops the previous one unless a session there is still working.
+
+**Getting called back**
+
+- The **Dock badge** counts approvals waiting for you. The Dock icon bounces when Claude needs you or finishes while Supasito is in the background.
+
+## Keyboard shortcuts
+
+| Keys | Action |
+| --- | --- |
+| Enter | Send, or queue while Claude works |
+| Shift+Enter | New line |
+| Esc | Stop picking, or stop the current turn |
+| ⌘⇧E | Pick an element |
+| ⌘\ | Preview at full width |
+| ⌘N | New session |
+| ⌘, | Settings |
+
+## What Supasito does on your Mac
+
+- **It runs your own `claude`.** Your plan, settings, skills, MCP servers, memory and `CLAUDE.md` all apply. Usage is billed to your Claude plan or API key. Supasito has no account and sends nothing anywhere itself.
+- **It finds Claude Code** on your PATH, then at `~/.claude/local/claude` and `~/.local/bin/claude`. Settings has a field for a different path.
+- **Opening a folder marks it trusted** in `~/.claude.json`, the same as running `claude` there, so the folder's `.claude/settings.json` rules apply. Its dev and publish commands run as written.
+- **Transcripts** stay in `~/.claude/projects`. The sessions listed under a site are the ones `claude --resume` sees, and they can be resumed from either side.
+- **App state** is one file: `~/Library/Application Support/co.wozu.supasito/state.json`.
+- **Per-site settings** live in `supasito.json` in the site folder:
+
+  ```json
+  { "name": "My site", "dev": "node_modules/.bin/next dev -p {port}", "publish": "vercel deploy --prod --yes", "preview": "vercel deploy --yes" }
+  ```
+
+  Supasito fills in `dev` for Next.js, Astro, Vite, SvelteKit and Nuxt, and infers `publish` from a `vercel.json`, `wrangler.toml` or `netlify.toml`. Any other project works if you write the `dev` command yourself; `{port}` is replaced at start.
+- **Git is the history.** The pending-change count is `git status`, Undo is `git checkout`, and publish commits and pushes only when you tick the boxes.
+
+## What to expect
+
+- Used seriously on one Mac with Next.js and Astro sites. SvelteKit, Nuxt and plain Vite are detected but have not been used for real.
+- Most of that use was in development mode. The packaged app you install here has had less.
+- Not signed or notarized, hence the one-time quarantine step.
+- No auto-update. Replace the app to update it.
+- Bugs and questions: [github.com/wojtekwoz/supasito/issues](https://github.com/wojtekwoz/supasito/issues).
+
+## If something goes wrong
+
+- **"Supasito is damaged and can't be opened"**: the quarantine flag. Run the `xattr` command from [From a zip](#from-a-zip).
+- **The checklist says Claude Code is not found** but it is installed: open Settings (⌘,) and set **Claude path** to what `which claude` prints in Terminal.
+- **"Not signed in"**: run `claude auth login` in Terminal, finish in the browser, then click **Check again**.
+- **The preview says the dev server didn't start**: open the log (terminal icon). Missing Node.js or uninstalled packages are the usual causes, and the card offers to install. A server that never opens a port turns into an error after 90 seconds.
+- **"Can't reach Claude's API; retrying"**: you are offline or blocked. Claude Code retries ten times over about three minutes. Esc stops the turn.
+- **Publish fails mentioning login or 401**: run your host's login command in the site folder (`vercel login`, `netlify login` or `wrangler login`), then publish again.
+- **The preview is blank after switching sites**: click Reload in the preview toolbar.
+
+## Uninstall
+
+Delete `/Applications/Supasito.app` and the folder `~/Library/Application Support/co.wozu.supasito`. Your sites, their git history and your Claude transcripts are untouched.
+
+## Working on Supasito
+
+Everything below is for people changing the app itself.
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm tauri dev          # the app with hot reload; Rust edits relaunch it
+pnpm dev                # UI only at http://localhost:1420 against a mock backend, no Tauri needed
+pnpm test               # transcript reducer, route mapping, cargo test
+pnpm release            # Supasito.app; --install copies it to /Applications, --zip adds the zip, --dmg a disk image
 ```
 
-A production bundle (`Supasito.app` in `src-tauri/target/release/bundle/macos`):
-
-```bash
-pnpm release            # builds Supasito.app
-pnpm release --install  # …and copies it to /Applications
-```
-
-`pnpm release --dmg` also builds a disk image (from an interactive terminal: the DMG step drives Finder).
-
-## Distribute it
-
-**Unsigned, for now.** `pnpm release --zip` writes `release/Supasito-<version>-macos.zip`. Whoever installs it drags `Supasito.app` to `/Applications` and, because the app is not notarized, clears the quarantine flag once:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Supasito.app
-```
-
-(or opens it once, dismisses the warning, then System Settings → Privacy & Security → "Open Anyway"). Nothing else differs from a signed build.
-
-**Signed and notarized, later.** The Tauri CLI signs and notarizes when these variables are set; put them in `.env.release` (gitignored) and `pnpm release` picks them up. It needs a *Developer ID Application* certificate (paid Apple Developer membership), not the *Apple Development* one Xcode creates for free:
-
-```bash
-APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"  # from Xcode → Settings → Accounts → Manage Certificates; `security find-identity -v -p codesigning` lists it
-APPLE_ID=you@example.com          # the Apple ID of that developer account
-APPLE_PASSWORD=xxxx-xxxx-xxxx-xxxx  # an app-specific password from appleid.apple.com, not your real one
-APPLE_TEAM_ID=TEAMID
-```
-
-Then `pnpm release --dmg` from an interactive terminal: the app is signed with the hardened runtime, submitted to Apple's notary service, stapled, and packed into a DMG. The script prints whether it is signing and notarizing and verifies the signature afterwards. This path is set up but has not yet been exercised with a real Developer ID (see PLAN.md).
-
-## How it works
-
-- **A site is a folder** with a dev server. Supasito detects Next.js, Astro, Vite, SvelteKit and Nuxt from `package.json`, or reads `supasito.json`:
-  ```json
-  { "name": "My site", "dev": "node_modules/.bin/next dev -p {port}", "publish": "vercel deploy --prod --yes" }
-  ```
-- **Sessions are Claude Code sessions.** Supasito drives your `claude` binary over its stream-json protocol, so your login, skills, MCP servers and CLAUDE.md all apply. Transcripts stay in `~/.claude/projects`, where `claude --resume` also finds them.
-- **The preview is an iframe** of the dev server. A small script injected into every frame powers the element picker; a selection carries the element's tag, classes, text, computed styles and, when the framework exposes it, its source file and React component chain.
-- **Full-width preview:** the sidebar button at the left of the preview toolbar (or ⌘\) hides the sidebar and the conversation so the page fills the window. The same button or ⌘\ brings them back, and so does anything that needs the conversation: picking an element, ⌘N, or Claude asking for an approval.
-- **Publish runs one command** and shows you the URL. The pending-change count is `git status`.
-- **Undo a turn** puts the files that turn wrote back to their committed state and removes files the turn created; other untracked files are left alone. Needs git in the folder. Git is the history; there is no separate undo stack.
-- **Images:** paste or drop a screenshot into the composer and Claude receives it with your message ("make it look like this").
-- **Queueing:** you can keep typing while Claude works; Enter queues the message and it is sent when the current turn ends. Escape stops the current turn.
-- **Publish** offers two targets: **Preview** (a shareable test link; the live site doesn't change) and **Production**. Each is one command in `supasito.json` (`preview`, `publish`), with presets for Vercel, Cloudflare, Netlify and git push. The dialog can commit the pending changes first (message prefilled from your last request) and push to `origin`, so publishing doubles as a backup. A running publish can be cancelled.
-- **What changed:** "N files changed" on a turn's completion line opens the diff for that turn.
-- **Show Claude the preview:** the camera button in the preview toolbar attaches a screenshot of the preview pane to your next message. It uses the webview's own snapshot, so there is no permission prompt.
-- **Site rules:** the book icon on the current site opens its `CLAUDE.md` (voice, brand, what not to touch) in a dialog. Double-click a site to rename it.
-- **First-run checks:** on launch Supasito looks for Claude Code (and whether it is signed in, via `claude auth status`), Node.js, git and a package manager. Anything missing gets one line saying how to get it, in the session pane, the welcome screen and Settings. **New site** installs with pnpm when it is present and with npm otherwise (the starter's permission rules are rewritten to match).
-- **Slash commands:** type `/` in the composer to pick from the skills and commands your Claude Code reports for the session.
-- **Permission mode per session:** the bar under the conversation switches a running session between "Ask before commands", "Don't ask this session", "Plan first" and "Ask about everything".
-- **One dev server at a time:** switching sites stops the previous site's dev server unless one of its sessions is still working.
-- **Getting called back:** the Dock badge shows how many approvals are waiting, and the Dock icon bounces when Claude needs you or finishes while Supasito is in the background.
-- **Model, effort, fast mode:** Settings holds the defaults for new sessions: the exact model (Fable 5.1, Opus 5, Sonnet 5, Haiku 4.5, or any name or alias Claude Code accepts, with a `[1m]` checkbox for the 1M-token context), the effort level (`low` … `max`, how long Claude thinks) and fast mode (Opus only: same model, up to 2.5× faster output, about twice the cost). "Your Claude Code default" names what `~/.claude/settings.json` says. The chips in the bar under the conversation show the exact model id the CLI reported and change model, effort and fast mode for that session alone; a running session takes the change on its next turn (Claude Code restarts with the new flags if it can't apply it live). A turn's completion line adds the model when it differs from the session's and `fast` when the request ran in fast mode.
-- **Reasoning:** every reply carries Claude's thinking summary. It streams open while Claude thinks and folds into a collapsed "Thinking" row once the answer starts. (Claude Code withholds the text in headless mode unless asked; Supasito asks with `--settings '{"showThinkingSummaries":true}'`.)
-- **The preview follows the work:** when Claude edits a page file (`app/pricing/page.tsx`, `src/pages/pricing.astro`, `src/routes/pricing/+page.svelte`, `pages/pricing.vue`), the preview switches to that page.
-- **Usage:** the small ring at the bottom of the composer shows how full the conversation is (how much of Claude's working memory this session uses; it fills as the conversation grows and Claude Code summarises older messages by itself when it is full). Click it for the numbers, your plan's 5-hour and weekly limits with their reset times, and the cost so far. Settings shows the plan limits too, and the header chip still appears once a plan limit passes 50%.
-
-## Layout
-
-```
-src/            React UI (rail · session · preview)
-src-tauri/      Rust core: agent bridge, dev-server supervisor, sites, publish
-starters/next/  the bundled "New site" starter (Next.js 16 + Tailwind 4)
-```
-
-## Keyboard
-
-- Enter sends (or queues while Claude works), Shift+Enter inserts a newline.
-- Escape cancels picking, or stops the current turn.
-- ⌘⇧E toggles the element picker; ⌘\ shows the preview at full width; ⌘N starts a new session; ⌘, opens Settings.
-
-## Debug smoke tests
-
-Run real Claude Code turns inside the app process and print the protocol traffic. Scenarios: `prompt` (default), `queue`, `interrupt`, `pointing`.
-
-```bash
-SUPASITO_SMOKE_PROMPT="Change the hero headline to say Hello" pnpm tauri dev
-SUPASITO_SMOKE_SITE_PATH=/path/to/site SUPASITO_SMOKE_MODEL=haiku SUPASITO_SMOKE_SCENARIO=queue SUPASITO_SMOKE_PROMPT=x pnpm tauri dev
-```
-
-`SUPASITO_SMOKE_SITE_PATH` registers a folder for the run without saving it; `SUPASITO_SMOKE_SITE` picks a registered site by name. Debug builds only.
-
-## Tests
-
-```bash
-pnpm test                                        # transcript reducer (recorded stream), route mapping, Rust unit tests
-cd src-tauri && cargo test -- --ignored          # also creates a real site from the starter (runs pnpm install)
-```
-
-Launching the app from a terminal prints `[preview] …` diagnostics when the preview iframe loads.
-
-## Browser-only UI work
-
-`pnpm dev` and open http://localhost:1420 in a browser: without Tauri, the UI runs against a mock backend with a demo site and a scripted agent.
+- **Build a zip for someone else**: `pnpm release --install --zip` writes `release/Supasito-<version>-macos.zip`. It is unsigned, so tell the recipient about the quarantine step. Signing and notarization run when the Apple variables listed at the top of `scripts/release.sh` are set in `.env.release`; that needs a Developer ID Application certificate, and the path has not been exercised with a real one yet.
+- **Smoke tests against the real CLI**: `SUPASITO_SMOKE_PROMPT="Change the hero headline" pnpm tauri dev`. Scenarios and knobs are in `src-tauri/src/smoke.rs`.
+- **Where things are**: `src/` is the React UI (rail, session, preview), `src-tauri/src/` the Rust core (agent bridge, dev-server supervisor, sites, publish), `starters/next/` the "New site" starter.
+- **More**: [CLAUDE.md](CLAUDE.md) for conventions and sharp edges, [PLAN.md](PLAN.md) for the thesis, decisions and next milestone, [CHANGELOG.md](CHANGELOG.md) for what was built and verified when.

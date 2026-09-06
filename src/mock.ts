@@ -128,8 +128,8 @@ export function mockBackend(): Backend {
     sitePickFolder: async () => "/Users/you/Sites/another",
     siteAdd: async (path) => { const s = { ...site, id: "site-" + Math.random().toString(36).slice(2), path, name: path.split("/").pop() || "site", lastSessionId: null }; mockSites.push(s); return s; },
     siteRemove: async () => {},
-    siteRefresh: async () => site,
-    siteInstall: async () => site,
+    siteRefresh: async (siteId) => siteOf(siteId),
+    siteInstall: async (siteId) => siteOf(siteId),
     siteGitStatus: async () => ({ isGit: true, changed: mockChanged, files: ["components/hero.tsx", "app/page.tsx"], branch: "main", remote: "git@github.com:you/clarityops.git" }),
     siteGitCommit: async (_siteId, message) => { await wait(400); console.debug("[commit]", message); mockChanged = 0; return { isGit: true, changed: 0, files: [], branch: "main", remote: "git@github.com:you/clarityops.git" }; },
     siteGitPush: async () => { await wait(600); return "To github.com:you/clarityops.git\n   1a2b3c4..5d6e7f8  main -> main"; },
@@ -144,7 +144,7 @@ export function mockBackend(): Backend {
     siteOpenEditor: async () => "code",
     siteReadText: async (_siteId, rel) => (rel === "CLAUDE.md" ? mockRules : ""),
     siteWriteText: async (_siteId, rel, content) => { if (rel === "CLAUDE.md") mockRules = content; },
-    siteRename: async (_siteId, name) => { site.name = name; return { ...site }; },
+    siteRename: async (siteId, name) => { const s = siteOf(siteId); s.name = name; return { ...s }; },
     agentSetMode: async (_sessionId, mode) => { console.debug("[mode]", mode); },
     agentSetModel: async (_sessionId, model) => { console.debug("[set_model]", model); mockModel = model; return "req-model"; },
     agentApplySettings: async (_sessionId, settings) => { console.debug("[apply_flag_settings]", settings); if (typeof settings.fastMode === "boolean") mockFast = settings.fastMode; return "req-settings"; },
@@ -201,7 +201,7 @@ export function mockBackend(): Backend {
       return id;
     },
     agentSend: async (sessionId, text) => { void fakeTurn(sessionId, text); },
-    siteSetPublish: async (_siteId, command, key) => ({ ...site, [key]: command || null }),
+    siteSetPublish: async (siteId, command, key) => ({ ...siteOf(siteId), [key]: command || null }),
     agentRespond: async (sessionId, _requestId, response: any) => {
       await wait(200);
       const denied = response?.behavior === "deny";

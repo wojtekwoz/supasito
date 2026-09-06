@@ -18,6 +18,11 @@ const cases: [string, string | null][] = [
   ["/Users/x/site/src/pages/blog/[...slug].astro", null],
   ["/Users/x/site/src/routes/+page.svelte", "/"],
   ["/Users/x/site/src/routes/pricing/+page.svelte", "/pricing"],
+  ["/Users/x/site/src/routes/about/+page.server.ts", "/about"],
+  ["/Users/x/site/src/routes/about/+page.ts", "/about"],
+  ["/Users/x/site/src/routes/+layout.svelte", null],
+  ["/Users/x/site/src/routes/+layout.server.ts", null],
+  ["/Users/x/site/src/routes/api/health/+server.ts", null],
   ["/Users/x/site/pages/about.vue", "/about"],
   ["app/contact/page.tsx", "/contact"],
 ];

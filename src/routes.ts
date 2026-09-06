@@ -35,8 +35,9 @@ export function routeForFile(filePath: string, root?: string | null): string | n
   if ((m = rel.match(/^src\/pages\/(.*)\.(?:astro|md|mdx|html)$/))) {
     return clean(m[1].split("/"));
   }
-  // SvelteKit: src/routes/pricing/+page.svelte
-  if ((m = rel.match(/^src\/routes\/(.*?)\/?\+page\.(?:svelte|ts|js)$/))) {
+  // SvelteKit: src/routes/pricing/+page.svelte, and +page.server.ts (its load function).
+  // +layout.* and +server.ts are not pages.
+  if ((m = rel.match(/^src\/routes\/(.*?)\/?\+page(?:\.server)?\.(?:svelte|ts|js)$/))) {
     return clean(m[1].split("/"));
   }
   // Nuxt: pages/pricing.vue

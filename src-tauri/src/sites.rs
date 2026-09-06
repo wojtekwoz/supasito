@@ -69,7 +69,8 @@ impl Site {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or(Value::Null);
         let dev_script = pkg.pointer("/scripts/dev").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let deps = |name: &str| pkg.pointer(&format!("/dependencies/{name}")).is_some() || pkg.pointer(&format!("/devDependencies/{name}")).is_some();
+        // Plain key lookup, not `pointer()`: a JSON Pointer splits on `/`, so scoped names like `@sveltejs/kit` would never match.
+        let deps = |name: &str| ["dependencies", "devDependencies"].iter().any(|k| pkg.get(k).and_then(|d| d.get(name)).is_some());
 
         self.package_manager = Some(if root.join("pnpm-lock.yaml").exists() { "pnpm" } else if root.join("bun.lock").exists() || root.join("bun.lockb").exists() { "bun" } else if root.join("yarn.lock").exists() { "yarn" } else { "npm" }.to_string());
         self.framework = if deps("astro") { Some("astro".into()) } else if deps("next") { Some("next".into()) } else if deps("@sveltejs/kit") { Some("sveltekit".into()) } else if deps("nuxt") { Some("nuxt".into()) } else if deps("vite") { Some("vite".into()) } else { None };
@@ -511,6 +512,19 @@ mod tests {
         assert_eq!(site.package_manager.as_deref(), Some("pnpm"));
         assert_eq!(site.dev.as_deref(), Some("pnpm run dev --port {port}"));
         assert!(site.needs_install);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detects_scoped_packages_like_sveltekit() {
+        let dir = std::env::temp_dir().join(format!("open-detect-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("node_modules/.bin")).unwrap();
+        std::fs::write(dir.join("node_modules/.bin/vite"), "").unwrap();
+        std::fs::write(dir.join("package.json"), r#"{"scripts":{"dev":"vite dev"},"devDependencies":{"@sveltejs/kit":"^2","vite":"^8"}}"#).unwrap();
+        let site = Site::from_path(dir.to_str().unwrap()).unwrap();
+        assert_eq!(site.framework.as_deref(), Some("sveltekit"), "scoped name must be found under devDependencies");
+        assert_eq!(site.dev.as_deref(), Some("node_modules/.bin/vite dev --port {port}"));
+        assert!(!site.needs_install);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

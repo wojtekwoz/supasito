@@ -160,6 +160,9 @@ function stopDevServer(siteId: string): Promise<void> {
   return p;
 }
 const siteBusy = (st: Store, siteId: string) => (st.sessions[siteId] ?? []).some((x) => st.transcripts[x.id]?.busy);
+/** Bumped by every `selectSite`; a call that resumes from an await and finds a newer one bows out. Several calls for
+ *  the same site can wait on one pending stop, and `currentSiteId` alone lets all of them start that site's server. */
+let selectGen = 0;
 
 /** Record a model / effort / fast-mode choice for the current session. A running, idle session gets the
  *  control request (`set_model`, `apply_flag_settings`); if the CLI rejects it, or the choice has no request
@@ -338,6 +341,7 @@ export const useStore = create<Store>((set, get) => ({
     const site = get().sites.find((s) => s.id === id);
     if (!site) return;
     const previous = get().currentSiteId;
+    const gen = ++selectGen;
     set({ currentSiteId: id, selection: null, picking: false, previewPath: "/", previewTitle: "", devLogOpen: false });
     // Stop the dev server of the site we are leaving unless one of its sessions is still working.
     if (previous && previous !== id) {
@@ -347,13 +351,13 @@ export const useStore = create<Store>((set, get) => ({
     }
     const stopping = devStops.get(id);
     const [sessions, devInfo] = await Promise.all([api.sessionsList(id), stopping ? stopping.then(() => api.devStatus(id)) : api.devStatus(id)]);
+    if (selectGen !== gen || get().currentSiteId !== id) return; // the user moved on while we were loading
     set({ sessions: { ...get().sessions, [id]: sessions } });
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
-    if (get().currentSiteId !== id) return; // the user moved on while we were loading
     void get().refreshGit(id);
     const last = site.lastSessionId && sessions.find((s) => s.id === site.lastSessionId) ? site.lastSessionId : sessions[0]?.id;
     if (last) await get().openSession(last, id); else get().newSession();
-    if (get().currentSiteId !== id) return;
+    if (selectGen !== gen || get().currentSiteId !== id) return;
     if (!devInfo || devInfo.status === "stopped" || devInfo.status === "error") {
       if (site.dev && !site.needsInstall) void get().startDev(id);
     }

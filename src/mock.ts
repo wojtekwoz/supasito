@@ -30,11 +30,12 @@ const sessions: Record<string, SessionInfo[]> = {
 // in flight the entry is gone for `devStatus` (Registry::stop removes it before killing) and `stopped` is emitted at the end.
 const devs = new Map<string, DevInfo>();
 const devStarts = new Map<string, number>();
+const devStartCalls = new Map<string, number>(); // `devStart` invocations per site, for counting from the console
 const devStopping = new Set<string>();
 const devDelay = Number(query.get("devDelay")) || 0;
 const stopDelay = Number(query.get("stopDelay")) || 0;
 if (mockSites[0]) devs.set(site.id, { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! });
-(window as any).__mock = { devs };
+(window as any).__mock = { devs, devStartCalls };
 
 export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title>ClarityOps</title>
 <style>body{margin:0;font:16px/1.5 Georgia,serif;color:#141414;background:#f7f6f2}header{display:flex;justify-content:space-between;padding:20px 32px;font:600 13px/1 -apple-system,system-ui}nav a{margin-left:18px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#333;text-decoration:none}.hero{text-align:center;padding:72px 24px 40px}.hero .kicker{font:600 10px/1 -apple-system;letter-spacing:.2em;text-transform:uppercase;color:#666}h1{font-size:64px;line-height:1;margin:14px 0 18px;font-weight:400}.hero p{max-width:520px;margin:0 auto 24px;font-size:18px;color:#333}.btn{display:inline-block;padding:10px 16px;background:#141414;color:#fff;font:600 11px/1 -apple-system;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;margin:0 4px}.btn.ghost{background:transparent;color:#141414;border:1px solid #141414}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:24px 32px 64px}.card{background:#fff;border:1px solid #e3e1da;padding:22px;min-height:160px}.card h3{margin:0 0 8px;font-weight:500}.card p{margin:0;color:#555;font-size:15px}.card.dark{background:#141414;color:#fff}.card.dark p{color:#bbb}</style></head>
@@ -154,6 +155,7 @@ export function mockBackend(): Backend {
     siteSetLastSession: async () => {},
     siteNew: async (parent, name) => { const s = { ...site, id: "site-new", path: parent + "/" + name, name, lastSessionId: null }; mockSites.push(s); return s; },
     devStart: async (siteId) => {
+      devStartCalls.set(siteId, (devStartCalls.get(siteId) ?? 0) + 1);
       const cur = devs.get(siteId);
       if (cur && !devStopping.has(siteId) && (cur.status === "ready" || cur.status === "starting")) return cur;
       const token = (devStarts.get(siteId) ?? 0) + 1;

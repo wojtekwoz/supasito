@@ -112,15 +112,38 @@ fn announced_port(line: &str) -> Option<u16> {
 
 impl Registry {
     pub async fn start(&self, app: AppHandle, site: Site, path_env: String) -> Result<DevInfo, String> {
-        if let Some(existing) = self.status(&site.id).await {
-            if existing.status == "ready" || existing.status == "starting" { return Ok(existing); }
-            self.stop(&app, &site.id).await.ok();
-        }
         let template = site.dev.clone().ok_or_else(|| {
             let mut m = "This folder has no dev command. Add a `dev` script to package.json or a `dev` entry in supasito.json.".to_string();
             if crate::sites::is_workspace_root(std::path::Path::new(&site.path)) { m.push_str(" This looks like a workspace root; open the app's own folder (for example apps/web)."); }
             m
         })?;
+        // Claim the site's slot before spawning. Two starts for one site can arrive milliseconds apart (a
+        // switch bouncing back and forth); the check and the insert happen under one map lock, so the
+        // second finds the first's entry and returns it instead of spawning a server nobody can stop.
+        // The placeholder's own lock is held until the child is recorded in it, so `status`, `stop` and
+        // that second start wait for the real pid rather than seeing port 0. (The map lock is never taken
+        // while holding an entry that is already in the map, so `persist` cannot deadlock with this.)
+        let running = Arc::new(Mutex::new(Running {
+            info: DevInfo { site_id: site.id.clone(), port: 0, url: String::new(), status: "starting".into(), command: template.clone() },
+            pid: 0, log: Vec::new(), child: None, announced_port: None,
+        }));
+        let mut slot = loop {
+            let stale = {
+                let mut map = self.inner.lock().await;
+                if let Some(existing) = map.get(&site.id).cloned() {
+                    let r = existing.lock().await;
+                    if r.info.status == "ready" || r.info.status == "starting" { return Ok(r.info.clone()); }
+                    drop(r);
+                    map.remove(&site.id)
+                } else {
+                    let slot = running.lock().await;
+                    map.insert(site.id.clone(), running.clone());
+                    break slot;
+                }
+            };
+            // A server that died or timed out is replaced; kill it first so its port frees up.
+            if let Some(stale) = stale { shut_down(&app, &stale, Duration::from_secs(3)).await; }
+        };
         let port = free_port(site.last_port);
         let command = template.replace("{port}", &port.to_string());
         let url = format!("http://localhost:{port}");
@@ -139,14 +162,26 @@ impl Registry {
             .stderr(Stdio::piped())
             .kill_on_drop(false);
         cmd.process_group(0);
-        let mut child = cmd.spawn().map_err(|e| format!("could not start dev server: {e}"))?;
-        let pid = child.id().ok_or("dev server has no pid")?;
+        let spawned = cmd.spawn().map_err(|e| format!("could not start dev server: {e}")).and_then(|c| match c.id() { Some(pid) => Ok((c, pid)), None => Err("dev server has no pid".into()) });
+        let (mut child, pid) = match spawned {
+            Ok(v) => v,
+            Err(e) => {
+                // Give the slot back: nothing is running, and the reply below is what the UI shows.
+                slot.info.status = "error".into();
+                drop(slot);
+                let mut map = self.inner.lock().await;
+                if map.get(&site.id).map(|r| Arc::ptr_eq(r, &running)).unwrap_or(false) { map.remove(&site.id); }
+                return Err(e);
+            }
+        };
         let info = DevInfo { site_id: site.id.clone(), port, url: url.clone(), status: "starting".into(), command: command.clone() };
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        let running = Arc::new(Mutex::new(Running { info: info.clone(), pid, log: Vec::new(), child: Some(child), announced_port: None }));
-        self.inner.lock().await.insert(site.id.clone(), running.clone());
+        slot.info = info.clone();
+        slot.pid = pid;
+        slot.child = Some(child);
         let _ = app.emit("dev://status", &info);
+        drop(slot);
 
         // log pumps
         {
@@ -261,16 +296,7 @@ impl Registry {
 
     pub async fn stop(&self, app: &AppHandle, site_id: &str) -> Result<(), String> {
         let running = self.inner.lock().await.remove(site_id);
-        if let Some(running) = running {
-            let mut r = running.lock().await;
-            kill_group(r.pid);
-            if let Some(child) = r.child.as_mut() {
-                let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
-            }
-            r.child = None;
-            r.info.status = "stopped".into();
-            let _ = app.emit("dev://status", &r.info);
-        }
+        if let Some(running) = running { shut_down(app, &running, Duration::from_secs(3)).await; }
         self.persist().await;
         Ok(())
     }
@@ -289,7 +315,23 @@ impl Registry {
     }
 }
 
+/// Kill a server that has already left the map, wait for it to go, and report it stopped. Taking the
+/// entry's lock waits for a start that is still spawning it, so a stop that overtakes a start still
+/// ends with that process dead.
+async fn shut_down(app: &AppHandle, running: &Arc<Mutex<Running>>, wait: Duration) {
+    let mut r = running.lock().await;
+    if r.pid == 0 { return; } // the start failed before spawning; its error reply is the report
+    kill_group(r.pid);
+    if let Some(child) = r.child.as_mut() {
+        let _ = tokio::time::timeout(wait, child.wait()).await;
+    }
+    r.child = None;
+    r.info.status = "stopped".into();
+    let _ = app.emit("dev://status", &r.info);
+}
+
 fn kill_group(pid: u32) {
+    if pid == 0 { return; } // kill(-0) would signal our own process group
     unsafe {
         libc::kill(-(pid as i32), libc::SIGTERM);
     }

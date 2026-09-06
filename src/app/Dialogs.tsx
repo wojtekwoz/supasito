@@ -3,6 +3,7 @@ import { useStore } from "./store";
 import { Check } from "../ui/Icons";
 import { Checklist } from "./Checklist";
 import { PlanRows } from "./Usage";
+import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, hasLongContext } from "../models";
 
 export function NewSiteDialog() {
   const ns = useStore((s) => s.newSite);
@@ -195,22 +196,30 @@ export function DiffDialog() {
   );
 }
 
-const MODELS: { value: string; label: string }[] = [
-  { value: "", label: "Your Claude Code default" },
-  { value: "sonnet", label: "Sonnet · fast and cheaper, good for most edits" },
-  { value: "opus", label: "Opus · strongest, costs more" },
-  { value: "haiku", label: "Haiku · cheapest, for small copy changes" },
-];
-
 export function SettingsDialog() {
   const open = useStore((s) => s.settingsOpen);
   const setOpen = useStore((s) => s.setSettingsOpen);
   const settings = useStore((s) => s.settings);
   const save = useStore((s) => s.saveSettings);
   const planUsage = useStore((s) => s.planUsage);
-  const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits" });
-  useEffect(() => { if (open) setForm({ claudePath: settings.claudePath ?? "", model: settings.model ?? "", permissionMode: settings.permissionMode ?? "acceptEdits" }); }, [open, settings]);
+  const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
+  const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits", effort: "", fastMode: false });
+  const [customModel, setCustomModel] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setForm({ claudePath: settings.claudePath ?? "", model: settings.model ?? "", permissionMode: settings.permissionMode ?? "acceptEdits", effort: settings.effort ?? "", fastMode: !!settings.fastMode });
+    setCustomModel(!!settings.model && !MODELS.some((m) => m.value === baseModel(settings.model ?? "")));
+  }, [open, settings]);
   if (!open) return null;
+  const base = baseModel(form.model);
+  const oneM = hasLongContext(form.model);
+  const known = MODELS.some((m) => m.value === base);
+  const custom = customModel || (form.model !== "" && !known);
+  const pickModel = (v: string) => {
+    if (v === "custom") { setCustomModel(true); if (known) setForm({ ...form, model: "" }); return; }
+    setCustomModel(false);
+    setForm({ ...form, model: v ? v + (oneM ? "[1m]" : "") : "" });
+  };
   return (
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
       <div className="modal">
@@ -219,11 +228,25 @@ export function SettingsDialog() {
         <div className="row2"><label>Claude path</label><input className="text-input" placeholder="Leave empty to find claude on your PATH" value={form.claudePath} onChange={(e) => setForm({ ...form, claudePath: e.target.value })} /></div>
         <div className="row2"><label>Model</label>
           <div style={{ display: "grid", gap: 6 }}>
-            <select className="text-input" value={MODELS.some((m) => m.value === form.model) ? form.model : "custom"} onChange={(e) => setForm({ ...form, model: e.target.value === "custom" ? (MODELS.some((m) => m.value === form.model) ? "" : form.model) : e.target.value })}>
-              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              <option value="custom">Custom model name…</option>
+            <select className="text-input" value={custom ? "custom" : known ? base : ""} onChange={(e) => pickModel(e.target.value)}>
+              <option value="">Your Claude Code default{defaults?.model ? ` · ${defaults.model}` : ""}</option>
+              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.label} · {m.value} · {m.hint}</option>)}
+              <option value="custom">Custom model name or alias…</option>
             </select>
-            {!MODELS.some((m) => m.value === form.model) && <input className="text-input" placeholder="e.g. claude-sonnet-5" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />}
+            {custom && <input className="text-input" placeholder="e.g. claude-sonnet-5, opus[1m], opusplan" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value.trim() })} />}
+            {known && !custom && <label className="opt-row"><input type="checkbox" checked={oneM} onChange={(e) => setForm({ ...form, model: base + (e.target.checked ? "[1m]" : "") })} /> 1M-token context window (<code>[1m]</code>; needs a plan that includes it)</label>}
+          </div>
+        </div>
+        <div className="row2"><label>Effort</label>
+          <select className="text-input" value={form.effort} onChange={(e) => setForm({ ...form, effort: e.target.value })}>
+            <option value="">Your Claude Code default{defaults?.effort ? ` · ${defaults.effort}` : ""}</option>
+            {EFFORTS.map((l) => <option key={l} value={l}>{l} · {EFFORT_HINTS[l]}</option>)}
+          </select>
+        </div>
+        <div className="row2"><label>Fast mode</label>
+          <div style={{ display: "grid", gap: 4 }}>
+            <label className="opt-row"><input type="checkbox" checked={form.fastMode} onChange={(e) => setForm({ ...form, fastMode: e.target.checked })} /> Faster output for Opus sessions</label>
+            <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Same model, up to 2.5× faster streaming, about twice the cost per token (on a subscription it uses up the plan's window faster). Opus 5 and 4.8 only; other models ignore it.</p>
           </div>
         </div>
         <div className="row2"><label>Permissions</label>
@@ -234,7 +257,7 @@ export function SettingsDialog() {
             <option value="bypassPermissions">Never ask (dangerous)</option>
           </select>
         </div>
-        <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Applies to sessions started after saving; an open session keeps its model. The chip in the session header shows which one is in use.</p>
+        <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Defaults for sessions started after saving. The chips in the bar under the conversation show the exact model in use and change model, effort and fast mode for that session alone. Claude's reasoning shows in a collapsed "Thinking" row on every reply.</p>
         <div className="row2" style={{ alignItems: "start" }}><label style={{ paddingTop: 2 }}>Plan usage</label><PlanRows windows={planUsage?.windows ?? []} at={planUsage?.at ?? null} /></div>
         <div className="foot">
           <button className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>

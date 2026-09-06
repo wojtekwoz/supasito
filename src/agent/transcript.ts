@@ -1,14 +1,16 @@
 // Turns Claude Code's stream-json messages into transcript items the UI can render.
-import type { Attachment, PermissionRequest, Selection } from "../types";
+import type { Attachment, PermissionRequest, Selection, SessionOverrides } from "../types";
 
 export type ToolStatus = "running" | "done" | "error";
 
 export type Item =
   | { kind: "user"; id: string; text: string; selection?: Selection | null; selectionSummary?: string | null; images?: { mediaType: string; data: string }[]; queued?: boolean }
-  | { kind: "assistant"; id: string; text: string; thinking: string; streaming: boolean; parentToolUseId: string | null }
+  /** `model` is the exact id the API answered with; `phase` says what is streaming right now (thinking summaries arrive before the text). */
+  | { kind: "assistant"; id: string; text: string; thinking: string; streaming: boolean; parentToolUseId: string | null; model?: string | null; phase?: "thinking" | "text" }
   | { kind: "tool"; id: string; name: string; input: any; label: string; result: string | null; status: ToolStatus; parentToolUseId: string | null; created?: boolean }
   | { kind: "permission"; id: string; request: PermissionRequest["request"]; status: "pending" | "allowed" | "denied" | "expired" }
-  | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; created: string[]; undone: boolean; at: number }
+  /** `models`: the ids in the result's modelUsage (several when subagents ran); `speed`: the API's `usage.speed`, "fast" when the last request ran in fast mode. */
+  | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; created: string[]; undone: boolean; at: number; models: string[]; speed: string | null }
   | { kind: "notice"; id: string; text: string; tone: "info" | "error" };
 
 export type SessionState = {
@@ -37,11 +39,15 @@ export type SessionState = {
   cost: { session: number; process: number; turns: number };
   /** True when the transcript was re-rendered from Claude's store, so cost only covers this sitting. */
   resumed: boolean;
+  /** Model, effort and fast mode Open passes when it (re)starts this session's process; unset = the Settings default. */
+  overrides: SessionOverrides;
+  /** Fast mode as the CLI reports it in system/init and result (`on`, `off`, `cooldown`; verified 2.1.257) with its reason when off. */
+  fast: { state: string; reason: string | null } | null;
 };
 
 export type PlanWindow = { name: string; utilization: number; resetsAt: number | null };
 
-export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null, retry: null, plan: [], context: null, cost: { session: 0, process: 0, turns: 0 }, resumed: false });
+export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null, retry: null, plan: [], context: null, cost: { session: 0, process: 0, turns: 0 }, resumed: false, overrides: {}, fast: null });
 
 /** The model's context window. The result's modelUsage carries the exact size; until then, 1M for "[1m]" models, else 200k. */
 export function contextWindowFor(model: string | null): number {
@@ -62,6 +68,21 @@ function noteContext(state: SessionState, usage: any): boolean {
   if (state.context && state.context.used === used && state.context.window === window) return false;
   state.context = { used, window };
   return true;
+}
+
+/** `fast_mode_state` / `fast_mode_disabled_reason` sit on system/init and on the result (recorded 2.1.257: "off" + "sdk_opt_in_required" without the opt-in, "on" with `--settings '{"fastMode":true}'` on Opus). */
+function noteFast(state: SessionState, msg: any): boolean {
+  const s = msg?.fast_mode_state;
+  if (typeof s !== "string") return false;
+  const reason = typeof msg.fast_mode_disabled_reason === "string" ? msg.fast_mode_disabled_reason : null;
+  if (state.fast && state.fast.state === s && state.fast.reason === reason) return false;
+  state.fast = { state: s, reason };
+  return true;
+}
+
+function streamingAssistant(items: Item[]): Extract<Item, { kind: "assistant" }> | null {
+  for (let k = items.length - 1; k >= 0; k--) { const it = items[k]; if (it.kind === "assistant" && it.streaming) return it; }
+  return null;
 }
 
 /** The plan windows in a rate_limit_event (recorded 2.1.257): rate_limit_info.unifiedWindows.{five_hour,seven_day}.{utilization,resetsAt}. */
@@ -191,8 +212,15 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         items.push({ kind: "notice", id: msg.uuid || uid("n"), text: `Claude Code summarised the older part of this conversation to make room${pre ? ` (it was holding ${fmtTokens(pre)} tokens)` : ""}. Nothing on the site changed.`, tone: "info" });
         return true;
       }
+      if (msg.subtype === "thinking_tokens") {
+        // The CLI's own estimate while thinking streams (also sent when the text itself is withheld); it marks the row as thinking.
+        const last = streamingAssistant(items);
+        if (!last || last.phase === "thinking") return false;
+        return patch(items, (i) => i === last, "assistant", { phase: "thinking" });
+      }
       if (msg.subtype === "init") {
         state.model = msg.model ?? state.model;
+        noteFast(state, msg);
         if (typeof msg.permissionMode === "string") state.mode = msg.permissionMode;
         const cmds = new Set<string>([...(Array.isArray(msg.slash_commands) ? msg.slash_commands : []), ...(Array.isArray(msg.skills) ? msg.skills : [])].filter((c) => typeof c === "string"));
         state.commands = [...cmds].sort();
@@ -206,20 +234,27 @@ export function applyMessage(state: SessionState, msg: any): boolean {
       if (parent) return false; // subagent tokens are not shown live
       if (ev.type === "message_start") {
         const id = ev.message?.id || uid("m");
-        if (!findAssistant(items, id)) items.push({ kind: "assistant", id, text: "", thinking: "", streaming: true, parentToolUseId: parent });
+        if (!findAssistant(items, id)) items.push({ kind: "assistant", id, text: "", thinking: "", streaming: true, parentToolUseId: parent, model: typeof ev.message?.model === "string" ? ev.message.model : null });
         if (ev.message?.usage) noteContext(state, ev.message.usage); // the prompt size is known as soon as the call starts
         state.busy = true;
         return true;
       }
+      if (ev.type === "content_block_start") {
+        // thinking comes as its own block before the text (recorded 2.1.257 with showThinkingSummaries)
+        const last = streamingAssistant(items);
+        const kind = ev.content_block?.type;
+        if (!last || (kind !== "thinking" && kind !== "text") || last.phase === kind) return false;
+        return patch(items, (i) => i === last, "assistant", { phase: kind });
+      }
       if (ev.type === "content_block_delta") {
-        const last = [...items].reverse().find((i) => i.kind === "assistant" && i.streaming) as Extract<Item, { kind: "assistant" }> | undefined;
+        const last = streamingAssistant(items);
         if (!last) return false;
-        if (ev.delta?.type === "text_delta") return patch(items, (i) => i === last, "assistant", { text: last.text + (ev.delta.text ?? "") });
-        if (ev.delta?.type === "thinking_delta") return patch(items, (i) => i === last, "assistant", { thinking: last.thinking + (ev.delta.thinking ?? "") });
+        if (ev.delta?.type === "text_delta") return patch(items, (i) => i === last, "assistant", { text: last.text + (ev.delta.text ?? ""), phase: "text" });
+        if (ev.delta?.type === "thinking_delta") return patch(items, (i) => i === last, "assistant", { thinking: last.thinking + (ev.delta.thinking ?? ""), phase: "thinking" });
         return false;
       }
       if (ev.type === "message_stop") {
-        const last = [...items].reverse().find((i) => i.kind === "assistant" && i.streaming) as Extract<Item, { kind: "assistant" }> | undefined;
+        const last = streamingAssistant(items);
         if (last) return patch(items, (i) => i === last, "assistant", { streaming: false });
         return false;
       }
@@ -242,8 +277,12 @@ export function applyMessage(state: SessionState, msg: any): boolean {
           // subagent text: keep it out of the main thread
         } else {
           const existing = findAssistant(items, id);
-          if (existing) patch(items, (i) => i === existing, "assistant", { text: text || existing.text, thinking: thinking || existing.thinking, streaming: false });
-          else items.push({ kind: "assistant", id, text, thinking, streaming: false, parentToolUseId: parent });
+          // The CLI sends one assistant message per finished content block: the thinking block arrives
+          // on its own while the text is still to come, so only text (or a stop reason) ends the streaming.
+          const done = !!text || !!m.stop_reason;
+          const model = typeof m.model === "string" ? m.model : null;
+          if (existing) patch(items, (i) => i === existing, "assistant", { text: text || existing.text, thinking: thinking || existing.thinking, streaming: existing.streaming && !done, model: model ?? existing.model, phase: text ? "text" : existing.phase });
+          else items.push({ kind: "assistant", id, text, thinking, streaming: false, parentToolUseId: parent, model });
           changed = true;
         }
       }
@@ -332,7 +371,10 @@ export function applyMessage(state: SessionState, msg: any): boolean {
         const win = Math.max(0, ...Object.values<any>(mu).map((m) => Number(m?.contextWindow) || 0));
         if (win > 0 && win !== state.context.window) state.context = { ...state.context, window: win };
       }
-      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: turnCost, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: touched.files, created: touched.created, undone: false, at: Date.now() });
+      noteFast(state, msg);
+      const models = mu && typeof mu === "object" ? Object.keys(mu).filter((k) => !k.startsWith("<")) : [];
+      const speed = typeof msg.usage?.speed === "string" ? msg.usage.speed : null;
+      items.push({ kind: "result", id: uid("r"), isError: failed && !stopped, stopped, text, costUsd: turnCost, durationMs: typeof msg.duration_ms === "number" ? msg.duration_ms : null, numTurns: typeof msg.num_turns === "number" ? msg.num_turns : null, files: touched.files, created: touched.created, undone: false, at: Date.now(), models, speed });
       if (q >= 0) return true;
       state.busy = false;
       return true;

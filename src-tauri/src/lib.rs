@@ -22,6 +22,8 @@ fn settings_get(state: State<'_, AppState>) -> Value {
         "claudePath": p.claude_path,
         "model": p.model,
         "permissionMode": p.permission_mode,
+        "effort": p.effort,
+        "fastMode": p.fast_mode,
     })
 }
 
@@ -32,6 +34,8 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
         if let Some(v) = patch.get("claudePath") { p.claude_path = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("model") { p.model = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("permissionMode") { p.permission_mode = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
+        if let Some(v) = patch.get("effort") { p.effort = v.as_str().map(|s| s.to_string()).filter(|s| agent::claude::EFFORTS.contains(&s.as_str())); }
+        if let Some(v) = patch.get("fastMode") { p.fast_mode = v.as_bool().unwrap_or(false); }
     }
     state.save()
 }
@@ -339,15 +343,24 @@ async fn publish_cancel(state: State<'_, AppState>, site_id: String) -> Result<(
 // ---------- agent ----------
 
 /// Shared by the `agent_start` command and the debug smoke test.
-pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<String>) -> Result<String, String> {
+pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<String>, overrides: Option<agent::claude::Overrides>) -> Result<String, String> {
     let state = app.state::<AppState>();
     let site = state.site(site_id)?;
-    let (configured, model, mode) = {
+    let (configured, model, mode, effort, fast_mode) = {
         let p = state.persisted.lock().unwrap();
-        (p.claude_path.clone(), p.model.clone(), p.permission_mode.clone())
+        (p.claude_path.clone(), p.model.clone(), p.permission_mode.clone(), p.effort.clone(), p.fast_mode)
     };
+    // The session's own choices win over the Settings defaults.
+    let o = overrides.unwrap_or_default();
+    let model = o.model.filter(|m| !m.is_empty()).or(model);
+    let effort = o.effort.filter(|e| !e.is_empty()).or(effort);
+    let fast_mode = o.fast_mode.unwrap_or(fast_mode);
     #[cfg(debug_assertions)]
     let model = std::env::var("OPEN_SMOKE_MODEL").ok().or(model);
+    #[cfg(debug_assertions)]
+    let effort = std::env::var("OPEN_SMOKE_EFFORT").ok().or(effort);
+    #[cfg(debug_assertions)]
+    let fast_mode = std::env::var("OPEN_SMOKE_FAST").map(|v| v == "1").unwrap_or(fast_mode);
     let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
     let preview = state.dev.status(site_id).await.map(|d| d.url);
     let session_id = resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -357,6 +370,8 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
         cwd: site.path.clone(),
         resume: resume.is_some(),
         model,
+        effort,
+        fast_mode,
         permission_mode: mode,
         system_append: agent::system_prompt(&site, preview.as_deref()),
         claude_path,
@@ -367,8 +382,21 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
 }
 
 #[tauri::command]
-async fn agent_start(app: AppHandle, site_id: String, resume: Option<String>) -> Result<String, String> {
-    start_agent(&app, &site_id, resume).await
+async fn agent_start(app: AppHandle, site_id: String, resume: Option<String>, overrides: Option<agent::claude::Overrides>) -> Result<String, String> {
+    start_agent(&app, &site_id, resume, overrides).await
+}
+
+/// Both return the control request id; a rejection reaches the UI as `agent://control_error` with that id.
+#[tauri::command]
+async fn agent_set_model(state: State<'_, AppState>, session_id: String, model: String) -> Result<String, String> {
+    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    h.set_model(&model).await
+}
+
+#[tauri::command]
+async fn agent_apply_settings(state: State<'_, AppState>, session_id: String, settings: Value) -> Result<String, String> {
+    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    h.apply_settings(settings).await
 }
 
 #[tauri::command]
@@ -451,7 +479,7 @@ pub fn run() {
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
             dev_start, dev_stop, dev_status, dev_log,
             publish_run, publish_cancel,
-            agent_start, agent_send, agent_respond, agent_set_mode, agent_interrupt, agent_stop, agent_running,
+            agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,
             sessions_list, session_transcript
         ])
         .build(tauri::generate_context!())

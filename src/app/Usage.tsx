@@ -55,7 +55,9 @@ export function PlanRows({ windows, at }: { windows: PlanWindow[]; at: number | 
   );
 }
 
-/** The ring in the composer bar. Quiet until the conversation is half full; click for the details. */
+/** The ring in the composer bar: the one place usage shows. Its fill is the conversation's context; its
+ *  colour is the worse of context and plan usage, and a plan window past 75% is named next to it, so a
+ *  plan limit is visible without a second indicator. Quiet until either passes half; click for details. */
 export function UsageButton() {
   const session = useSession();
   const planUsage = useStore((s) => s.planUsage);
@@ -74,12 +76,15 @@ export function UsageButton() {
   const windows = own ? session!.plan : planUsage?.windows ?? [];
   if (!ctx && windows.length === 0) return null;
   const pct = ctx ? ctx.used / ctx.window : 0;
-  const title = ctx ? `This conversation is ${Math.round(pct * 100)}% full · click for details` : "Plan usage";
+  const plan = windows.reduce<PlanWindow | null>((best, w) => (!best || w.utilization > best.utilization ? w : best), null);
+  const planPct = plan?.utilization ?? 0;
+  const title = [ctx ? `This conversation is ${Math.round(pct * 100)}% full` : null, plan ? `${windowLabel(plan.name)} ${Math.round(planPct * 100)}% used${plan.resetsAt ? `, ${fmtReset(plan.resetsAt)}` : ""}` : null, "click for details"].filter(Boolean).join(" · ");
   return (
     <div className="usage" ref={ref}>
-      <button className={cx("usage-btn", tone(pct), open && "on")} title={title} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button className={cx("usage-btn", tone(Math.max(pct, planPct)), open && "on")} title={title} aria-expanded={open} onClick={() => setOpen(!open)}>
         <Ring pct={pct} />
         {pct >= 0.5 && <span>{Math.round(pct * 100)}%</span>}
+        {planPct >= 0.75 && <span>plan {Math.round(planPct * 100)}%</span>}
       </button>
       {open && <UsagePopover ctx={ctx} windows={windows} at={own ? null : planUsage?.at ?? null} cost={session?.cost ?? null} resumed={!!session?.resumed} />}
     </div>

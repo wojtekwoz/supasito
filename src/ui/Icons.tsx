@@ -29,3 +29,5 @@ export const Trash = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="
 export const Camera = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h1.8l1-1.5h3.4l1 1.5h1.8A1.5 1.5 0 0 1 14 5.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /><circle cx="8" cy="8.5" r="2.4" /></svg>;
 export const Code = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9.5 2.5l-3 11" /></svg>;
 export const Book = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2.5 3.5A1.5 1.5 0 0 1 4 2h3.5v11.5H4a1.5 1.5 0 0 0-1.5 1.5zM13.5 3.5A1.5 1.5 0 0 0 12 2H8.5v11.5H12a1.5 1.5 0 0 1 1.5 1.5z" /></svg>;
+export const Robot = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="2.5" y="5" width="11" height="8.5" rx="2" /><path d="M8 5V2.75M5.75 8.5V11M10.25 8.5V11" /><circle cx="8" cy="2" r="0.8" fill="currentColor" stroke="none" /></svg>;
+export const Signal = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 13v-2.5M6.5 13V8M10 13V5.5M13.5 13V3" /></svg>;

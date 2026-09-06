@@ -12,6 +12,10 @@ pub struct Persisted {
     pub claude_path: Option<String>,
     pub model: Option<String>,
     pub permission_mode: Option<String>,
+    /// `--effort` for new sessions (low, medium, high, xhigh, max); None = the user's own Claude Code default.
+    pub effort: Option<String>,
+    /// Fast mode for new sessions (Opus only; the CLI ignores it elsewhere).
+    pub fast_mode: bool,
 }
 
 pub struct AppState {

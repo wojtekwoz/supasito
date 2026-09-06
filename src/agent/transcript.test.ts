@@ -208,5 +208,55 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
   check("tokens: formatting", fmtTokens(950) === "950" && fmtTokens(41125) === "41k" && fmtTokens(1_000_000) === "1M" && fmtTokens(1_250_000) === "1.3M", [fmtTokens(950), fmtTokens(41125), fmtTokens(1_000_000), fmtTokens(1_250_000)]);
 }
 
+// 8. Thinking summaries (recorded 2.1.257, haiku, `--effort low --settings '{"showThinkingSummaries":true}'`): the thinking
+// block streams before the text and arrives as its own assistant message; the row keeps streaming until the text comes.
+{
+  const lines = readFileSync(new URL("./fixtures/claude-2.1.257-thinking-summaries.jsonl", import.meta.url), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const s = emptySession();
+  let sawThinkingPhase = false;
+  let streamingAfterThinkingBlock = false;
+  for (const l of lines) {
+    applyMessage(s, l);
+    const a = s.items.find((i) => i.kind === "assistant");
+    if (a?.kind === "assistant" && a.streaming && !a.text && a.phase === "thinking" && a.thinking.length > 0) sawThinkingPhase = true;
+    if (l.type === "assistant" && l.message.content.every((b: any) => b.type === "thinking")) streamingAfterThinkingBlock = a?.kind === "assistant" && a.streaming;
+  }
+  const a = s.items.find((i) => i.kind === "assistant");
+  check("thinking: summary text captured", a?.kind === "assistant" && a.thinking.length > 100 && a.text === "ok", a);
+  check("thinking: live phase seen while it streamed", sawThinkingPhase);
+  check("thinking: the thinking-only assistant message does not end streaming", streamingAfterThinkingBlock);
+  check("thinking: phase is text once the answer streams", a?.kind === "assistant" && a.phase === "text" && !a.streaming, a);
+  check("model: exact id on the assistant item", a?.kind === "assistant" && a.model === "claude-haiku-4-5-20251001", a);
+  check("fast: off with the CLI's reason when not opted in", s.fast?.state === "off" && s.fast.reason === "sdk_opt_in_required", s.fast);
+  const r = s.items.find((i) => i.kind === "result");
+  check("result: models from modelUsage and standard speed", r?.kind === "result" && JSON.stringify(r.models) === JSON.stringify(["claude-haiku-4-5-20251001"]) && r.speed === "standard", r);
+}
+
+// 9. Fast mode (recorded 2.1.257, opus, `--settings '{"fastMode":true}'`): init and result say "on"; the one-word answer still ran at standard speed.
+{
+  const lines = readFileSync(new URL("./fixtures/claude-2.1.257-fast-mode.jsonl", import.meta.url), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const s = emptySession();
+  for (const l of lines) applyMessage(s, l);
+  check("fast: on from init and result", s.fast?.state === "on" && s.fast.reason === null, s.fast);
+  check("fast: exact model", s.model === "claude-opus-5" && s.items.some((i) => i.kind === "assistant" && i.model === "claude-opus-5"), s.model);
+  const r = s.items.find((i) => i.kind === "result");
+  check("fast: speed recorded from usage.speed", r?.kind === "result" && r.speed === "standard" && r.models[0] === "claude-opus-5", r);
+  const t = emptySession();
+  applyMessage(t, { type: "result", subtype: "success", is_error: false, result: "ok", fast_mode_state: "cooldown", usage: { speed: "fast" }, modelUsage: { "claude-opus-5": { costUSD: 0.2 }, "<synthetic>": {} } });
+  const rt = t.items[0];
+  check("fast: cooldown and a fast request", t.fast?.state === "cooldown" && rt.kind === "result" && rt.speed === "fast" && JSON.stringify(rt.models) === JSON.stringify(["claude-opus-5"]), [t.fast, rt]);
+}
+
+// 10. Thinking without text (summaries off): the CLI's thinking_tokens estimates still mark the row as thinking.
+{
+  const s = emptySession();
+  applyMessage(s, { type: "stream_event", event: { type: "message_start", message: { id: "m1", model: "claude-sonnet-5" } }, parent_tool_use_id: null });
+  applyMessage(s, { type: "system", subtype: "thinking_tokens", estimated_tokens: 50, estimated_tokens_delta: 50 });
+  const a = s.items[0];
+  check("thinking: tokens-only marks the phase", a.kind === "assistant" && a.phase === "thinking" && a.thinking === "" && a.model === "claude-sonnet-5", a);
+  applyMessage(s, { type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hi" } }, parent_tool_use_id: null });
+  check("thinking: text delta moves the phase on", s.items[0].kind === "assistant" && s.items[0].phase === "text" && s.items[0].text === "Hi");
+}
+
 console.log(failures === 0 ? "transcript: all checks pass" : `transcript: ${failures} failure(s)`);
 if (failures) throw new Error(`${failures} transcript check(s) failed`);

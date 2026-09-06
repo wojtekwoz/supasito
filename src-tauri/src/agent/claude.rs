@@ -22,6 +22,25 @@ const ARGS: &[&str] = &[
     "--permission-prompt-tool", "stdio",
 ];
 
+/// Effort levels `--effort` accepts on 2.1.257 (`claude --help`). Anything else is not passed on.
+pub const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// Settings handed over with `--settings` (merged over the user's own, verified 2.1.257): thinking
+/// summaries so the transcript can show Claude's reasoning (without it thinking blocks arrive with
+/// empty text), and fast mode, which has no flag of its own and is Opus-only.
+pub fn extra_settings(fast_mode: bool) -> String {
+    json!({ "showThinkingSummaries": true, "fastMode": fast_mode }).to_string()
+}
+
+/// Per-session choices from the UI; each falls back to the saved Settings default when unset.
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Overrides {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub fast_mode: Option<bool>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartOpts {
@@ -30,6 +49,8 @@ pub struct StartOpts {
     pub cwd: String,
     pub resume: bool,
     pub model: Option<String>,
+    pub effort: Option<String>,
+    pub fast_mode: bool,
     pub permission_mode: Option<String>,
     pub system_append: String,
     pub claude_path: String,
@@ -69,23 +90,32 @@ impl Handle {
         .await
     }
 
+    /// Send a control request; the id comes back so a later `control_response` error can be matched to it.
+    async fn control(&self, request: Value) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.write(json!({ "type": "control_request", "request_id": request_id, "request": request })).await?;
+        Ok(request_id)
+    }
+
     pub async fn interrupt(&self) -> Result<(), String> {
-        self.write(json!({
-            "type": "control_request",
-            "request_id": uuid::Uuid::new_v4().to_string(),
-            "request": { "subtype": "interrupt" }
-        }))
-        .await
+        self.control(json!({ "subtype": "interrupt" })).await.map(|_| ())
     }
 
     /// Change the permission mode of the running session (acceptEdits, bypassPermissions, plan, default).
     pub async fn set_permission_mode(&self, mode: &str) -> Result<(), String> {
-        self.write(json!({
-            "type": "control_request",
-            "request_id": uuid::Uuid::new_v4().to_string(),
-            "request": { "subtype": "set_permission_mode", "mode": mode }
-        }))
-        .await
+        self.control(json!({ "subtype": "set_permission_mode", "mode": mode })).await.map(|_| ())
+    }
+
+    /// Switch the running session's model (alias or full id); takes effect on the next turn.
+    /// `set_model` is in the 2.1.257 binary and the official SDK; smoke scenario `model` exercises it.
+    pub async fn set_model(&self, model: &str) -> Result<String, String> {
+        self.control(json!({ "subtype": "set_model", "model": model })).await
+    }
+
+    /// Merge settings into the running session's flag layer (`fastMode`, `effortLevel`, …); the CLI
+    /// re-reads them for the next turn. `apply_flag_settings` is in the 2.1.257 binary and the SDK.
+    pub async fn apply_settings(&self, settings: Value) -> Result<String, String> {
+        self.control(json!({ "subtype": "apply_flag_settings", "settings": settings })).await
     }
 
     async fn close_input(&self) {
@@ -176,6 +206,10 @@ impl Registry {
         if let Some(m) = opts.model.as_deref().filter(|m| !m.is_empty()) {
             cmd.args(["--model", m]);
         }
+        if let Some(e) = opts.effort.as_deref().filter(|e| EFFORTS.contains(e)) {
+            cmd.args(["--effort", e]);
+        }
+        cmd.args(["--settings", &extra_settings(opts.fast_mode)]);
         let mode = opts.permission_mode.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| "acceptEdits".into());
         cmd.args(["--permission-mode", &mode]);
         if !opts.system_append.is_empty() {
@@ -369,4 +403,34 @@ pub async fn version(path: &str, path_env: &str) -> Option<String> {
     .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     Some(s.split_whitespace().next().unwrap_or(&s).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_settings_always_asks_for_thinking_text_and_names_fast_mode() {
+        let v: Value = serde_json::from_str(&extra_settings(true)).unwrap();
+        assert_eq!(v["showThinkingSummaries"], true);
+        assert_eq!(v["fastMode"], true);
+        let v: Value = serde_json::from_str(&extra_settings(false)).unwrap();
+        assert_eq!(v["fastMode"], false);
+    }
+
+    #[test]
+    fn overrides_default_to_unset_and_accept_camel_case() {
+        let o: Overrides = serde_json::from_str(r#"{"model":"opus","fastMode":true}"#).unwrap();
+        assert_eq!(o.model.as_deref(), Some("opus"));
+        assert_eq!(o.effort, None);
+        assert_eq!(o.fast_mode, Some(true));
+        let o: Overrides = serde_json::from_str("{}").unwrap();
+        assert!(o.model.is_none() && o.effort.is_none() && o.fast_mode.is_none());
+    }
+
+    #[test]
+    fn only_known_effort_levels_are_passed_on() {
+        assert!(EFFORTS.contains(&"xhigh"));
+        assert!(!EFFORTS.contains(&"ultra"));
+    }
 }

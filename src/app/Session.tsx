@@ -1,8 +1,9 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { DRAFT, useSession, useSessionsOfCurrentSite, useSite, useStore } from "./store";
-import { retryText, type Item } from "../agent/transcript";
+import { retryText, type Item, type SessionState } from "../agent/transcript";
+import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, isEffort, modelShort, supportsFast } from "../models";
 import { Markdown } from "../ui/Markdown";
-import { Crosshair, Doc, Globe, Pen, Search, Send, Sparkle, Stop, Terminal, X } from "../ui/Icons";
+import { Crosshair, Doc, Globe, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
 import { Checklist, claudeBlocked, toolsMissing } from "./Checklist";
@@ -20,23 +21,21 @@ export function SessionPane() {
   const title = currentSessionId === DRAFT ? "New session" : sessions.find((s) => s.id === currentSessionId)?.title ?? "Session";
 
   if (!site) return <Welcome />;
-  const usage = session?.usage ?? null;
   return (
     <section className="pane session">
       <div className="titlebar drag" data-tauri-drag-region>
         <span className="title" data-tauri-drag-region>{title}</span>
-        {usage && usage.utilization >= 0.5 && (
-          <span className={cx("chip", usage.utilization >= 0.9 ? "err" : usage.utilization >= 0.75 ? "warn" : "")} title={`Claude plan usage in the ${usage.window.replace("_", "-")} window${usage.resetsAt ? `, resets ${new Date(usage.resetsAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}>
-            Usage {Math.round(usage.utilization * 100)}%
-          </span>
-        )}
-        {session?.model && <span className="chip" title="Model">{session.model.replace(/^claude-/, "")}</span>}
-        {currentSessionId && currentSessionId !== DRAFT && running && <ModeSelect mode={session?.mode ?? null} />}
         {session?.busy && <button className="btn sm ghost" onClick={() => void interrupt()} title="Interrupt (Esc)"><Stop /> Stop</button>}
       </div>
       {claudeBlocked(tools)
         ? <Setup />
         : <Transcript items={session?.items ?? []} busy={!!session?.busy} root={site.path} sessionId={currentSessionId} />}
+      {/* The session's knobs sit under the conversation, above the composer: model, effort, fast mode, permission mode. */}
+      {currentSessionId && !claudeBlocked(tools) && (
+        <div className="knobs">
+          <Knobs session={session} mode={currentSessionId !== DRAFT && running ? session?.mode ?? null : undefined} />
+        </div>
+      )}
       <Composer />
     </section>
   );
@@ -49,13 +48,67 @@ const MODES: { value: string; label: string; hint: string }[] = [
   { value: "default", label: "Ask about everything", hint: "Asks before edits and commands" },
 ];
 
+/** A chip that opens a native dropdown: an icon (or a word) names the setting, `label` is its current value.
+ *  The chip draws itself so it hugs the value; the real select sits invisibly on top and only supplies the menu
+ *  (a visible native select would be as wide as its longest option). */
+function Pick({ icon, word, label, title, value, disabled, onChange, children }: { icon?: ReactNode; word?: string; label: string; title: string; value: string; disabled?: boolean; onChange: (v: string) => void; children: ReactNode }) {
+  return (
+    <label className={cx("chip pick", disabled && "disabled")} title={title}>
+      {icon ?? <span className="word">{word}</span>}
+      <span className="val">{label}</span>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} aria-label={word ?? title}>{children}</select>
+    </label>
+  );
+}
+
 function ModeSelect({ mode }: { mode: string | null }) {
   const setSessionMode = useStore((s) => s.setSessionMode);
   const current = MODES.find((m) => m.value === mode) ?? MODES[0];
   return (
-    <select className="chip select" value={current.value} title={current.hint} onChange={(e) => void setSessionMode(e.target.value)}>
+    <Pick word="Mode" label={current.label} title={`Permissions: ${current.hint}`} value={current.value} onChange={(v) => void setSessionMode(v)}>
       {MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-    </select>
+    </Pick>
+  );
+}
+
+/** Model, effort and fast mode for this session. What the CLI reported (system/init) wins over what Open
+ *  asked for; a draft shows the defaults it will start with. Changes wait for an idle session. */
+function Knobs({ session, mode }: { session: SessionState | null; mode?: string | null }) {
+  const settings = useStore((s) => s.settings);
+  const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
+  const setModel = useStore((s) => s.setSessionModel);
+  const setEffort = useStore((s) => s.setSessionEffort);
+  const setFast = useStore((s) => s.setSessionFast);
+  const busy = !!session?.busy;
+  const o = session?.overrides ?? {};
+  const model = session?.model ?? o.model ?? settings.model ?? defaults?.model ?? null;
+  const effort = o.effort ?? settings.effort ?? null;
+  const fastState = session?.fast?.state ?? null;
+  const fastOn = fastState ? fastState !== "off" : !!(o.fastMode ?? settings.fastMode);
+  const options = [...(model && !MODELS.some((m) => m.value === model) ? [{ value: model, label: modelShort(model) }] : []), ...MODELS];
+  const wait = busy ? " Wait for the turn to finish to change it." : "";
+  const fastTitle = fastState === "cooldown"
+    ? "Fast mode is cooling down after a rate limit; Claude Code returns to it by itself."
+    : fastOn
+      ? `Fast mode is on: same model, up to 2.5× faster output, about twice the cost. Click to turn it off.${wait}`
+      : `Turn on fast mode: same model, up to 2.5× faster output, about twice the cost.${session?.fast?.reason ? ` Claude Code reports: ${session.fast.reason}.` : ""}${wait}`;
+  return (
+    <>
+      <Pick icon={<Robot className="glyph" />} label={model ? modelShort(model) : "default"} title={`Model${model ? `: ${model}` : ": your Claude Code default"}.${wait}`} value={model ?? ""} disabled={busy} onChange={(v) => void setModel(v)}>
+        {!model && <option value="">default</option>}
+        {options.map((m) => <option key={m.value} value={m.value}>{m.value === model ? modelShort(m.value) : `${m.label} · ${m.value}`}</option>)}
+      </Pick>
+      <Pick icon={<Signal className="glyph" />} label={effort ?? "default"} title={`Effort: how long Claude thinks before answering. ${isEffort(effort) ? EFFORT_HINTS[effort] : `Your Claude Code default${defaults?.effort ? ` (${defaults.effort})` : ""}.`}${wait}`} value={effort ?? ""} disabled={busy} onChange={(v) => void setEffort(v || null)}>
+        <option value="">default</option>
+        {EFFORTS.map((l) => <option key={l} value={l}>{l}</option>)}
+      </Pick>
+      {mode !== undefined && <ModeSelect mode={mode} />}
+      {supportsFast(model) && (
+        <button className={cx("chip toggle", fastOn && "ok")} disabled={busy} title={fastTitle} onClick={() => void setFast(!fastOn)}>
+          Fast · {fastState === "cooldown" ? "cooling down" : fastOn ? "on" : "off"}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -161,14 +214,19 @@ const Entry = memo(function Entry({ item, sessionId }: { item: Item; sessionId: 
           {!item.selection && item.selectionSummary && <div className="sel-chip" style={{ marginTop: 8 }}><Crosshair style={{ width: 12, height: 12 }} /><span className="txt">{item.selectionSummary.split("\n")[1]?.replace(/^- /, "") ?? "element"}</span></div>}
         </div>
       );
-    case "assistant":
+    case "assistant": {
+      // While the reasoning streams it is shown open; once the answer starts it folds into a "Thinking" row.
+      const live = item.streaming && !item.text;
       return (
         <div className="msg assistant">
-          {item.thinking && <details className="thinking"><summary>Thinking</summary>{item.thinking}</details>}
+          {live && item.phase === "thinking"
+            ? <div className="thinking live"><span className="thinking-label">Thinking…</span>{item.thinking && <div className="thinking-body">{item.thinking}</div>}</div>
+            : item.thinking ? <details className="thinking"><summary>Thinking</summary><div className="thinking-body">{item.thinking}</div></details> : null}
           <Markdown text={item.text} />
-          {item.streaming && !item.text && <span className="caret" />}
+          {live && item.phase !== "thinking" && <span className="caret" />}
         </div>
       );
+    }
     case "permission":
       return item.request.tool_name === "AskUserQuestion"
         ? <QuestionCard item={item} sessionId={sessionId!} />
@@ -188,11 +246,14 @@ function TurnEnd({ item, sessionId }: { item: Extract<Item, { kind: "result" }>;
   const committedAt = useStore((s) => s.committedAt);
   const isGit = useStore((s) => (s.currentSiteId ? !!s.git[s.currentSiteId]?.isGit : false));
   const root = useStore((s) => s.sites.find((x) => x.id === s.currentSiteId)?.path ?? "");
+  const sessionModel = useStore((s) => (sessionId ? s.transcripts[sessionId]?.model ?? null : null));
   const n = item.files.length;
   const canUndo = isGit && n > 0 && !item.undone && item.at > committedAt;
+  // the model is named when it differs from the session's, or when several ran (subagents); "fast" when the request ran in fast mode
+  const modelBit = item.models.length > 1 ? item.models.map(modelShort).join(" + ") : item.models[0] && (!sessionModel || baseModel(item.models[0]) !== baseModel(sessionModel)) ? modelShort(item.models[0]) : null;
   const label = item.isError
     ? item.text
-    : [item.stopped ? "Stopped" : "Done", item.durationMs != null && fmtDuration(item.durationMs), item.costUsd != null && item.costUsd > 0 && `$${item.costUsd.toFixed(3)}`].filter(Boolean).join(" · ");
+    : [item.stopped ? "Stopped" : "Done", item.durationMs != null && fmtDuration(item.durationMs), item.costUsd != null && item.costUsd > 0 && `$${item.costUsd.toFixed(3)}`, modelBit, item.speed === "fast" && "fast"].filter(Boolean).join(" · ");
   return (
     <div className={cx("turn-end", item.isError && "error")} title={item.files.map((f) => relPath(f, root)).join("\n")}>
       <span>{label}</span>

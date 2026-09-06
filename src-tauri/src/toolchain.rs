@@ -24,6 +24,29 @@ pub struct ClaudeStatus {
     /// From `claude auth status`; None when the CLI is too old to answer.
     pub logged_in: Option<bool>,
     pub auth_method: Option<String>,
+    /// The user's own defaults from `~/.claude/settings.json`, so Open can say what "your default" is.
+    pub defaults: Option<ClaudeDefaults>,
+}
+
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeDefaults {
+    /// `model` (e.g. `claude-fable-5-1[1m]`); None when the CLI's own default applies.
+    pub model: Option<String>,
+    /// `effortLevel` (low, medium, high, xhigh, max).
+    pub effort: Option<String>,
+}
+
+/// `model` and `effortLevel` from a Claude Code settings.json (user scope; project settings can still override).
+pub fn parse_user_settings(text: &str) -> ClaudeDefaults {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return ClaudeDefaults::default() };
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
+    ClaudeDefaults { model: s("model"), effort: s("effortLevel") }
+}
+
+fn user_defaults() -> Option<ClaudeDefaults> {
+    let text = std::fs::read_to_string(dirs::home_dir()?.join(".claude").join("settings.json")).ok()?;
+    Some(parse_user_settings(&text))
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -117,7 +140,7 @@ async fn claude(configured: Option<&str>, path_env: &str) -> ClaudeStatus {
     .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
     .unwrap_or_default();
     let (logged_in, auth_method) = parse_auth_status(&auth);
-    ClaudeStatus { ok: true, path: Some(path), version, logged_in, auth_method }
+    ClaudeStatus { ok: true, path: Some(path), version, logged_in, auth_method, defaults: user_defaults() }
 }
 
 pub async fn check(configured_claude: Option<&str>, path_env: &str) -> Toolchain {
@@ -146,6 +169,13 @@ mod tests {
         assert_eq!(parse_auth_status(r#"{"loggedIn": false, "authMethod": "none"}"#), (Some(false), Some("none".into())));
         assert_eq!(parse_auth_status(r#"{"loggedIn": true, "authMethod": "claude.ai", "email": "x"}"#), (Some(true), Some("claude.ai".into())));
         assert_eq!(parse_auth_status("error: unknown command 'auth'"), (None, None));
+    }
+
+    #[test]
+    fn user_settings_give_model_and_effort() {
+        assert_eq!(parse_user_settings(r#"{"model":"claude-fable-5-1[1m]","effortLevel":"high","theme":"dark"}"#), ClaudeDefaults { model: Some("claude-fable-5-1[1m]".into()), effort: Some("high".into()) });
+        assert_eq!(parse_user_settings(r#"{"permissions":{}}"#), ClaudeDefaults::default());
+        assert_eq!(parse_user_settings("not json"), ClaudeDefaults::default());
     }
 
     #[tokio::test]

@@ -59,10 +59,14 @@ export type GitStatus = { isGit: boolean; changed: number; files: string[]; bran
 export type PublishTarget = "preview" | "production";
 export type Tool = { ok: boolean; path?: string | null; version?: string | null };
 /** `loggedIn` comes from `claude auth status`; null when the CLI is too old to answer. */
-export type ClaudeStatus = Tool & { loggedIn?: boolean | null; authMethod?: string | null };
+/** The user's own defaults from `~/.claude/settings.json` (`model`, `effortLevel`), so "your Claude Code default" can say what it is. */
+export type ClaudeDefaults = { model?: string | null; effort?: string | null };
+export type ClaudeStatus = Tool & { loggedIn?: boolean | null; authMethod?: string | null; defaults?: ClaudeDefaults | null };
 /** What this Mac has. `packageManager` is the one New site will use: pnpm if present, else npm. */
 export type Toolchain = { claude: ClaudeStatus; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null };
-export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null };
+export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null };
+/** Per-session choices Open passes when it starts or restarts the claude process; unset = the Settings default. */
+export type SessionOverrides = { model?: string | null; effort?: string | null; fastMode?: boolean | null };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
 
 export type RestoreReport = { restored: string[]; deleted: string[]; skipped: string[] };

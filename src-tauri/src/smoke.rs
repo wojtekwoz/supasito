@@ -7,7 +7,11 @@
 //! - OPEN_SMOKE_SITE       pick the registered site whose name or path contains this
 //! - OPEN_SMOKE_SITE_PATH  use this folder as the site (registered in memory only, never saved)
 //! - OPEN_SMOKE_MODEL      model alias for the run (e.g. haiku)
-//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | tools
+//! - OPEN_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
+//! - OPEN_SMOKE_FAST       1 = start with fast mode on (Opus only)
+//! - OPEN_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | tools
+//!                         (model: set_model sonnet between two turns, start with OPEN_SMOKE_MODEL=haiku;
+//!                         fast: apply_flag_settings fastMode between two turns, start with OPEN_SMOKE_MODEL=opus)
 //!                         (tools: print the first-run toolchain check as JSON and exit; combine
 //!                         with HOME=<empty dir> for "signed out" and OPEN_PATH=/usr/bin:/bin for
 //!                         "no Node, no Claude Code")
@@ -35,7 +39,7 @@ fn summarize(m: &Value) {
         }
         Some("user") => eprintln!("[smoke] tool_result"),
         Some("result") => eprintln!("[smoke] result: subtype={} is_error={} turns={} cost={}", m["subtype"], m["is_error"], m["num_turns"], m["total_cost_usd"]),
-        Some("system") => { if m["subtype"] == "init" { eprintln!("[smoke] system/init model={}", m["model"]); } }
+        Some("system") => { if m["subtype"] == "init" { eprintln!("[smoke] system/init model={} fast_mode_state={}", m["model"], m["fast_mode_state"]); } }
         Some("stream_event") | Some("rate_limit_event") => {}
         other => eprintln!("[smoke] {:?}", other),
     }
@@ -43,17 +47,24 @@ fn summarize(m: &Value) {
 
 /// Wait for the next `result` message (or process exit / timeout).
 async fn wait_result(rx: &mut mpsc::Receiver<Value>, secs: u64) -> Option<Value> {
+    wait_turn(rx, secs).await.0
+}
+
+/// Like `wait_result`, also returning the model of the last assistant message seen on the way.
+async fn wait_turn(rx: &mut mpsc::Receiver<Value>, secs: u64) -> (Option<Value>, Option<String>) {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(secs);
+    let mut model = None;
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() { eprintln!("[smoke] timed out waiting for a result"); return None; }
+        if remaining.is_zero() { eprintln!("[smoke] timed out waiting for a result"); return (None, model); }
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some(m)) => {
-                if m["type"] == "__exit" { eprintln!("[smoke] process exited while waiting"); return None; }
-                if m["type"] == "result" { return Some(m); }
+                if m["type"] == "__exit" { eprintln!("[smoke] process exited while waiting"); return (None, model); }
+                if m["type"] == "assistant" { if let Some(s) = m["message"]["model"].as_str() { model = Some(s.to_string()); } }
+                if m["type"] == "result" { return (Some(m), model); }
             }
-            Ok(None) => return None,
-            Err(_) => { eprintln!("[smoke] timed out waiting for a result"); return None; }
+            Ok(None) => return (None, model),
+            Err(_) => { eprintln!("[smoke] timed out waiting for a result"); return (None, model); }
         }
     }
 }
@@ -158,8 +169,9 @@ pub async fn run(app: AppHandle, prompt: String) {
         app.listen_any("agent://exit", move |e| { eprintln!("[smoke] exit: {}", e.payload()); let _ = tx.try_send(json!({ "type": "__exit" })); });
     }
     app.listen_any("agent://stderr", |e| eprintln!("[smoke] stderr: {}", e.payload()));
+    app.listen_any("agent://control_error", |e| eprintln!("[smoke] CONTROL ERROR: {}", e.payload()));
 
-    let session_id = match crate::start_agent(&app, &site.id, None).await {
+    let session_id = match crate::start_agent(&app, &site.id, None, None).await {
         Ok(id) => id,
         Err(e) => { eprintln!("[smoke] agent start failed: {e}"); app.exit(1); return; }
     };
@@ -210,6 +222,32 @@ pub async fn run(app: AppHandle, prompt: String) {
             let seen = permission_seen.load(std::sync::atomic::Ordering::SeqCst);
             eprintln!("[smoke] result: {} · permission prompt seen: {seen}", r.as_ref().map(|r| r["result"].to_string()).unwrap_or("none".into()));
             eprintln!("[smoke] MODE {}", if r.is_some() && !seen { "OK: bypassPermissions applied mid-session (no prompt)" } else { "FAILED or prompt still shown" });
+        }
+        "model" => {
+            eprintln!("[smoke] scenario model: one turn, set_model sonnet, another turn (start with OPEN_SMOKE_MODEL=haiku)");
+            let _ = send("Reply with the single word ONE and nothing else.", None).await;
+            let (r1, m1) = wait_turn(&mut rx, 90).await;
+            match h.set_model("sonnet").await { Ok(id) => eprintln!("[smoke] set_model sent ({id})"), Err(e) => eprintln!("[smoke] set_model failed: {e}") }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let _ = send("Reply with the single word TWO and nothing else.", None).await;
+            let (r2, m2) = wait_turn(&mut rx, 90).await;
+            eprintln!("[smoke] models: turn 1 = {m1:?}, turn 2 = {m2:?}");
+            let switched = r1.is_some() && r2.is_some() && m2.as_deref().map(|m| m.contains("sonnet")).unwrap_or(false) && m1 != m2;
+            eprintln!("[smoke] MODEL {}", if switched { "OK: set_model switched the running session" } else { "FAILED: the second turn did not run on sonnet (see CONTROL ERROR lines)" });
+        }
+        "fast" => {
+            eprintln!("[smoke] scenario fast: one turn, apply_flag_settings fastMode+effortLevel, another turn (start with OPEN_SMOKE_MODEL=opus; about $0.25 a turn)");
+            let _ = send("Reply with the single word ONE and nothing else.", None).await;
+            let r1 = wait_result(&mut rx, 90).await;
+            let before = r1.as_ref().map(|r| r["fast_mode_state"].to_string()).unwrap_or("none".into());
+            match h.apply_settings(json!({ "fastMode": true, "effortLevel": "low" })).await { Ok(id) => eprintln!("[smoke] apply_flag_settings sent ({id})"), Err(e) => eprintln!("[smoke] apply_flag_settings failed: {e}") }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let _ = send("Reply with the single word TWO and nothing else.", None).await;
+            let r2 = wait_result(&mut rx, 90).await;
+            let after = r2.as_ref().map(|r| r["fast_mode_state"].to_string()).unwrap_or("none".into());
+            let speed = r2.as_ref().map(|r| r["usage"]["speed"].to_string()).unwrap_or("none".into());
+            eprintln!("[smoke] fast_mode_state: before={before} after={after} · usage.speed={speed}");
+            eprintln!("[smoke] FAST {}", if after == "\"on\"" { "OK: apply_flag_settings turned fast mode on mid-session" } else { "FAILED: fast mode did not turn on (Opus only; see CONTROL ERROR lines)" });
         }
         "pointing" => {
             eprintln!("[smoke] scenario pointing: message with an attached selection (the starter's hero h1)");

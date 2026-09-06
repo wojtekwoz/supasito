@@ -95,6 +95,24 @@ a { color: var(--accent); }
 .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--line-2); color: var(--ink-2); }
 .thinking { color: var(--ink-3); font-size: 12px; margin-bottom: 6px; }
 .thinking summary { cursor: pointer; }
+.thinking-body { white-space: pre-wrap; margin-top: 4px; max-height: 240px; overflow-y: auto; line-height: 1.45; }
+.thinking.live .thinking-label { display: inline-flex; align-items: center; gap: 8px; }
+.thinking.live .thinking-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--accent); border-right-color: transparent; animation: spin 0.8s linear infinite; }
+/* icon-led dropdown chips in the bar under the conversation: robot = model, signal bars = effort, "Mode" = permissions */
+.chip.pick { position: relative; padding: 0 20px 0 8px; gap: 5px; cursor: pointer; }
+.chip.pick .glyph { width: 13px; height: 13px; color: var(--ink-3); flex: none; }
+.chip.pick .word { color: var(--ink-3); }
+.chip.pick .val { white-space: nowrap; }
+.chip.pick::after { content: ""; position: absolute; right: 6px; top: 9px; width: 8px; height: 4px; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: 0 0, 4px 0; background-size: 4px 4px; background-repeat: no-repeat; }
+.chip.pick select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; appearance: none; -webkit-appearance: none; }
+.chip.pick:hover { color: var(--ink); }
+.chip.pick.disabled { opacity: 0.6; cursor: default; }
+.chip.pick.disabled select { cursor: default; }
+.chip.toggle { border: 0; cursor: pointer; }
+.chip.toggle:hover:not(:disabled) { color: var(--ink); }
+.chip.select:disabled, .chip.toggle:disabled { opacity: 0.6; cursor: default; }
+.opt-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+.opt-row code { font-family: var(--mono); font-size: 11.5px; }
 
 .steps { display: flex; flex-direction: column; gap: 2px; }
 .step { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; color: var(--ink-2); font-size: 12.5px; text-align: left; width: 100%; }
@@ -148,6 +166,8 @@ a { color: var(--accent); }
 .text-input { width: 100%; background: var(--rail); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 8px; color: var(--ink); font-size: 12.5px; }
 .text-input:focus { outline: none; border-color: var(--accent-line); }
 
+.knobs { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--line); }
+.knobs + .composer { border-top: 0; padding-top: 8px; }
 .composer { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
 .composer .box { background: var(--elev); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 8px 6px; display: flex; flex-direction: column; gap: 6px; }
 .composer .box:focus-within { border-color: var(--accent-line); }
@@ -291,7 +311,7 @@ a { color: var(--accent); }
 .welcome .box .checklist { padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--elev); }
 
 /* Usage: the context ring in the composer bar, its popover, and plan rows (also in Settings) */
-.usage-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px; border-radius: 6px; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px; border-radius: 6px; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-btn:hover, .usage-btn.on { background: var(--elev-2); color: var(--ink-2); }
 .usage-btn.warn, .usage-btn.warn:hover { color: var(--warn); }
 .usage-btn.err, .usage-btn.err:hover { color: var(--err); }

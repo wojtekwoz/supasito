@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, Settings, Site, Toolchain } from "../types";
+import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
@@ -86,6 +86,10 @@ export type Store = {
   closeRules: () => void;
   saveRules: (text: string) => Promise<void>;
   setSessionMode: (mode: string) => Promise<void>;
+  /** Model, effort and fast mode for the current session ("" / null / false = back to the Settings default). */
+  setSessionModel: (model: string) => Promise<void>;
+  setSessionEffort: (effort: string | null) => Promise<void>;
+  setSessionFast: (on: boolean) => Promise<void>;
   capturePreview: () => Promise<void>;
   /** The preview pane sets this so captures know where the iframe is. */
   previewRect: { x: number; y: number; w: number; h: number } | null;
@@ -138,6 +142,36 @@ function bump(transcripts: Record<string, SessionState>, id: string): Record<str
   return { ...transcripts, [id]: { ...s, items: [...s.items] } };
 }
 
+/** Control requests in flight whose rejection should fall back to restarting the process, by request id. */
+const pendingControl = new Map<string, () => void>();
+const waitUntil = async (cond: () => boolean, ms: number) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 100)); return cond(); };
+
+/** Record a model / effort / fast-mode choice for the current session. A running, idle session gets the
+ *  control request (`set_model`, `apply_flag_settings`); if the CLI rejects it, or the choice has no request
+ *  form, the process is stopped so the next message resumes the session with the new flags. A draft or a
+ *  stopped session just remembers the choice for its next start. */
+async function changeKnob(get: () => Store, set: (p: Partial<Store>) => void, patch: SessionOverrides, live: ((id: string) => Promise<string>) | null) {
+  const id = get().currentSessionId;
+  if (!id) return;
+  const cur = get().transcripts[id] ?? emptySession();
+  if (cur.busy) { get().showToast("Wait for Claude to finish this turn, then change it."); return; }
+  cur.overrides = { ...cur.overrides, ...patch };
+  if (patch.model) cur.model = patch.model; // shown until the next system/init reports the exact id
+  if (typeof patch.fastMode === "boolean") cur.fast = { state: patch.fastMode ? "on" : "off", reason: null };
+  get().transcripts[id] = cur;
+  set({ transcripts: bump(get().transcripts, id) });
+  if (id === DRAFT || !get().running[id]) return; // applied when the process starts
+  const restart = async () => {
+    await api.agentStop(id).catch(() => {});
+    if (await waitUntil(() => !get().running[id], 8000)) get().showToast("Claude Code restarts with the new setting on your next message.");
+  };
+  if (!live) { await restart(); return; }
+  try {
+    const rid = await live(id);
+    pendingControl.set(rid, () => { void restart(); });
+  } catch { await restart(); }
+}
+
 export const useStore = create<Store>((set, get) => ({
   ready: false,
   fatal: null,
@@ -186,6 +220,11 @@ export const useStore = create<Store>((set, get) => ({
 
       await api.on("agent://message", ({ sessionId, message }) => {
         const st = get();
+        if (message?.type === "control_response") {
+          // our own request was answered; an error came first as agent://control_error and has been handled there
+          const rid = message.response?.request_id;
+          if (typeof rid === "string") pendingControl.delete(rid);
+        }
         const cur = st.transcripts[sessionId] ?? emptySession();
         const before = cur.lastWrite?.seq ?? 0;
         const changed = applyMessage(cur, message);
@@ -241,7 +280,9 @@ export const useStore = create<Store>((set, get) => ({
         const cur = st.transcripts[sessionId];
         if (cur && applyFs(cur, toolUseId, !!existed)) set({ transcripts: bump(st.transcripts, sessionId) });
       });
-      await api.on("agent://control_error", ({ sessionId, error }) => {
+      await api.on("agent://control_error", ({ sessionId, requestId, error }) => {
+        const fallback = typeof requestId === "string" ? pendingControl.get(requestId) : undefined;
+        if (fallback) { pendingControl.delete(requestId); fallback(); return; }
         const cur = get().transcripts[sessionId];
         const msg = typeof error === "string" ? error : JSON.stringify(error);
         if (cur) { addNotice(cur, `Claude Code rejected a control request: ${msg}`, "error"); set({ transcripts: bump(get().transcripts, sessionId) }); }
@@ -394,8 +435,8 @@ export const useStore = create<Store>((set, get) => ({
     set({ selection: null, attachments: [], picking: false });
     try {
       if (sessionId === DRAFT) {
-        const id = await api.agentStart(siteId, null);
         const draft = st.transcripts[DRAFT] ?? emptySession();
+        const id = await api.agentStart(siteId, null, draft.overrides);
         const transcripts = { ...st.transcripts, [id]: { ...draft, loaded: true } };
         delete transcripts[DRAFT];
         const info: SessionInfo = { id, title: text.trim().slice(0, 90), lastModified: now(), createdAt: now(), messageCount: 1 };
@@ -403,7 +444,7 @@ export const useStore = create<Store>((set, get) => ({
         void api.siteSetLastSession(siteId, id);
         sessionId = id;
       } else if (!st.running[sessionId]) {
-        await api.agentStart(siteId, sessionId);
+        await api.agentStart(siteId, sessionId, st.transcripts[sessionId]?.overrides ?? null);
         const t = get().transcripts[sessionId];
         if (t) resetProcessCost(t);
         set({ running: { ...get().running, [sessionId]: true } });
@@ -562,6 +603,15 @@ export const useStore = create<Store>((set, get) => ({
       await api.agentSetMode(id, mode);
       if (cur) { cur.mode = mode; set({ transcripts: bump(get().transcripts, id) }); }
     } catch (e) { get().showToast(String(e)); }
+  },
+  async setSessionModel(model) {
+    await changeKnob(get, set, { model: model || null }, model ? (id) => api.agentSetModel(id, model) : null);
+  },
+  async setSessionEffort(effort) {
+    await changeKnob(get, set, { effort: effort || null }, effort ? (id) => api.agentApplySettings(id, { effortLevel: effort }) : null);
+  },
+  async setSessionFast(on) {
+    await changeKnob(get, set, { fastMode: on }, (id) => api.agentApplySettings(id, { fastMode: on }));
   },
   setPreviewRect(r) { set({ previewRect: r }); },
   async capturePreview() {

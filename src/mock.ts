@@ -1,6 +1,6 @@
 // Browser-only stand-in for the Rust side, so the UI can be developed and checked outside Tauri.
 import type { Backend } from "./backend";
-import type { DevInfo, EventName, SessionInfo, Site } from "./types";
+import type { DevInfo, EventName, SessionInfo, Settings, Site } from "./types";
 import pickerSource from "../src-tauri/src/picker.js?raw";
 
 type Handler = (payload: any) => void;
@@ -33,18 +33,33 @@ let mockCtx = new URLSearchParams(location.search).get("context") === "full" ? 1
 let mockTurns = 0;
 const mockUsage = () => ({ input_tokens: 10, cache_creation_input_tokens: 2400, cache_read_input_tokens: mockCtx, output_tokens: 80 });
 let mockRules = "# This site\n\n## Brand\n- Voice: plain, confident, short sentences.\n- Type: display serif for headlines.\n";
+// `?fast=on` starts on Opus with fast mode on; the session-header knobs and Settings change these like the real backend would.
+let mockFast = new URLSearchParams(location.search).get("fast") === "on";
+let mockModel = mockFast ? "claude-opus-5" : "claude-sonnet-5";
+const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast };
+const THINKING = "The user wants a different headline. The hero lives in components/hero.tsx; I'll read it, replace the h1 text and keep the classes as they are.";
 (window as any).__openMockDoc = demoHtml;
 
 async function fakeTurn(sessionId: string, text: string) {
   const msgId = "msg_" + Math.random().toString(36).slice(2);
-  const say = async (s: string) => {
-    emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "message_start", message: { id: msgId, role: "assistant", content: [] } }, parent_tool_use_id: null } });
-    emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, parent_tool_use_id: null } });
+  const say = async (s: string, thinking?: string) => {
+    emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "message_start", message: { id: msgId, role: "assistant", model: mockModel, content: [] } }, parent_tool_use_id: null } });
+    if (thinking) {
+      // the shape recorded from 2.1.257 with showThinkingSummaries: a thinking block, then the assistant message for it, then the text block
+      emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }, parent_tool_use_id: null } });
+      for (const word of thinking.split(" ")) {
+        emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: word + " " } }, parent_tool_use_id: null } });
+        await wait(40);
+      }
+      emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, model: mockModel, role: "assistant", content: [{ type: "thinking", thinking, signature: "x" }], stop_reason: null, usage: mockUsage() }, parent_tool_use_id: null } });
+      await wait(300);
+    }
+    emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_start", index: thinking ? 1 : 0, content_block: { type: "text", text: "" } }, parent_tool_use_id: null } });
     for (const word of s.split(" ")) {
-      emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: word + " " } }, parent_tool_use_id: null } });
+      emit("agent://message", { sessionId, message: { type: "stream_event", event: { type: "content_block_delta", index: thinking ? 1 : 0, delta: { type: "text_delta", text: word + " " } }, parent_tool_use_id: null } });
       await wait(25);
     }
-    emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, role: "assistant", content: [{ type: "text", text: s }], usage: mockUsage() }, parent_tool_use_id: null } });
+    emit("agent://message", { sessionId, message: { type: "assistant", message: { id: msgId, model: mockModel, role: "assistant", content: [{ type: "text", text: s }], usage: mockUsage() }, parent_tool_use_id: null } });
   };
   await wait(300);
   mockTurns++;
@@ -53,8 +68,9 @@ async function fakeTurn(sessionId: string, text: string) {
     emit("agent://message", { sessionId, message: { type: "system", subtype: "compact_boundary", uuid: "cb" + mockTurns, compact_metadata: { trigger: "auto", pre_tokens: mockCtx, post_tokens: 12_000 } } });
     mockCtx = 12_000;
   }
-  emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: "claude-sonnet-5", cwd: site.path, session_id: sessionId, tools: [], permissionMode: "acceptEdits", slash_commands: ["compact", "cost", "review", "impeccable", "web-typography", "cro-methodology"] } });
-  await say("Checking the hero section first — the headline lives in components/hero.tsx.");
+  const fastOn = mockFast && /opus/.test(mockModel);
+  emit("agent://message", { sessionId, message: { type: "system", subtype: "init", model: mockModel, cwd: site.path, session_id: sessionId, tools: [], permissionMode: "acceptEdits", slash_commands: ["compact", "cost", "review", "impeccable", "web-typography", "cro-methodology"], fast_mode_state: fastOn ? "on" : "off", ...(fastOn ? {} : { fast_mode_disabled_reason: mockFast ? "model_not_supported" : "sdk_opt_in_required" }) } });
+  await say("Checking the hero section first — the headline lives in components/hero.tsx.", THINKING);
   const t1 = "toolu_1" + Math.random().toString(36).slice(2);
   emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m2", role: "assistant", content: [{ type: "tool_use", id: t1, name: "Read", input: { file_path: site.path + "/components/hero.tsx" } }] }, parent_tool_use_id: null } });
   await wait(500);
@@ -76,12 +92,12 @@ async function fakeTurn(sessionId: string, text: string) {
 
 export function mockBackend(): Backend {
   return {
-    settingsGet: async () => ({ model: null, permissionMode: "acceptEdits" }),
-    settingsSet: async () => {},
+    settingsGet: async () => ({ ...mockSettings }),
+    settingsSet: async (patch) => { Object.assign(mockSettings, patch); },
     // `?tools=missing|nologin|nonode|nogit` simulates a Mac that lacks something, for checking the checklist.
     toolchainCheck: async () => {
       const sim = new URLSearchParams(location.search).get("tools");
-      const claude = sim === "missing" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai" };
+      const claude = sim === "missing" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai", defaults: { model: "claude-fable-5-1[1m]", effort: "high" } };
       const node = sim === "missing" || sim === "nonode" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/node", version: "24.4.0" };
       const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
       const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
@@ -109,6 +125,8 @@ export function mockBackend(): Backend {
     siteWriteText: async (_siteId, rel, content) => { if (rel === "CLAUDE.md") mockRules = content; },
     siteRename: async (_siteId, name) => { site.name = name; return { ...site }; },
     agentSetMode: async (_sessionId, mode) => { console.debug("[mode]", mode); },
+    agentSetModel: async (_sessionId, model) => { console.debug("[set_model]", model); mockModel = model; return "req-model"; },
+    agentApplySettings: async (_sessionId, settings) => { console.debug("[apply_flag_settings]", settings); if (typeof settings.fastMode === "boolean") mockFast = settings.fastMode; return "req-settings"; },
     requestAttention: async () => { console.debug("[attention]"); },
     siteGitInit: async () => {},
     siteUndoFiles: async (_siteId, files, created) => ({ restored: files.filter((f) => !created.includes(f)).map((f) => f.replace(site.path + "/", "")), deleted: created.map((f) => f.replace(site.path + "/", "")), skipped: [] }),
@@ -126,7 +144,14 @@ export function mockBackend(): Backend {
       return { ok: true, code: 0, url, log: [] };
     },
     publishCancel: async () => { mockPublishCancelled = true; },
-    agentStart: async (_siteId, resume) => { const id = resume ?? "sess-" + Math.random().toString(36).slice(2); running.add(id); return id; },
+    agentStart: async (_siteId, resume, overrides) => {
+      const id = resume ?? "sess-" + Math.random().toString(36).slice(2);
+      running.add(id);
+      // like the Rust side: the session's own choice, else the saved default
+      mockModel = overrides?.model || mockSettings.model || mockModel;
+      mockFast = overrides?.fastMode ?? !!mockSettings.fastMode;
+      return id;
+    },
     agentSend: async (sessionId, text) => { void fakeTurn(sessionId, text); },
     siteSetPublish: async (_siteId, command, key) => ({ ...site, [key]: command || null }),
     agentRespond: async (sessionId, _requestId, response: any) => {
@@ -137,7 +162,8 @@ export function mockBackend(): Backend {
       await wait(200);
       emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m5", role: "assistant", content: [{ type: "text", text: "Done. The headline in `components/hero.tsx` now reads as you asked; the preview has reloaded." }], usage: mockUsage() }, parent_tool_use_id: null } });
       const total = +(0.031 * mockTurns).toFixed(4);
-      emit("agent://message", { sessionId, message: { type: "result", subtype: "success", is_error: false, duration_ms: 6120, num_turns: 3, total_cost_usd: total, modelUsage: { "claude-sonnet-5": { costUSD: total, contextWindow: 200000 } }, session_id: sessionId, result: "Done." } });
+      const fastOn = mockFast && /opus/.test(mockModel);
+      emit("agent://message", { sessionId, message: { type: "result", subtype: "success", is_error: false, duration_ms: 6120, num_turns: 3, total_cost_usd: total, modelUsage: { [mockModel]: { costUSD: total, contextWindow: 200000 } }, usage: { speed: fastOn ? "fast" : "standard" }, fast_mode_state: fastOn ? "on" : "off", session_id: sessionId, result: "Done." } });
     },
     agentInterrupt: async () => {},
     agentStop: async (sessionId) => { running.delete(sessionId); emit("agent://exit", { sessionId, code: 0 }); },

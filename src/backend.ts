@@ -1,5 +1,5 @@
 import type {
-  Attachment, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, Settings, Site, Toolchain,
+  Attachment, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -37,7 +37,10 @@ export interface Backend {
   agentSetMode(sessionId: string, mode: string): Promise<void>;
   requestAttention(): Promise<void>;
   publishCancel(siteId: string): Promise<void>;
-  agentStart(siteId: string, resume: string | null): Promise<string>;
+  agentStart(siteId: string, resume: string | null, overrides?: SessionOverrides | null): Promise<string>;
+  /** Mid-session control requests (Claude Code 2.1.257: `set_model`, `apply_flag_settings`). Both resolve with the request id; a rejection arrives later as `agent://control_error`. */
+  agentSetModel(sessionId: string, model: string): Promise<string>;
+  agentApplySettings(sessionId: string, settings: Record<string, unknown>): Promise<string>;
   agentSend(sessionId: string, text: string, selection: Selection | null, images: Attachment[]): Promise<void>;
   siteSetPublish(siteId: string, command: string, key: "publish" | "preview"): Promise<Site>;
   agentRespond(sessionId: string, requestId: string, response: unknown): Promise<void>;
@@ -90,7 +93,9 @@ async function tauriBackend(): Promise<Backend> {
     agentSetMode: (sessionId, mode) => invoke("agent_set_mode", { sessionId, mode }),
     requestAttention: () => invoke("request_attention"),
     publishCancel: (siteId) => invoke("publish_cancel", { siteId }),
-    agentStart: (siteId, resume) => invoke("agent_start", { siteId, resume }),
+    agentStart: (siteId, resume, overrides) => invoke("agent_start", { siteId, resume, overrides: overrides ?? null }),
+    agentSetModel: (sessionId, model) => invoke("agent_set_model", { sessionId, model }),
+    agentApplySettings: (sessionId, settings) => invoke("agent_apply_settings", { sessionId, settings }),
     agentSend: (sessionId, text, selection, images) => invoke("agent_send", { sessionId, text, selection, images: images.map((i) => ({ mediaType: i.mediaType, data: i.data })) }),
     siteSetPublish: (siteId, command, key) => invoke("site_set_publish", { siteId, command, key }),
     agentRespond: (sessionId, requestId, response) => invoke("agent_respond", { sessionId, requestId, response }),

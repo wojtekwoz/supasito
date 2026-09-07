@@ -61,8 +61,9 @@ a { color: var(--accent); }
 .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .meta { font-size: 11px; color: var(--ink-3); flex: none; }
 .row .glyph { width: 16px; height: 16px; flex: none; color: var(--ink-3); }
-.row .x { opacity: 0; }
-.row:hover .x { opacity: 1; }
+/* Hover-only buttons take no width until the row is hovered, so names get the whole row; a set star always shows. */
+.row .x { display: none; }
+.row:hover .x, .row .x.set { display: inline-grid; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
 .status-dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .status-dot.live { background: var(--ok); }
@@ -321,7 +322,7 @@ body.panel-drag::after { content: ""; position: fixed; inset: 0; z-index: 15; cu
 
 /* rename, rules, mode select, slash suggestions */
 /* Site switcher: favourites in the rail, everything else in a dropdown under the titlebar (⌘⇧O) */
-.row .star.set { opacity: 1; color: var(--warn); }
+.row .star.set { color: var(--warn); }
 .row .star.set:hover { color: var(--ink); }
 .row.more .t { color: var(--ink-3); }
 .site-menu-veil { position: fixed; inset: 0; z-index: 40; }

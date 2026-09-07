@@ -9,7 +9,7 @@
 //! - SUPASITO_SMOKE_MODEL      model alias for the run (e.g. haiku)
 //! - SUPASITO_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
 //! - SUPASITO_SMOKE_FAST       1 = start with fast mode on (Opus only)
-//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools
+//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools | ports
 //!                         (model: set_model sonnet between two turns, start with SUPASITO_SMOKE_MODEL=haiku;
 //!                         fast: apply_flag_settings fastMode between two turns, start with SUPASITO_SMOKE_MODEL=opus)
 //!                         (undo: one turn that edits a tracked file and creates a new one, then the same
@@ -17,6 +17,10 @@
 //!                         (tools: print the first-run toolchain check as JSON and exit; combine
 //!                         with HOME=<empty dir> for "signed out" and SUPASITO_PATH=/usr/bin:/bin for
 //!                         "no Node, no Claude Code")
+//!                         (ports: a Node process holds port 4321 on `::`; two scratch sites check that the
+//!                         free-port pick skips it, that a forced conflict (SUPASITO_SMOKE_FORCE_PORT, read by
+//!                         devserver) retries on another port, and that a fixed-port command ends in a
+//!                         port problem naming the holder, which `free_blocked_port` then kills; exits)
 //!
 //! Permission prompts are auto-allowed. Everything is printed to stderr with a [smoke] prefix.
 
@@ -102,6 +106,75 @@ async fn wait_turn_files(rx: &mut mpsc::Receiver<Value>, secs: u64) -> (Option<V
     }
 }
 
+/// The `ports` scenario; returns the exit code (0 = every expectation held).
+async fn ports(app: &AppHandle) -> i32 {
+    use crate::devserver::DevProblem;
+    let state = app.state::<AppState>();
+    let mut failures = 0;
+    let mut check = |ok: bool, what: &str| { eprintln!("[smoke] {} {what}", if ok { "ok  " } else { "FAIL" }); if !ok { failures += 1; } };
+    let dir = std::env::temp_dir().join(format!("supasito-ports-{}", std::process::id()));
+    let mk = |name: &str, dev: &str| -> crate::sites::Site {
+        let p = dir.join(name);
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("supasito.json"), format!(r#"{{"name":"{name}","dev":"{dev}"}}"#)).unwrap();
+        crate::sites::Site::from_path(p.to_str().unwrap()).unwrap()
+    };
+    let flexible = mk("ports-a", "python3 -m http.server {port}");
+    let fixed = mk("ports-b", "python3 -m http.server 4321");
+    let mut holder = std::process::Command::new("node");
+    holder.args(["-e", "require('net').createServer().listen(4321, () => setTimeout(() => {}, 120000))"]).stdin(std::process::Stdio::null());
+    std::os::unix::process::CommandExt::process_group(&mut holder, 0);
+    let mut holder = match holder.spawn() { Ok(h) => h, Err(e) => { eprintln!("[smoke] cannot start the node holder: {e}"); return 1; } };
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    app.listen_any("dev://status", |e| eprintln!("[smoke] dev: {}", e.payload()));
+    app.listen_any("dev://log", |e| eprintln!("[smoke] log: {}", e.payload()));
+    let settle = |site_id: String| async move {
+        let state = app.state::<AppState>();
+        for _ in 0..60 {
+            if let Some(d) = state.dev.status(&site_id).await { if d.status == "ready" || d.status == "error" { return Some(d); } }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        state.dev.status(&site_id).await
+    };
+
+    eprintln!("[smoke] A: {{port}} command while node holds 4321");
+    let _ = state.dev.start(app.clone(), flexible.clone(), state.path_env.clone()).await;
+    let a = settle(flexible.id.clone()).await;
+    check(a.as_ref().map(|d| d.status == "ready" && d.port != 4321).unwrap_or(false), &format!("skipped the taken port: {:?}", a.as_ref().map(|d| (d.status.clone(), d.port))));
+    let _ = state.dev.stop(app, &flexible.id).await;
+
+    eprintln!("[smoke] C: forced onto 4321, expect a retry on another port");
+    std::env::set_var("SUPASITO_SMOKE_FORCE_PORT", "4321");
+    let _ = state.dev.start(app.clone(), flexible.clone(), state.path_env.clone()).await;
+    std::env::remove_var("SUPASITO_SMOKE_FORCE_PORT");
+    let c = settle(flexible.id.clone()).await;
+    let log = state.dev.log(&flexible.id).await;
+    check(c.as_ref().map(|d| d.status == "ready" && d.port != 4321).unwrap_or(false), &format!("retried onto a free port: {:?}", c.as_ref().map(|d| (d.status.clone(), d.port))));
+    check(log.iter().any(|l| l.starts_with("Port 4321 is taken by node")), "log names the holder");
+    let _ = state.dev.stop(app, &flexible.id).await;
+
+    eprintln!("[smoke] B: fixed-port command, expect a port problem naming node, then free it");
+    let _ = state.dev.start(app.clone(), fixed.clone(), state.path_env.clone()).await;
+    let b = settle(fixed.id.clone()).await;
+    let problem = b.as_ref().and_then(|d| d.problem.clone());
+    let named = match &problem { Some(DevProblem::Port { port, holder: Some(h) }) => *port == 4321 && h.pid == holder.id() && h.name == "node", _ => false };
+    check(named, &format!("problem: {problem:?}"));
+    match state.dev.free_blocked_port(app, &fixed.id).await {
+        Ok(report) => { eprintln!("[smoke] free_blocked_port: {report}"); check(report.starts_with("Stopped node"), "the holder was stopped"); }
+        Err(e) => check(false, &format!("free_blocked_port failed: {e}")),
+    }
+    check(holder.try_wait().map(|s| s.is_some()).unwrap_or(false), "node holder is gone");
+    let _ = state.dev.stop(app, &fixed.id).await;
+    let _ = state.dev.start(app.clone(), fixed.clone(), state.path_env.clone()).await;
+    let b2 = settle(fixed.id.clone()).await;
+    check(b2.as_ref().map(|d| d.status == "ready" && d.port == 4321).unwrap_or(false), &format!("fixed-port site ready after freeing: {:?}", b2.as_ref().map(|d| (d.status.clone(), d.port))));
+
+    let _ = holder.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+    eprintln!("[smoke] ports: {failures} failure(s)");
+    if failures == 0 { 0 } else { 1 }
+}
+
 pub async fn run(app: AppHandle, prompt: String) {
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     let state = app.state::<AppState>();
@@ -112,6 +185,13 @@ pub async fn run(app: AppHandle, prompt: String) {
         eprintln!("[smoke] PATH: {}", state.path_env);
         eprintln!("[smoke] toolchain: {}", serde_json::to_string_pretty(&t).unwrap_or_default());
         app.exit(0);
+        return;
+    }
+
+    if std::env::var("SUPASITO_SMOKE_SCENARIO").as_deref() == Ok("ports") {
+        let code = ports(&app).await;
+        state.dev.stop_all().await;
+        app.exit(code);
         return;
     }
 

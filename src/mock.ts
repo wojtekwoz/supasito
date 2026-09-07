@@ -1,6 +1,6 @@
 // Browser-only stand-in for the Rust side, so the UI can be developed and checked outside Tauri.
 import type { Backend } from "./backend";
-import type { DevInfo, EventName, SessionInfo, Settings, Site } from "./types";
+import type { DevInfo, DevProblem, EventName, SessionInfo, Settings, Site } from "./types";
 import pickerSource from "../src-tauri/src/picker.js?raw";
 
 type Handler = (payload: any) => void;
@@ -34,8 +34,17 @@ const devStartCalls = new Map<string, number>(); // `devStart` invocations per s
 const devStopping = new Set<string>();
 const devDelay = Number(query.get("devDelay")) || 0;
 const stopDelay = Number(query.get("stopDelay")) || 0;
-if (mockSites[0]) devs.set(site.id, { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! });
+// `?dev=taken` — the first site's port is held by another program (`taken:unknown`: by something lsof can't name,
+// `taken:site`: by the second site's server, with `?sites=two`); the start fails with a port problem until
+// `devFreePort` clears it, like the Rust side after killing the holder.
+const devTaken = query.get("dev")?.startsWith("taken") ? (query.get("dev")!.split(":")[1] ?? "known") : null;
+let portBlocked = devTaken !== null;
+if (mockSites[0] && !portBlocked) devs.set(site.id, { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! });
 (window as any).__mock = { devs, devStartCalls };
+const mockHolder = (): DevProblem["holder"] =>
+  devTaken === "unknown" ? null
+  : devTaken === "site" && mockSites[1] ? { pid: 4242, pgid: 4242, name: "node", command: "node_modules/.bin/next dev -p 3000", cwd: mockSites[1].path, siteId: mockSites[1].id }
+  : { pid: 4242, pgid: 4242, name: "next-server (v16.3.3)", command: "next-server (v16.3.3)", cwd: "/Users/you/Sites/other-site" };
 
 export const demoHtml = `<!doctype html><html><head><meta charset="utf-8"><title>ClarityOps</title>
 <style>body{margin:0;font:16px/1.5 Georgia,serif;color:#141414;background:#f7f6f2}header{display:flex;justify-content:space-between;padding:20px 32px;font:600 13px/1 -apple-system,system-ui}nav a{margin-left:18px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#333;text-decoration:none}.hero{text-align:center;padding:72px 24px 40px}.hero .kicker{font:600 10px/1 -apple-system;letter-spacing:.2em;text-transform:uppercase;color:#666}h1{font-size:64px;line-height:1;margin:14px 0 18px;font-weight:400}.hero p{max-width:520px;margin:0 auto 24px;font-size:18px;color:#333}.btn{display:inline-block;padding:10px 16px;background:#141414;color:#fff;font:600 11px/1 -apple-system;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;margin:0 4px}.btn.ghost{background:transparent;color:#141414;border:1px solid #141414}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:24px 32px 64px}.card{background:#fff;border:1px solid #e3e1da;padding:22px;min-height:160px}.card h3{margin:0 0 8px;font-weight:500}.card p{margin:0;color:#555;font-size:15px}.card.dark{background:#141414;color:#fff}.card.dark p{color:#bbb}</style></head>
@@ -166,11 +175,29 @@ export function mockBackend(): Backend {
       emit("dev://status", info);
       void wait(devDelay).then(() => {
         if (devStarts.get(siteId) !== token || devs.get(siteId) !== info) return;
+        if (portBlocked && siteId === mockSites[0]?.id) {
+          emit("dev://log", { siteId, line: "⨯ Failed to start server" });
+          emit("dev://log", { siteId, line: `Error: listen EADDRINUSE: address already in use :::${info.port}` });
+          emit("dev://log", { siteId, line: `Port ${info.port} is taken by ${mockHolder()?.name ?? "something"}, and this dev command uses that port.` });
+          const failed: DevInfo = { ...info, status: "error", problem: { kind: "port", port: info.port, holder: mockHolder() } };
+          devs.set(siteId, failed);
+          emit("dev://status", failed);
+          return;
+        }
         const ready = { ...info, status: "ready" as const };
         devs.set(siteId, ready);
         emit("dev://status", ready);
       });
       return info;
+    },
+    devFreePort: async (siteId) => {
+      const cur = devs.get(siteId);
+      if (cur?.problem?.kind !== "port") throw new Error("Nothing is blocking this site's port.");
+      await wait(300);
+      portBlocked = false;
+      const h = cur.problem.holder;
+      if (h?.siteId) { const other = devs.get(h.siteId); if (other) { const stopped = { ...other, status: "stopped" as const }; devs.set(h.siteId, stopped); emit("dev://status", stopped); } return "Stopped the other site's dev server."; }
+      return h ? `Stopped ${h.name} (pid ${h.pid}).` : `Port ${cur.problem.port} is free now.`;
     },
     devStop: async (siteId) => {
       const cur = devs.get(siteId);

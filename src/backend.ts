@@ -24,6 +24,8 @@ export interface Backend {
   devStop(siteId: string): Promise<void>;
   devStatus(siteId: string): Promise<DevInfo | null>;
   devLog(siteId: string): Promise<string[]>;
+  /** Stop whatever holds the port the site's dev command needs; resolves to a one-line report. */
+  devFreePort(siteId: string): Promise<string>;
   publishRun(siteId: string, target: PublishTarget): Promise<PublishResult>;
   siteGitCommit(siteId: string, message: string): Promise<GitStatus>;
   siteGitPush(siteId: string): Promise<string>;
@@ -80,6 +82,7 @@ async function tauriBackend(): Promise<Backend> {
     devStop: (siteId) => invoke("dev_stop", { siteId }),
     devStatus: (siteId) => invoke("dev_status", { siteId }),
     devLog: (siteId) => invoke("dev_log", { siteId }),
+    devFreePort: (siteId) => invoke("dev_free_port", { siteId }),
     publishRun: (siteId, target) => invoke("publish_run", { siteId, target }),
     siteGitCommit: (siteId, message) => invoke("site_git_commit", { siteId, message }),
     siteGitPush: (siteId) => invoke("site_git_push", { siteId }),

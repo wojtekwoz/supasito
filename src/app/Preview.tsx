@@ -3,6 +3,7 @@ import { useDev, useDevLogOfCurrentSite, useSite, useStore, type Device } from "
 import { cx } from "../util";
 import { Camera, Collapse, Crosshair, Desktop, Expand, External, Phone, Reload, Tablet, Terminal } from "../ui/Icons";
 import { isTauri } from "../backend";
+import type { DevProblem } from "../types";
 
 const widths: Record<Device, string> = { desktop: "100%", tablet: "834px", phone: "390px" };
 
@@ -29,6 +30,9 @@ export function Preview() {
   const devLog = useDevLogOfCurrentSite();
   const startDev = useStore((s) => s.startDev);
   const restartDev = useStore((s) => s.restartDev);
+  const freePortAndRestart = useStore((s) => s.freePortAndRestart);
+  const sites = useStore((s) => s.sites);
+  const siteName = (id: string | null | undefined) => sites.find((x) => x.id === id)?.name;
   const installDeps = useStore((s) => s.installDeps);
   const noNode = useStore((s) => !!s.tools && !s.tools.node.ok);
   const newSite = useStore((s) => s.newSite);
@@ -164,6 +168,16 @@ export function Preview() {
                   <h3>No dev server found</h3>
                   <p>Add a <code>dev</code> script to package.json, or an <code>supasito.json</code> with a <code>dev</code> command (use <code>{"{port}"}</code> where the port goes).</p>
                 </>
+              ) : dev?.status === "error" && dev.problem?.kind === "port" ? (
+                <>
+                  <h3>Port {dev.problem.port} is taken</h3>
+                  <PortTakenNote problem={dev.problem} otherSite={siteName(dev.problem.holder?.siteId)} />
+                  <div className="log">{devLog.slice(-6).join("\n") || dev.command}</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {dev.problem.holder && <button className="btn primary" onClick={() => void freePortAndRestart(site.id)}>{dev.problem.holder.siteId ? `Stop ${siteName(dev.problem.holder.siteId) ?? "it"} and try again` : "Stop it and try again"}</button>}
+                    <button className={cx("btn", !dev.problem.holder && "primary")} onClick={() => void restartDev(site.id)}>Try again</button>
+                  </div>
+                </>
               ) : dev?.status === "error" || dev?.status === "stopped" ? (
                 <>
                   <h3>{dev.status === "error" ? "The dev server didn't start" : "The dev server stopped"}</h3>
@@ -191,11 +205,20 @@ export function Preview() {
   );
 }
 
+/** What holds the port and why that blocks this site: the command names the port itself, so no other port would do. */
+function PortTakenNote({ problem, otherSite }: { problem: DevProblem; otherSite?: string }) {
+  const h = problem.holder;
+  const folder = h?.cwd ? h.cwd.replace(/^\/Users\/[^/]+/, "~") : null;
+  if (h?.siteId) return <p>Your site <b>{otherSite ?? "another site"}</b> is using port {problem.port}. Both sites' dev commands ask for that port, so only one can run at a time.</p>;
+  if (h) return <p><b>{h.name}</b> (pid {h.pid}){folder ? <> started in <code>{folder}</code></> : null} is listening on port {problem.port}, and this site's dev command uses that port. Stopping it ends that program.</p>;
+  return <p>Something else is listening on port {problem.port}, and this site's dev command uses that port. Quit whatever runs there, or put <code>{"{port}"}</code> in the dev command so Supasito can pick a free one.</p>;
+}
+
 function DevChip() {
   const dev = useDev();
   if (!dev) return <span className="chip">Preview off</span>;
   const cls = dev.status === "ready" ? "ok" : dev.status === "starting" ? "warn" : "err";
-  const label = dev.status === "ready" ? `Ready · :${dev.port}` : dev.status === "starting" ? "Starting…" : dev.status === "error" ? "Error" : "Stopped";
+  const label = dev.status === "ready" ? `Ready · :${dev.port}` : dev.status === "starting" ? "Starting…" : dev.status === "error" ? (dev.problem?.kind === "port" ? "Port taken" : "Error") : "Stopped";
   return <span className={cx("chip", cls)}><span className="status-dot" style={{ background: "currentColor" }} />{label}</span>;
 }
 

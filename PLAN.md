@@ -46,7 +46,7 @@ src-tauri/src/
   lib.rs                 Tauri commands (sites, dev server, agent, git, publish, capture, badge)
   agent/claude.rs        spawn claude, NDJSON reader/writer, control protocol, orphan reaping
   agent/sessions.rs      read ~/.claude/projects/<encoded cwd>/*.jsonl
-  devserver.rs           dev-server supervisor (dual-stack readiness, port announcement, orphan reaping)
+  devserver.rs           dev-server supervisor (bind+connect port check, listener ownership, retry on a taken port, orphan reaping)
   sites.rs               detection (package.json, lockfile, host), supasito.json, git status/commit/push/diff/restore
   capture.rs             WKWebView snapshot of the preview rect
   picker.js              injected into every frame: hover/click selection, React owner chain
@@ -82,7 +82,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 **Sites.** Open a folder, New site from the starter, rename, site rules (`CLAUDE.md`) editor, reveal in Finder, open in editor, dev-server status and log, install when `node_modules` is missing, git init offer, one dev server at a time. Sessions listed from Claude's store, resumable, capped list with "Show older".
 
-**Robustness.** Dual-stack readiness (Vite/Astro bind `[::1]`), announced-port override, orphan reaping for dev servers and claude processes, stderr tail in exit notices, error boundaries per pane, setup card when Claude Code is missing.
+**Robustness.** Dual-stack readiness (Vite/Astro bind `[::1]`), announced-port override, orphan reaping for dev servers and claude processes, stderr tail in exit notices, error boundaries per pane, setup card when Claude Code is missing. A taken port (session 18): the free-port check also connects (a wildcard Node listener passes a loopback bind on macOS), readiness counts only a listener in our own process group, a conflict on the port we chose retries on another, and a conflict on a port the command insists on becomes a card naming the holder with "Stop it and try again".
 
 ## 7. Known gaps (honest)
 
@@ -103,7 +103,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 2. **First-run checks that name what's missing.** *Built (session 12):* `toolchain.rs` + the checklist (session pane, welcome, Settings); Claude sign-in via `claude auth status`. Acceptance still open: a fresh macOS user account reaches a working preview following only the app's own text.
 3. **npm fallback for New site.** *Built (session 12):* pnpm if present, else npm, starter rules rewritten; the starter stays lockfile-free. *Acceptance closed (session 17):* on a PATH without pnpm the ignored cargo test created the site with npm (package-lock.json, rules rewritten) and its `next dev` answered.
 4. **Distributable build.** *Decision (session 12): unsigned for now.* `pnpm release --install --zip` builds, installs and writes `release/Supasito-<version>-macos.zip`; recipients clear quarantine once (`xattr -dr com.apple.quarantine`). Signing/notarization is wired in the script for when a Developer ID Application certificate exists (the keychain has only an Apple Development one). Acceptance for now: a second Mac runs the zip after the one-line fix.
-5. **Failure-path pass.** *Done except rate limit (session 12):* not logged in and offline recorded from the real CLI (offline = 10 silent retries over ~3 min, now shown live in the Working row); rate limit covered by the CLI's own strings, not provoked; publish sign-in failure and dev server without Node have hints. A dev server crash mid-session is the existing "stopped" card.
+5. **Failure-path pass.** *Done except rate limit (session 12):* not logged in and offline recorded from the real CLI (offline = 10 silent retries over ~3 min, now shown live in the Working row); rate limit covered by the CLI's own strings, not provoked; publish sign-in failure and dev server without Node have hints. A dev server crash mid-session is the existing "stopped" card; a taken port is the "Port N is taken" card (session 18, verified by the `ports` smoke scenario).
 6. **Exercise the review fixes by hand.** *Session 12:* never-opens-a-port verified in the real app (error after 90 s, child killed); cancel during commit verified in the mock (deploy never ran); undo with untracked files is unit-tested in Rust. *Session 17:* undo verified against the real CLI by the `undo` smoke scenario (the command's own `undo_files`: tracked file restored, created file deleted, repo clean); fast site switching verified in the mock, which found a real race (the old server's `stopped` landing on the restart), fixed in the store. Remaining: `undoTurn`'s UI guards (isGit, committedAt, markUndone) and site switching in the Tauri window are mock-verified only.
 
 Then decide from use whether anything else deserves building. Default answer: no.

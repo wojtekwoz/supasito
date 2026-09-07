@@ -67,6 +67,8 @@ export type Store = {
   startDev: (siteId: string) => Promise<void>;
   stopDev: (siteId: string) => Promise<void>;
   restartDev: (siteId: string) => Promise<void>;
+  /** Stop whatever holds the port the site's dev command needs, then start the site again. */
+  freePortAndRestart: (siteId: string) => Promise<void>;
   toggleDevLog: () => void;
   refreshGit: (siteId: string) => Promise<void>;
   gitInit: (siteId: string) => Promise<void>;
@@ -522,6 +524,16 @@ export const useStore = create<Store>((set, get) => ({
   },
   async stopDev(siteId) { await stopDevServer(siteId); },
   async restartDev(siteId) { await stopDevServer(siteId); set({ devLogs: { ...get().devLogs, [siteId]: [] } }); await get().startDev(siteId); },
+  async freePortAndRestart(siteId) {
+    try {
+      const report = await api.devFreePort(siteId);
+      set({ devLogs: { ...get().devLogs, [siteId]: [...(get().devLogs[siteId] ?? []), report] } });
+    } catch (e) {
+      get().showToast(String(e));
+      return; // the status event carries the new holder when the port changed hands; the card updates itself
+    }
+    await get().restartDev(siteId);
+  },
   toggleDevLog() { set({ devLogOpen: !get().devLogOpen }); },
 
   async refreshGit(siteId) {

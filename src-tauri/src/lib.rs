@@ -308,6 +308,12 @@ async fn dev_stop(app: AppHandle, state: State<'_, AppState>, site_id: String) -
     state.dev.stop(&app, &site_id).await
 }
 
+/// Stop whatever holds the port the site's dev command needs (see `devserver::Registry::free_blocked_port`).
+#[tauri::command]
+async fn dev_free_port(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<String, String> {
+    state.dev.free_blocked_port(&app, &site_id).await
+}
+
 #[tauri::command]
 async fn dev_status(state: State<'_, AppState>, site_id: String) -> Result<Option<devserver::DevInfo>, String> {
     Ok(state.dev.status(&site_id).await)
@@ -483,7 +489,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             settings_get, settings_set, toolchain_check,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
-            dev_start, dev_stop, dev_status, dev_log,
+            dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,
             sessions_list, session_transcript

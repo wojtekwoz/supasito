@@ -23,7 +23,11 @@ export type SessionInfo = {
 };
 
 export type DevStatus = "starting" | "ready" | "error" | "stopped";
-export type DevInfo = { siteId: string; port: number; url: string; status: DevStatus; command: string };
+/** The process listening on a port, as `lsof`/`ps` see it; `siteId` when it is another site's dev server. */
+export type PortHolder = { pid: number; pgid: number; name: string; command: string; cwd?: string | null; siteId?: string | null };
+/** Why a dev server is in `error`, when the backend knows more than the log tail shows. */
+export type DevProblem = { kind: "port"; port: number; holder?: PortHolder | null };
+export type DevInfo = { siteId: string; port: number; url: string; status: DevStatus; command: string; problem?: DevProblem | null };
 
 export type Selection = {
   page: string;

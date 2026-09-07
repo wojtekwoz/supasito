@@ -11,6 +11,10 @@ export type Site = {
   framework?: string | null;
   isGit: boolean;
   needsInstall: boolean;
+  /** Starred in the rail (app state, not supasito.json). */
+  favorite?: boolean;
+  /** Last selected, ms since the epoch; 0 or missing for sites from before the switcher. */
+  lastOpened?: number;
 };
 
 export type SessionInfo = {

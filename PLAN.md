@@ -81,7 +81,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 **Publish.** Preview vs production targets, confirmation with changed-file count, optional commit (prefilled message) and push to origin, cancel that really stops, log and URL. Publish commands editable with presets.
 
-**Sites.** Open a folder, New site from the starter, rename, site rules (`CLAUDE.md`) editor, reveal in Finder, open in editor, dev-server status and log, install when `node_modules` is missing, git init offer, one dev server at a time. Sessions listed from Claude's store, resumable, capped list with "Show older".
+**Sites.** Open a folder, New site from the starter, rename, remove from the sidebar (a dialog that says the folder stays on disk, session 21), star favourites and the "All sites…" dropdown with a filter (⌘⇧O, §8b), site rules (`CLAUDE.md`) editor, reveal in Finder, open in editor, dev-server status and log, install when `node_modules` is missing, git init offer, one dev server at a time. Sessions listed from Claude's store, resumable, capped list with "Show older".
 
 **Robustness.** Dual-stack readiness (Vite/Astro bind `[::1]`), announced-port override, orphan reaping for dev servers and claude processes, stderr tail in exit notices, error boundaries per pane, setup card when Claude Code is missing. A taken port (session 18): the free-port check also connects (a wildcard Node listener passes a loopback bind on macOS), readiness counts only a listener in our own process group, a conflict on the port we chose retries on another, and a conflict on a port the command insists on becomes a card naming the holder with "Stop it and try again".
 
@@ -121,6 +121,23 @@ Three knobs on the same loop: which model makes the change, how hard it thinks, 
 - `--settings` merges over the user's settings. Mid-session: `set_model {model}` and `apply_flag_settings {settings}` control requests exist in the binary; Supasito sends them for an idle session and falls back to stop + `--resume` with new flags when the CLI rejects one.
 
 **Verified live (smoke `model`, `fast`):** `set_model` and `apply_flag_settings{fastMode}` take effect on the next turn, and that turn's `system/init` reports the new model / `fast_mode_state`. Not yet seen: a real turn with `usage.speed: "fast"` (both one-word probes stayed "standard" even with fast mode on), so the `fast` mark on the turn line is tested only from a synthetic result.
+
+## 8b. Site switcher with favourites (built 2026-09-07, session 21; see CHANGELOG)
+
+**Why it passes the one rule.** The rail lists every site ever opened, newest first. Past a dozen the list pushes Sessions below the fold and the site you use daily sits wherever it last landed, so "say" starts with a scroll. The fix is to show the few sites that matter and put the rest one click away; nothing new to learn, no new pane.
+
+**Shape.**
+- The Sites section of the rail shows **favourites** (starred) plus the current site if it is not starred, in list order (newest opened first). A site with no favourites shows what it shows today: every site, newest first, and "All sites…" appears only past six sites.
+- Below them one row, **"All sites…"** with a count, opens a **dropdown** anchored to the rail: a filter field (auto-focused; typing narrows by name and folder), then Favourites, then the rest by last opened, each row with the folder path in small type, a star toggle on hover, and the trash (which opens the same Remove dialog). The two existing actions, Open a folder and New site, sit at the bottom of the menu so a first-time user finds them in the same place as today.
+- **Star** = a hollow star on hover at the row's right, filled when set; also in the dropdown. No drag-to-reorder: starring appends, unstarring removes, that is the whole ordering model.
+- **Keyboard.** ⌘⇧O opens the dropdown (Escape closes it, ↑↓ and Enter pick). Nothing else; ⌘1…9 for favourites is tempting and cut, it collides with the preview's device widths if those ever get shortcuts.
+- The dropdown replaces nothing: the rail rows still select on click, rename on double-click, and carry the rules/editor/Finder/trash buttons.
+
+**Data.** Two fields on the persisted `Site` (src-tauri/src/sites.rs, saved in the app-state JSON, *not* in `supasito.json`: a favourite is the user's preference, the site file is committed and shared): `favorite: bool` (serde default false) and `last_opened: u64` (ms; set by `site_select`; default 0 so old state files sort by their existing order). Two commands: `site_favorite(site_id, on)` and `site_opened(site_id)` stamps the timestamp when a site is selected. The mock gets `?sites=many` (fourteen sites, three starred) for the browser check.
+
+**Acceptance (all met in the mock, session 21).** With `?sites=many` the rail shows three starred rows plus "All sites… (14)" and Sessions stays visible without scrolling; starring from the dropdown moves the site into the rail immediately; unstarring the current site keeps it in the rail until another site is selected; typing "cl" in the filter leaves only ClarityOps; ⌘⇧O opens, Escape closes; a state file without the two fields loads unchanged (`cargo test`); with two sites and nothing starred the rail is identical to today's.
+
+**Cut.** Folders/groups, tags, drag-to-reorder, recents as a separate section in the rail, an "all sites" grid page, per-site icons or favicons. Each is a surface, none shortens the loop.
 
 ## 9. Backlog (deferred on purpose)
 

@@ -33,6 +33,32 @@ export function NewSiteDialog() {
   );
 }
 
+/** The trash button in the rail asks first, and says what "remove" means here: the site leaves the list, nothing on disk
+ *  changes. A running session or dev server for that site is stopped, so the dialog says so when either is the case. */
+export function RemoveSiteDialog() {
+  const site = useStore((s) => (s.removing ? s.sites.find((x) => x.id === s.removing) ?? null : null));
+  const askRemoveSite = useStore((s) => s.askRemoveSite);
+  const removeSite = useStore((s) => s.removeSite);
+  const sessionRunning = useStore((s) => !!site && (s.sessions[site.id] ?? []).some((x) => s.running[x.id]));
+  const devUp = useStore((s) => !!site && (s.dev[site.id]?.status === "ready" || s.dev[site.id]?.status === "starting"));
+  if (!site) return null;
+  const stops = [sessionRunning && "its running session", devUp && "its dev server"].filter(Boolean) as string[];
+  return (
+    <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) askRemoveSite(null); }}>
+      <div className="modal">
+        <h2>Remove {site.name} from the sidebar?</h2>
+        <p style={{ margin: 0, color: "var(--ink-2)" }}>This only takes the site off the list. Nothing is deleted: the folder stays where it is, with your code, its git history and your Claude Code sessions. Open it again any time with the folder button.</p>
+        <div className="url" title={site.path}>{site.path}</div>
+        {stops.length > 0 && <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito will stop {stops.join(" and ")} first.</p>}
+        <div className="foot">
+          <button className="btn ghost" onClick={() => askRemoveSite(null)}>Cancel</button>
+          <button className="btn primary" autoFocus onClick={() => void removeSite(site.id)}>Remove from the sidebar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const PRESETS: { label: string; production: string; preview: string }[] = [
   { label: "Vercel", production: "vercel deploy --prod --yes", preview: "vercel deploy --yes" },
   { label: "Cloudflare", production: "wrangler deploy", preview: "wrangler versions upload" },
@@ -252,7 +278,7 @@ export function SettingsDialog() {
               </div>
             ))}
             <div className="foot">
-              {hidden.length > 0 && <button className="btn ghost" style={{ marginRight: "auto" }} onClick={() => void setHidden([])}>Show everything</button>}
+              {hidden.length > 0 && <button className="btn ghost" style={{ marginRight: "auto" }} onClick={() => { if (confirm(`Tick all ${hidden.length === 1 ? "one box" : hidden.length + " boxes"} you have unticked and show everything?`)) void setHidden([]); }}>Show everything</button>}
               <button className="btn primary" onClick={() => setOpen(false)}>Done</button>
             </div>
           </>

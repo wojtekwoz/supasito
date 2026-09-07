@@ -22,11 +22,16 @@ pub struct Site {
     pub framework: Option<String>,
     pub is_git: bool,
     pub needs_install: bool,
+    /// Starred in the rail. The user's preference, so it lives in the app state, not in `supasito.json`.
+    pub favorite: bool,
+    /// When the site was last selected (ms since the epoch); 0 for sites from before this field, which then keep
+    /// their list order.
+    pub last_opened: u64,
 }
 
 impl Default for Site {
     fn default() -> Self {
-        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false }
+        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0 }
     }
 }
 

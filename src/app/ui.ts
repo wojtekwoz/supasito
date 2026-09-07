@@ -40,6 +40,11 @@ export const UI_GROUPS: { label: string; items: { key: UiKey; label: string }[] 
   },
 ];
 
+/** What a fresh install hides: the chips, the composer's picker button, the keyboard hint, the dev log button and the status
+ *  chip. The same list lives in `Persisted::default_hidden` (src-tauri/src/state.rs), which is what the app actually reads;
+ *  this copy is for the mock backend. Ticking a box or "Show everything" writes the list explicitly, so a saved `[]` stays `[]`. */
+export const DEFAULT_HIDDEN: UiKey[] = ["knobs", "composerPick", "hint", "devLog", "devStatus"];
+
 /** True unless the user hid this element in Settings → Interface. */
 export function useShown(key: UiKey): boolean {
   return useStore((s) => !(s.settings.hidden ?? []).includes(key));

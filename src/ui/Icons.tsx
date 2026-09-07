@@ -2,6 +2,7 @@ import type { SVGProps } from "react";
 
 const base = (props: SVGProps<SVGSVGElement>) => ({ viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, ...props });
 
+export const Star = (p: SVGProps<SVGSVGElement> & { filled?: boolean }) => { const { filled, ...rest } = p; return <svg {...base(rest)} fill={filled ? "currentColor" : "none"}><path d="m8 2 1.85 3.9 4.15.55-3.05 2.95.75 4.2L8 11.55 4.3 13.6l.75-4.2L2 6.45l4.15-.55z" /></svg>; };
 export const Plus = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M8 3v10M3 8h10" /></svg>;
 export const Folder = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /></svg>;
 export const Crosshair = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><circle cx="8" cy="8" r="4.5" /><path d="M8 1v3M8 12v3M1 8h3M12 8h3" /></svg>;

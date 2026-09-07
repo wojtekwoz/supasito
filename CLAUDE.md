@@ -13,7 +13,7 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   kills running agents and dev servers (they are reaped on the next launch).
 - `pnpm dev` alone serves the UI at http://localhost:1420 against a **mock backend** (src/mock.ts) —
   use this for UI work and browser-driven checks; `window.__store` exposes the zustand store in dev.
-  Mock switches: `?tools=missing|nologin|nonode|nogit|nopnpm`, `?sites=none|two`, `?dev=taken[:unknown|:site]` (port held by
+  Mock switches: `?tools=missing|nologin|nonode|nogit|nopnpm`, `?sites=none|two|many`, `?dev=taken[:unknown|:site]` (port held by
   another program / something unnamed / the second site), `?devDelay=<ms>` and
   `?stopDelay=<ms>` (dev-server start/kill timing; `window.__mock.devs` is the registry), `?context=full`, `?fast=on`.
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.

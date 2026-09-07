@@ -104,7 +104,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 - **Mode**, in the bar under the composer: "Ask before commands" (the default: edits files freely, asks before running commands), "Don't ask this session", "Plan first" and "Ask about everything".
 - **Model, effort and fast mode** sit in the same bar and change the current session. Defaults for new sessions live in Settings (**⌘,**). Fast mode is Opus only and costs about twice as much.
 - **Thinking** streams while Claude reasons and folds into a collapsed row once the answer starts.
-- **Hide what you don't use**: Settings (**⌘,**) → Interface lists the optional parts of the window: the chips under the composer, the usage ring, the picker buttons, the keyboard hint, the tool-step rows and the Thinking row in the conversation; full width, device widths, pick, reload, open in browser, screenshot, dev log and the status chip on the preview toolbar; the editor and Finder buttons on sites. Untick to hide, at once; the shortcuts keep working; "Show everything" puts it all back.
+- **Hide what you don't use**: Settings (**⌘,**) → Interface lists the optional parts of the window: the chips under the composer, the usage ring, the picker buttons, the keyboard hint, the tool-step rows and the Thinking row in the conversation; full width, device widths, pick, reload, open in browser, screenshot, dev log and the status chip on the preview toolbar; the editor and Finder buttons on sites. Untick to hide, at once; the shortcuts keep working; "Show everything" puts it all back after a confirm. A fresh install starts with the chips, the composer's picker button, the keyboard hint, the dev log button and the status chip hidden.
 - **Usage ring** at the bottom of the composer fills as the conversation grows. Click it for the numbers, your plan's 5-hour and weekly limits, and the cost so far. When the conversation is full, Claude Code summarises older messages by itself; **⌘N** starts a clean session.
 
 **Publishing**
@@ -116,7 +116,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 
 **Managing sites**
 
-- Icons on a site row: **book** (site rules: the `CLAUDE.md` Claude reads, for voice, brand and what not to touch), **code** (open in your editor), **folder** (reveal in Finder) and **trash** (remove from the list; the folder stays). **Double-click** a site to rename it.
+- Icons on a site row: **book** (site rules: the `CLAUDE.md` Claude reads, for voice, brand and what not to touch), **code** (open in your editor), **folder** (reveal in Finder) and **star** (keep it at the top of the list) and **trash** (remove from the list, after a dialog that says so: nothing is deleted, the folder stays on disk with its code, git history and sessions). **Double-click** a site to rename it. With favourites set, or past six sites, the list shows the starred ones plus the current site and an **All sites…** row (⌘⇧O) opens a dropdown with a filter, favourites first, then the rest by last opened.
 - **One dev server runs at a time.** Switching sites stops the previous one unless a session there is still working.
 
 **Getting called back**

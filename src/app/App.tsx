@@ -3,7 +3,7 @@ import { useStore } from "./store";
 import { Rail } from "./Rail";
 import { SessionPane } from "./Session";
 import { Preview } from "./Preview";
-import { DiffDialog, NewSiteDialog, PublishDialog, RulesDialog, SettingsDialog } from "./Dialogs";
+import { DiffDialog, NewSiteDialog, PublishDialog, RemoveSiteDialog, RulesDialog, SettingsDialog } from "./Dialogs";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { cx } from "../util";
 
@@ -26,6 +26,11 @@ export default function App() {
         const st = useStore.getState();
         const dev = st.currentSiteId ? st.dev[st.currentSiteId] : null;
         if (dev?.status === "ready") { e.preventDefault(); st.setPicking(!st.picking); }
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "o") {
+        const st = useStore.getState();
+        e.preventDefault(); st.setSiteMenuOpen(!st.siteMenuOpen);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
@@ -51,6 +56,8 @@ export default function App() {
         if (st.picking) { st.setPicking(false); return; }
         if (st.publish.open && !st.publish.running) { st.setPublishOpen(false); return; }
         if (st.newSite.open && !st.newSite.running) { st.openNewSite(false); return; }
+        if (st.removing) { st.askRemoveSite(null); return; }
+        if (st.siteMenuOpen) { st.setSiteMenuOpen(false); return; }
         if (st.settingsOpen) { st.setSettingsOpen(false); return; }
         const cur = st.currentSessionId ? st.transcripts[st.currentSessionId] : null;
         if (cur?.busy && !(e.target instanceof HTMLInputElement)) void st.interrupt();
@@ -76,6 +83,7 @@ export default function App() {
       <ErrorBoundary label="session"><SessionPane /></ErrorBoundary>
       <ErrorBoundary label="preview"><Preview /></ErrorBoundary>
       <NewSiteDialog />
+      <RemoveSiteDialog />
       <PublishDialog />
       <DiffDialog />
       <RulesDialog />

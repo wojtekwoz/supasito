@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{agent, devserver, sites::Site};
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Persisted {
     pub sites: Vec<Site>,
@@ -17,7 +17,30 @@ pub struct Persisted {
     /// Fast mode for new sessions (Opus only; the CLI ignores it elsewhere).
     pub fast_mode: bool,
     /// Parts of the interface the user hid in Settings → Interface (keys from src/app/ui.ts); the UI owns the meaning.
+    /// Absent from the file (a fresh install, or a state file from before the setting) means the default set below;
+    /// an explicit `[]` is the user's "Show everything" and stays empty.
+    #[serde(default = "default_hidden")]
     pub hidden: Vec<String>,
+}
+
+/// What a fresh install hides: the chips under the composer, the picker button in the composer, the keyboard hint,
+/// the dev log button and the dev server status chip. Keep in step with `DEFAULT_HIDDEN` in src/app/ui.ts (the mock).
+pub fn default_hidden() -> Vec<String> {
+    ["knobs", "composerPick", "hint", "devLog", "devStatus"].map(String::from).to_vec()
+}
+
+impl Default for Persisted {
+    fn default() -> Self {
+        Self {
+            sites: Vec::new(),
+            claude_path: None,
+            model: None,
+            permission_mode: None,
+            effort: None,
+            fast_mode: false,
+            hidden: default_hidden(),
+        }
+    }
 }
 
 pub struct AppState {
@@ -116,13 +139,18 @@ pub fn login_shell_path() -> String {
 mod tests {
     use super::Persisted;
 
-    /// A state file from before Settings → Interface has no `hidden`; it must load with nothing hidden, and the list must
-    /// survive a save/load round trip as the UI wrote it.
+    /// A state file without `hidden` (a fresh install, or one from before Settings → Interface) loads with the default
+    /// set hidden; an explicit `[]` ("Show everything") loads empty; and the list must survive a save/load round trip as
+    /// the UI wrote it.
     #[test]
     fn hidden_defaults_and_round_trips() {
         let old: Persisted = serde_json::from_str(r#"{"sites":[],"model":"opus","fastMode":true}"#).unwrap();
-        assert!(old.hidden.is_empty());
+        assert_eq!(old.hidden, super::default_hidden());
+        assert_eq!(old.hidden, ["knobs", "composerPick", "hint", "devLog", "devStatus"].map(String::from).to_vec());
         assert_eq!(old.model.as_deref(), Some("opus"));
+        assert_eq!(Persisted::default().hidden, super::default_hidden());
+        let shown: Persisted = serde_json::from_str(r#"{"sites":[],"hidden":[]}"#).unwrap();
+        assert!(shown.hidden.is_empty());
         let mut p = old.clone();
         p.hidden = vec!["knobs".into(), "devLog".into()];
         let s = serde_json::to_string(&p).unwrap();
@@ -130,5 +158,19 @@ mod tests {
         let back: Persisted = serde_json::from_str(&s).unwrap();
         assert_eq!(back.hidden, p.hidden);
         assert!(back.fast_mode);
+    }
+
+    /// A site saved before favourites loads unstarred with `last_opened` 0; a starred one survives the round trip.
+    #[test]
+    fn site_favorite_defaults_and_round_trips() {
+        let old: Persisted = serde_json::from_str(r#"{"sites":[{"id":"a","path":"/tmp/a","name":"A"}]}"#).unwrap();
+        assert!(!old.sites[0].favorite);
+        assert_eq!(old.sites[0].last_opened, 0);
+        let mut p = old.clone();
+        p.sites[0].favorite = true;
+        p.sites[0].last_opened = 1_700_000_000_000;
+        let back: Persisted = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert!(back.sites[0].favorite);
+        assert_eq!(back.sites[0].last_opened, 1_700_000_000_000);
     }
 }

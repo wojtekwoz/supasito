@@ -60,6 +60,10 @@ export type Store = {
   /** Time of the last commit made from Supasito; turns before it can no longer be undone. */
   committedAt: number;
   newSite: NewSiteState;
+  /** Site id the "Remove from the sidebar?" dialog is asking about; null when closed. */
+  removing: string | null;
+  /** The "All sites" dropdown in the rail (⌘⇧O). */
+  siteMenuOpen: boolean;
   toast: string | null;
   /** Plan usage is per account, not per session: the last rate_limit_event any session received, for Settings and new sessions. */
   planUsage: { windows: PlanWindow[]; at: number } | null;
@@ -67,6 +71,10 @@ export type Store = {
   init: () => Promise<void>;
   selectSite: (id: string) => Promise<void>;
   addSiteFromFolder: () => Promise<void>;
+  /** Opens (id) or closes (null) the confirmation before `removeSite`. */
+  askRemoveSite: (id: string | null) => void;
+  setSiteMenuOpen: (open: boolean) => void;
+  favoriteSite: (id: string, on: boolean) => Promise<void>;
   removeSite: (id: string) => Promise<void>;
   installDeps: (id: string) => Promise<void>;
   createSite: (name: string) => Promise<void>;
@@ -244,6 +252,8 @@ export const useStore = create<Store>((set, get) => ({
   rules: { open: false, loading: false, saving: false, text: "", error: null },
   committedAt: 0,
   newSite: { open: false, running: false, log: [], error: null },
+  removing: null,
+  siteMenuOpen: false,
   toast: null,
   planUsage: null,
 
@@ -364,7 +374,8 @@ export const useStore = create<Store>((set, get) => ({
     if (!site) return;
     const previous = get().currentSiteId;
     const gen = ++selectGen;
-    set({ currentSiteId: id, selection: null, picking: false, previewPath: "/", previewTitle: "", devLogOpen: false });
+    set({ currentSiteId: id, selection: null, picking: false, previewPath: "/", previewTitle: "", devLogOpen: false, siteMenuOpen: false, sites: get().sites.map((s) => (s.id === id ? { ...s, lastOpened: Date.now() } : s)) });
+    void api.siteOpened(id).catch(() => {});
     // Stop the dev server of the site we are leaving unless one of its sessions is still working.
     if (previous && previous !== id) {
       const st = get();
@@ -396,7 +407,19 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) { get().showToast(String(e)); }
   },
 
+  askRemoveSite(id) { set({ removing: id }); },
+  setSiteMenuOpen(open) { set({ siteMenuOpen: open }); },
+
+  async favoriteSite(id, on) {
+    set({ sites: get().sites.map((s) => (s.id === id ? { ...s, favorite: on } : s)) });
+    try {
+      const site = await api.siteFavorite(id, on);
+      set({ sites: get().sites.map((s) => (s.id === id ? site : s)) });
+    } catch (e) { get().showToast(String(e)); }
+  },
+
   async removeSite(id) {
+    set({ removing: null });
     const st = get();
     const ids = new Set((st.sessions[id] ?? []).map((x) => x.id));
     for (const sid of Object.keys(st.running)) if (ids.has(sid)) await api.agentStop(sid).catch(() => {});

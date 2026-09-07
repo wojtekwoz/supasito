@@ -2,6 +2,7 @@
 import type { Backend } from "./backend";
 import type { DevInfo, DevProblem, EventName, SessionInfo, Settings, Site } from "./types";
 import pickerSource from "../src-tauri/src/picker.js?raw";
+import { DEFAULT_HIDDEN } from "./app/ui";
 
 type Handler = (payload: any) => void;
 const handlers = new Map<EventName, Set<Handler>>();
@@ -13,10 +14,14 @@ const site: Site = {
   publish: "vercel deploy --prod --yes", preview: "vercel deploy --yes", lastSessionId: "sess-1", isGit: true, needsInstall: false, framework: "next", packageManager: "pnpm",
 };
 const query = new URLSearchParams(location.search);
-// `?sites=none` starts with no site, `?sites=two` with a second one, for checking site switching.
+// `?sites=none` starts with no site, `?sites=two` with a second one, for checking site switching; `?sites=many` with
+// fourteen (three starred) for the switcher.
+const MANY = ["Northwind", "Acme Docs", "Blue Harbor", "Juniper", "Kestrel", "Lumen", "Marrow", "Oakline", "Pebble", "Quill", "Rivet", "Sable", "Tundra"];
 const mockSites: Site[] = query.get("sites") === "none" ? [] : query.get("sites") === "two"
   ? [site, { ...site, id: "site-2", path: "/Users/you/Sites/second", name: "Second", lastSessionId: null }]
-  : [site];
+  : query.get("sites") === "many"
+    ? [site, ...MANY.map((name, i) => ({ ...site, id: `site-${i + 2}`, path: `/Users/you/Sites/${name.toLowerCase().replace(/\s+/g, "-")}`, name, lastSessionId: null, favorite: i === 1 || i === 6 || i === 10, lastOpened: Date.now() - (i + 1) * 86400e3 }))]
+    : [site];
 const siteOf = (id: string) => mockSites.find((s) => s.id === id) ?? site;
 const sessions: Record<string, SessionInfo[]> = {
   [site.id]: [
@@ -65,7 +70,7 @@ let mockRules = "# This site\n\n## Brand\n- Voice: plain, confident, short sente
 // `?fast=on` starts on Opus with fast mode on; the session-header knobs and Settings change these like the real backend would.
 let mockFast = new URLSearchParams(location.search).get("fast") === "on";
 let mockModel = mockFast ? "claude-opus-5" : "claude-sonnet-5";
-const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast, hidden: [] };
+const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast, hidden: [...DEFAULT_HIDDEN] };
 const THINKING = "The user wants a different headline. The hero lives in components/hero.tsx; I'll read it, replace the h1 text and keep the classes as they are.";
 (window as any).__openMockDoc = demoHtml;
 
@@ -162,6 +167,8 @@ export function mockBackend(): Backend {
     siteUndoFiles: async (_siteId, files, created) => ({ restored: files.filter((f) => !created.includes(f)).map((f) => f.replace(site.path + "/", "")), deleted: created.map((f) => f.replace(site.path + "/", "")), skipped: [] }),
     previewEvent: async (kind, detail) => { console.debug("[preview]", kind, detail); },
     siteSetLastSession: async () => {},
+    siteFavorite: async (siteId, on) => { const s = siteOf(siteId); s.favorite = on; return { ...s }; },
+    siteOpened: async () => {},
     siteNew: async (parent, name) => { const s = { ...site, id: "site-new", path: parent + "/" + name, name, lastSessionId: null }; mockSites.push(s); return s; },
     devStart: async (siteId) => {
       devStartCalls.set(siteId, (devStartCalls.get(siteId) ?? 0) + 1);

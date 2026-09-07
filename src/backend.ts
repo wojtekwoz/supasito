@@ -19,6 +19,8 @@ export interface Backend {
   siteUndoFiles(siteId: string, files: string[], created: string[]): Promise<RestoreReport>;
   previewEvent(kind: string, detail: string): Promise<void>;
   siteSetLastSession(siteId: string, sessionId: string | null): Promise<void>;
+  siteFavorite(siteId: string, on: boolean): Promise<Site>;
+  siteOpened(siteId: string): Promise<void>;
   siteNew(parent: string, name: string): Promise<Site>;
   devStart(siteId: string): Promise<DevInfo>;
   devStop(siteId: string): Promise<void>;
@@ -77,6 +79,8 @@ async function tauriBackend(): Promise<Backend> {
     siteUndoFiles: (siteId, files, created) => invoke("site_undo_files", { siteId, files, created }),
     previewEvent: (kind, detail) => invoke("preview_event", { kind, detail }),
     siteSetLastSession: (siteId, sessionId) => invoke("site_set_last_session", { siteId, sessionId }),
+    siteFavorite: (siteId, on) => invoke("site_favorite", { siteId, on }),
+    siteOpened: (siteId) => invoke("site_opened", { siteId }),
     siteNew: (parent, name) => invoke("site_new", { parent, name }),
     devStart: (siteId) => invoke("dev_start", { siteId }),
     devStop: (siteId) => invoke("dev_stop", { siteId }),

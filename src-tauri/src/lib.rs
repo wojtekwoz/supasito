@@ -260,6 +260,29 @@ async fn site_git_init(state: State<'_, AppState>, site_id: String) -> Result<()
 }
 
 #[tauri::command]
+fn site_favorite(state: State<'_, AppState>, site_id: String, on: bool) -> Result<sites::Site, String> {
+    let out = {
+        let mut p = state.persisted.lock().unwrap();
+        let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+        s.favorite = on;
+        s.clone()
+    };
+    state.save()?;
+    Ok(out)
+}
+
+/// The site was selected: stamp `last_opened` so the switcher can order by recency.
+#[tauri::command]
+fn site_opened(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    {
+        let mut p = state.persisted.lock().unwrap();
+        if let Some(s) = p.sites.iter_mut().find(|s| s.id == site_id) { s.last_opened = now; }
+    }
+    state.save()
+}
+
+#[tauri::command]
 fn site_set_last_session(state: State<'_, AppState>, site_id: String, session_id: Option<String>) -> Result<(), String> {
     {
         let mut p = state.persisted.lock().unwrap();
@@ -490,7 +513,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings_get, settings_set, toolchain_check,
-            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_new,
+            sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,

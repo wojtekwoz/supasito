@@ -70,7 +70,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 1. **Open Supasito.** If a tool is missing you see a "Before you start" checklist. Fix what it names and click **Check again**. Otherwise you see "Open a site to begin".
 2. **Pick a site.**
    - **New site** copies the bundled Next.js starter into a folder you choose, installs packages and opens a session. Describe the site in your first message.
-   - **Open a folder…** points Supasito at a project you already have. It detects the framework, offers to install packages when `node_modules` is missing, and offers to set up git when the folder has none.
+   - **Open a folder…** points Supasito at a project you already have. It detects the framework, offers to install packages when `node_modules` is missing, and offers to set up git when the folder has none. In a monorepo, open the app's own folder (for example `apps/web`), not the workspace root.
 3. **Wait for the preview.** The right pane shows the site as soon as its dev server is ready. The terminal icon in the preview toolbar shows the server's log.
 4. **Ask for a change.** Type it and press Enter. Claude's steps stream in the middle pane ("Editing components/hero.tsx") and the preview reloads by itself.
 5. **Approve when asked.** When Claude wants to run a command, a card appears with **Allow**, **Deny** and, when offered, **Always allow**. The turn waits for you.
@@ -148,11 +148,11 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
   ```
 
   Supasito fills in `dev` for Next.js, Astro, Vite, SvelteKit and Nuxt, and infers `publish` from a `vercel.json`, `wrangler.toml` or `netlify.toml`. Any other project works if you write the `dev` command yourself; `{port}` is replaced at start.
-- **Git is the history.** The pending-change count is `git status`, Undo is `git checkout`, and publish commits and pushes only when you tick the boxes.
+- **Git is the history.** The pending-change count is `git status`, Undo is `git checkout`, and publish commits and pushes only when you tick the boxes. The site may be one folder inside a larger repository; the count, Undo and commits then cover that folder only.
 
 ## What to expect
 
-- Used seriously on one Mac with Next.js and Astro sites. SvelteKit, Nuxt and plain Vite are detected but have not been used for real.
+- Used seriously on one Mac with Next.js and Astro sites. Plain Vite, SvelteKit and Nuxt 4 were each tried once from a fresh scaffold, and so was a pnpm-workspace monorepo with the site in `apps/web`.
 - Most of that use was in development mode. The packaged app you install here has had less.
 - Not signed or notarized, hence the one-time quarantine step.
 - No auto-update. Replace the app to update it.
@@ -164,6 +164,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 - **The checklist says Claude Code is not found** but it is installed: open Settings (⌘,) and set **Claude path** to what `which claude` prints in Terminal.
 - **"Not signed in"**: run `claude auth login` in Terminal, finish in the browser, then click **Check again**.
 - **The preview says the dev server didn't start**: open the log (terminal icon). Missing Node.js or uninstalled packages are the usual causes, and the card offers to install. A server that never opens a port turns into an error after 90 seconds.
+- **"Port N is taken"**: another program, or another of your sites, is listening on the port your dev command asks for. The card names it; click **Stop it and try again**, or change the port in the command. When Supasito chose the port itself, it retries on another one without asking, and when the server picks a different port on its own, the preview follows it.
 - **"Can't reach Claude's API; retrying"**: you are offline or blocked. Claude Code retries ten times over about three minutes. Esc stops the turn.
 - **Publish fails mentioning login or 401**: run your host's login command in the site folder (`vercel login`, `netlify login` or `wrangler login`), then publish again.
 - **The preview is blank after switching sites**: click Reload in the preview toolbar.

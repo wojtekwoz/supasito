@@ -5,6 +5,13 @@ import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession,
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
+/** Resolves after `n` animation frames, i.e. once the DOM changes made so far have been painted; after 250 ms regardless, since
+ *  frames stop while the window is occluded and waiting longer would not help the capture. */
+const paints = (n: number) => new Promise<void>((resolve) => {
+  const step = (k: number) => (k <= 0 ? resolve() : requestAnimationFrame(() => step(k - 1)));
+  step(n);
+  setTimeout(resolve, 250);
+});
 export type Device = "desktop" | "tablet" | "phone";
 
 type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy" };
@@ -36,8 +43,14 @@ export type Store = {
   previewPath: string;
   previewTitle: string;
   device: Device;
-  /** The preview covers the window and the rail and conversation are hidden (⌘\). */
+  /** The preview covers the window, the rail is hidden and the conversation floats over the bottom-left corner (⌘\). */
   previewFull: boolean;
+  /** A capture is about to be taken: the floating conversation hides so it stays out of the picture. */
+  capturing: boolean;
+  /** Where the floating conversation was dragged to (from the window's left and bottom edges); null = the bottom-left corner. */
+  panelPos: { left: number; bottom: number } | null;
+  /** The floating conversation is minimised to a small pill; an approval request, a picked element or ⌘N restore it. */
+  panelMin: boolean;
   previewNonce: number;
   /** Set to make the preview navigate; the Preview pane consumes it. */
   navigateRequest: { path: string; seq: number } | null;
@@ -83,6 +96,8 @@ export type Store = {
   setPreviewInfo: (path: string, title: string) => void;
   setDevice: (d: Device) => void;
   setPreviewFull: (on: boolean) => void;
+  setPanelPos: (pos: { left: number; bottom: number } | null) => void;
+  setPanelMin: (on: boolean) => void;
   reloadPreview: () => void;
   revealSite: (siteId: string) => Promise<void>;
   openSiteInEditor: (siteId: string) => Promise<void>;
@@ -110,6 +125,8 @@ export type Store = {
   setPublishOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   saveSettings: (patch: Settings) => Promise<void>;
+  /** Settings → Interface: the elements to hide (keys from ui.ts). Applies at once and is saved with the other settings. */
+  setHidden: (keys: string[]) => Promise<void>;
   showToast: (t: string | null) => void;
 };
 
@@ -216,6 +233,9 @@ export const useStore = create<Store>((set, get) => ({
   previewTitle: "",
   device: "desktop",
   previewFull: false,
+  capturing: false,
+  panelPos: null,
+  panelMin: false,
   previewNonce: 0,
   navigateRequest: null,
   previewRect: null,
@@ -276,8 +296,8 @@ export const useStore = create<Store>((set, get) => ({
         addPermission(cur, req);
         st.transcripts[req.sessionId] = cur;
         set({ transcripts: bump(st.transcripts, req.sessionId) });
-        // An approval card behind a full-width preview would stall the turn unseen.
-        if (st.previewFull && req.sessionId === st.currentSessionId) set({ previewFull: false });
+        // An approval card in a minimised panel would stall the turn unseen.
+        if (st.previewFull && st.panelMin && req.sessionId === st.currentSessionId) set({ panelMin: false });
         get().syncBadge();
         if (!document.hasFocus()) void api.requestAttention().catch(() => {});
       });
@@ -588,16 +608,15 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) { get().showToast(String(e)); }
   },
   setPicking(on) { set({ picking: on }); },
-  // A picked element lands in the composer, so a full-width preview gives way to the conversation.
-  setSelection(sel) { set({ selection: sel, picking: false, ...(sel ? { previewFull: false } : {}) }); },
+  // A picked element lands in the composer, so a minimised panel comes back for it.
+  setSelection(sel) { set({ selection: sel, picking: false, ...(sel ? { panelMin: false } : {}) }); },
   setPreviewPath(path) { set({ previewPath: path.startsWith("/") ? path : "/" + path }); },
   setPreviewInfo(path, title) { set({ previewPath: path || "/", previewTitle: title }); },
   setDevice(d) { set({ device: d }); },
-  setPreviewFull(on) {
-    // The conversation is about to be covered, so nothing in it should keep the keyboard.
-    if (on) (document.activeElement as HTMLElement | null)?.blur?.();
-    set({ previewFull: on });
-  },
+  // Entering full-width mode always shows the panel: a minimised one is easy to miss.
+  setPreviewFull(on) { set({ previewFull: on, ...(on ? { panelMin: false } : {}) }); },
+  setPanelMin(on) { set({ panelMin: on }); },
+  setPanelPos(pos) { if (pos !== get().panelPos) set({ panelPos: pos }); },
   reloadPreview() { set({ previewNonce: get().previewNonce + 1 }); },
   async revealSite(siteId) {
     const site = get().sites.find((s) => s.id === siteId);
@@ -661,11 +680,15 @@ export const useStore = create<Store>((set, get) => ({
     const rect = st.previewRect;
     const dev = st.currentSiteId ? st.dev[st.currentSiteId] : null;
     if (!rect || dev?.status !== "ready") { get().showToast("The preview must be showing before it can be captured."); return; }
+    // The floating conversation would be in the picture: hide it and let two frames paint before the shot.
+    const floating = st.previewFull;
+    if (floating) { set({ capturing: true }); await paints(2); }
     try {
       const shot = await api.previewCapture(rect, window.devicePixelRatio || 1);
       const a: Attachment = { id: `${Date.now()}-shot`, name: `preview${st.previewPath === "/" ? "" : st.previewPath.replace(/\//g, "-")}.png`, mediaType: shot.mediaType, data: shot.data, size: shot.bytes };
       set({ attachments: [...st.attachments.filter((x) => !x.name.startsWith("preview")), a].slice(0, 6) });
     } catch (e) { get().showToast(String(e)); }
+    finally { if (floating) set({ capturing: false }); }
   },
   async recheckTools() {
     try {
@@ -755,6 +778,11 @@ export const useStore = create<Store>((set, get) => ({
     await api.settingsSet(patch);
     const [settings, tools] = await Promise.all([api.settingsGet(), api.toolchainCheck()]);
     set({ settings, tools, claude: tools.claude });
+  },
+  async setHidden(keys) {
+    // Hiding the log button closes the log too, or there would be no way to close it.
+    set({ settings: { ...get().settings, hidden: keys }, ...(keys.includes("devLog") ? { devLogOpen: false } : {}) });
+    try { await api.settingsSet({ hidden: keys }); } catch (e) { get().showToast(String(e)); }
   },
   showToast(t) { set({ toast: t }); if (t) setTimeout(() => { if (get().toast === t) set({ toast: null }); }, 5000); },
 }));

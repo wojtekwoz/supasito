@@ -65,7 +65,7 @@ let mockRules = "# This site\n\n## Brand\n- Voice: plain, confident, short sente
 // `?fast=on` starts on Opus with fast mode on; the session-header knobs and Settings change these like the real backend would.
 let mockFast = new URLSearchParams(location.search).get("fast") === "on";
 let mockModel = mockFast ? "claude-opus-5" : "claude-sonnet-5";
-const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast };
+const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast, hidden: [] };
 const THINKING = "The user wants a different headline. The hero lives in components/hero.tsx; I'll read it, replace the h1 text and keep the classes as they are.";
 (window as any).__openMockDoc = demoHtml;
 

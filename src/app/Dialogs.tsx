@@ -4,6 +4,8 @@ import { Check } from "../ui/Icons";
 import { Checklist } from "./Checklist";
 import { PlanRows } from "./Usage";
 import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, hasLongContext } from "../models";
+import { UI_GROUPS } from "./ui";
+import { cx } from "../util";
 
 export function NewSiteDialog() {
   const ns = useStore((s) => s.newSite);
@@ -196,6 +198,9 @@ export function DiffDialog() {
   );
 }
 
+// A stable empty list: a selector that returned a fresh `[]` each render would keep zustand re-rendering.
+const NO_HIDDEN: string[] = [];
+
 export function SettingsDialog() {
   const open = useStore((s) => s.settingsOpen);
   const setOpen = useStore((s) => s.setSettingsOpen);
@@ -203,6 +208,9 @@ export function SettingsDialog() {
   const save = useStore((s) => s.saveSettings);
   const planUsage = useStore((s) => s.planUsage);
   const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
+  const hidden = useStore((s) => s.settings.hidden) ?? NO_HIDDEN;
+  const setHidden = useStore((s) => s.setHidden);
+  const [tab, setTab] = useState<"claude" | "interface">("claude");
   const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits", effort: "", fastMode: false });
   const [customModel, setCustomModel] = useState(false);
   useEffect(() => {
@@ -224,6 +232,32 @@ export function SettingsDialog() {
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
       <div className="modal">
         <h2>Settings</h2>
+        <div className="tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "claude"} className={cx(tab === "claude" && "on")} onClick={() => setTab("claude")}>Claude</button>
+          <button role="tab" aria-selected={tab === "interface"} className={cx(tab === "interface" && "on")} onClick={() => setTab("interface")}>Interface</button>
+        </div>
+        {tab === "interface" && (
+          <>
+            <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 12.5 }}>Untick what you don't use. Changes apply right away and stay until you tick them back; keyboard shortcuts keep working.</p>
+            {UI_GROUPS.map((g) => (
+              <div className="row2" style={{ alignItems: "start" }} key={g.label}>
+                <label style={{ paddingTop: 2 }}>{g.label}</label>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {g.items.map((it) => (
+                    <label className="opt-row" key={it.key}>
+                      <input type="checkbox" checked={!hidden.includes(it.key)} onChange={(e) => void setHidden(e.target.checked ? hidden.filter((k) => k !== it.key) : [...hidden, it.key])} /> {it.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="foot">
+              {hidden.length > 0 && <button className="btn ghost" style={{ marginRight: "auto" }} onClick={() => void setHidden([])}>Show everything</button>}
+              <button className="btn primary" onClick={() => setOpen(false)}>Done</button>
+            </div>
+          </>
+        )}
+        {tab === "claude" && <>
         <div className="row2"><label>On this Mac</label><Checklist compact /></div>
         <div className="row2"><label>Claude path</label><input className="text-input" placeholder="Leave empty to find claude on your PATH" value={form.claudePath} onChange={(e) => setForm({ ...form, claudePath: e.target.value })} /></div>
         <div className="row2"><label>Model</label>
@@ -263,6 +297,7 @@ export function SettingsDialog() {
           <button className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
           <button className="btn primary" onClick={() => { void save(form).then(() => setOpen(false)); }}>Save</button>
         </div>
+        </>}
       </div>
     </div>
   );

@@ -24,6 +24,7 @@ fn settings_get(state: State<'_, AppState>) -> Value {
         "permissionMode": p.permission_mode,
         "effort": p.effort,
         "fastMode": p.fast_mode,
+        "hidden": p.hidden,
     })
 }
 
@@ -36,6 +37,7 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
         if let Some(v) = patch.get("permissionMode") { p.permission_mode = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("effort") { p.effort = v.as_str().map(|s| s.to_string()).filter(|s| agent::claude::EFFORTS.contains(&s.as_str())); }
         if let Some(v) = patch.get("fastMode") { p.fast_mode = v.as_bool().unwrap_or(false); }
+        if let Some(v) = patch.get("hidden") { p.hidden = v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(); }
     }
     state.save()
 }

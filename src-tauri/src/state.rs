@@ -16,6 +16,8 @@ pub struct Persisted {
     pub effort: Option<String>,
     /// Fast mode for new sessions (Opus only; the CLI ignores it elsewhere).
     pub fast_mode: bool,
+    /// Parts of the interface the user hid in Settings → Interface (keys from src/app/ui.ts); the UI owns the meaning.
+    pub hidden: Vec<String>,
 }
 
 pub struct AppState {
@@ -108,4 +110,25 @@ pub fn login_shell_path() -> String {
         }
     }
     parts.join(":")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Persisted;
+
+    /// A state file from before Settings → Interface has no `hidden`; it must load with nothing hidden, and the list must
+    /// survive a save/load round trip as the UI wrote it.
+    #[test]
+    fn hidden_defaults_and_round_trips() {
+        let old: Persisted = serde_json::from_str(r#"{"sites":[],"model":"opus","fastMode":true}"#).unwrap();
+        assert!(old.hidden.is_empty());
+        assert_eq!(old.model.as_deref(), Some("opus"));
+        let mut p = old.clone();
+        p.hidden = vec!["knobs".into(), "devLog".into()];
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(s.contains(r#""hidden":["knobs","devLog"]"#), "{s}");
+        let back: Persisted = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.hidden, p.hidden);
+        assert!(back.fast_mode);
+    }
 }

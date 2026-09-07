@@ -38,7 +38,8 @@ src/                     React UI (vanilla CSS, zustand)
   app/store.ts           all state and actions; window.__store in dev
   app/Session.tsx        transcript rows (memoised, immutable items), composer, approvals
   app/Preview.tsx        iframe, device widths, picker messaging, follow-the-page
-  app/Dialogs.tsx        publish (targets, commit, push, cancel), diff, site rules, settings, new site
+  app/Dialogs.tsx        publish (targets, commit, push, cancel), diff, site rules, settings (Claude / Interface tabs), new site
+  app/ui.ts              the parts of the interface Settings → Interface can hide (`settings.hidden`) and the useShown hook
   agent/transcript.ts    stream-json → transcript items (tests: agent/transcript.test.ts + fixtures/)
   routes.ts              edited file → page route (tests: routes.test.ts)
   mock.ts                browser-only backend for UI work (`pnpm dev` → http://localhost:1420)
@@ -74,7 +75,7 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 **Point.** Element picker in the preview: tag, plain class, text, selector, computed styles, HTML, React component chain or Astro file:line. Preview follows the page Claude edits. Device widths, path bar, reload, open in browser.
 
-**See.** Streaming transcript with tool steps ("Editing components/hero.tsx"), expandable step output, per-turn completion line with duration, cost, "N files changed" (opens a diff), Undo. Plan-usage chip from the CLI's rate-limit events. Permission mode per session. Exact model id, effort level and fast mode (Opus) as chips in a bar under the composer, per session, with defaults in Settings; the turn line names the model when it differs and `fast` when the request ran fast. Claude's reasoning streams as "Thinking…" and folds into a collapsed row (§8a). Usage ring by the composer: context fullness, plan windows with reset times, cost so far; compaction shows as a notice. The preview can take the whole window (arrows button, ⌘\); picking an element, ⌘N or an approval request brings the conversation back.
+**See.** Streaming transcript with tool steps ("Editing components/hero.tsx"), expandable step output, per-turn completion line with duration, cost, "N files changed" (opens a diff), Undo. Plan-usage chip from the CLI's rate-limit events. Permission mode per session. Exact model id, effort level and fast mode (Opus) as chips in a bar under the composer, per session, with defaults in Settings; the turn line names the model when it differs and `fast` when the request ran fast. Claude's reasoning streams as "Thinking…" and folds into a collapsed row (§8a). Usage ring by the composer: context fullness, plan windows with reset times, cost so far; compaction shows as a notice. The preview can take the whole window (arrows button, ⌘\) with the conversation floating minimal over the bottom-left corner, draggable anywhere over the page, minimisable to a pill, with its own way out of the mode.
 
 **Approve.** Approval cards (Allow, Always allow, Deny with reason), clarifying-question cards, Dock badge with pending approvals, Dock bounce when Claude needs you or finishes in the background. Approvals expire when a turn ends.
 

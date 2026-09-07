@@ -13,6 +13,10 @@ export default function App() {
   const fatal = useStore((s) => s.fatal);
   const toast = useStore((s) => s.toast);
   const full = useStore((s) => s.previewFull && !!s.currentSiteId);
+  // The floating conversation reacts to these: it fades while picking, moves above the dev log, hides for a capture.
+  const picking = useStore((s) => s.picking);
+  const devLogOpen = useStore((s) => s.devLogOpen);
+  const capturing = useStore((s) => s.capturing);
   useEffect(() => { void init(); }, [init]);
 
   useEffect(() => {
@@ -26,8 +30,8 @@ export default function App() {
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
         const st = useStore.getState();
-        // A new session is for talking, so a full-width preview gives way to it.
-        if (st.currentSiteId) { e.preventDefault(); st.setPreviewFull(false); st.newSession(); }
+        // A new session is for talking: a minimised panel comes back for it.
+        if (st.currentSiteId) { e.preventDefault(); st.setPanelMin(false); st.newSession(); }
         return;
       }
       // ⌘\ shows the preview at full width, and back. Matched by key position (the US backslash key, unshifted
@@ -67,7 +71,7 @@ export default function App() {
   if (!ready) return <div className="boot">Starting Supasito…</div>;
   if (fatal) return <div className="boot"><div>Supasito could not start.<br /><span style={{ color: "var(--err)" }}>{fatal}</span></div></div>;
   return (
-    <div className={cx("app", full && "full")}>
+    <div className={cx("app", full && "full", picking && "picking", devLogOpen && "devlog", capturing && "capturing")}>
       <ErrorBoundary label="rail"><Rail /></ErrorBoundary>
       <ErrorBoundary label="session"><SessionPane /></ErrorBoundary>
       <ErrorBoundary label="preview"><Preview /></ErrorBoundary>

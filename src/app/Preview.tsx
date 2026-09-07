@@ -4,6 +4,7 @@ import { cx } from "../util";
 import { Camera, Collapse, Crosshair, Desktop, Expand, External, Phone, Reload, Tablet, Terminal } from "../ui/Icons";
 import { isTauri } from "../backend";
 import type { DevProblem } from "../types";
+import { useShown, type UiKey } from "./ui";
 
 const widths: Record<Device, string> = { desktop: "100%", tablet: "834px", phone: "390px" };
 
@@ -42,6 +43,11 @@ export function Preview() {
   const navigateRequest = useStore((s) => s.navigateRequest);
   const setPreviewRect = useStore((s) => s.setPreviewRect);
   const capturePreview = useStore((s) => s.capturePreview);
+  // Toolbar buttons the user switched off in Settings → Interface.
+  const shown: Record<Extract<UiKey, "fullWidth" | "devices" | "previewPick" | "reload" | "openBrowser" | "screenshot" | "devLog" | "devStatus">, boolean> = {
+    fullWidth: useShown("fullWidth"), devices: useShown("devices"), previewPick: useShown("previewPick"), reload: useShown("reload"),
+    openBrowser: useShown("openBrowser"), screenshot: useShown("screenshot"), devLog: useShown("devLog"), devStatus: useShown("devStatus"),
+  };
 
   const frame = useRef<HTMLIFrameElement>(null);
   const [pathDraft, setPathDraft] = useState(previewPath);
@@ -115,24 +121,24 @@ export function Preview() {
   return (
     <section className="pane preview">
       <div className="titlebar drag" data-tauri-drag-region>
-        <button className={cx("icon-btn", full && "on")} title={full ? "Back to the sidebar and conversation (⌘\\)" : "Preview at full width (⌘\\)"} onClick={() => setPreviewFull(!full)}>{full ? <Collapse /> : <Expand />}</button>
-        <div className="seg">
+        {shown.fullWidth && <button className={cx("icon-btn", full && "on")} title={full ? "Back to the sidebar and conversation (⌘\\)" : "Preview at full width (⌘\\)"} onClick={() => setPreviewFull(!full)}>{full ? <Collapse /> : <Expand />}</button>}
+        {shown.devices && <div className="seg">
           {(["desktop", "tablet", "phone"] as Device[]).map((d) => (
             <button key={d} className={cx("icon-btn", device === d && "on")} title={d} onClick={() => setDevice(d)}>
               {d === "desktop" ? <Desktop /> : d === "tablet" ? <Tablet /> : <Phone />}
             </button>
           ))}
-        </div>
+        </div>}
         <div className="path">
           <span className="host">{dev?.url && !isMock ? dev.url.replace(/^https?:\/\//, "") : "localhost"}</span>
           <input value={pathDraft} onChange={(e) => setPathDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") navigate(pathDraft); }} onBlur={() => setPathDraft(previewPath)} spellCheck={false} />
         </div>
-        <button className={cx("icon-btn", picking && "on")} title="Pick an element" disabled={!ready} onClick={() => setPicking(!picking)}><Crosshair /></button>
-        <button className="icon-btn" title="Reload" disabled={!ready} onClick={() => { if ((window as any).__openPickerSeen) post({ type: "reload" }); else { mountPath.current = previewPath; reloadPreview(); } }}><Reload /></button>
-        <button className="icon-btn" title="Open in browser" disabled={!ready || isMock} onClick={() => void openInBrowser()}><External /></button>
-        <button className="icon-btn" title="Attach a screenshot of the preview to your next message" disabled={!ready} onClick={() => void capturePreview()}><Camera /></button>
-        <button className={cx("icon-btn", devLogOpen && "on")} title="Dev server log" onClick={toggleDevLog}><Terminal /></button>
-        <DevChip />
+        {shown.previewPick && <button className={cx("icon-btn", picking && "on")} title="Pick an element" disabled={!ready} onClick={() => setPicking(!picking)}><Crosshair /></button>}
+        {shown.reload && <button className="icon-btn" title="Reload" disabled={!ready} onClick={() => { if ((window as any).__openPickerSeen) post({ type: "reload" }); else { mountPath.current = previewPath; reloadPreview(); } }}><Reload /></button>}
+        {shown.openBrowser && <button className="icon-btn" title="Open in browser" disabled={!ready || isMock} onClick={() => void openInBrowser()}><External /></button>}
+        {shown.screenshot && <button className="icon-btn" title="Attach a screenshot of the preview to your next message" disabled={!ready} onClick={() => void capturePreview()}><Camera /></button>}
+        {shown.devLog && <button className={cx("icon-btn", devLogOpen && "on")} title="Dev server log" onClick={toggleDevLog}><Terminal /></button>}
+        {shown.devStatus && <DevChip />}
         <button className="publish" onClick={openPublish} title={site.publish ? site.publish : "No publish command yet"}>
           Publish{git && git.changed > 0 && <span className="n">{git.changed}</span>}
         </button>

@@ -33,6 +33,8 @@ export const Robot = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><rect x="
 /** Diagonal arrows pointing out / in, as on the macOS full-screen button: the preview growing to the whole window, and back. */
 export const Expand = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M14 2 9.5 6.5M10 2h4v4M2 14l4.5-4.5M6 14H2v-4" /></svg>;
 export const Collapse = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M14 2 9.5 6.5M9.5 2.5v4h4M2 14l4.5-4.5M6.5 13.5v-4h-4" /></svg>;
+export const Minus = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 8h10" /></svg>;
+export const Bubble = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2.5 3.5A1.5 1.5 0 0 1 4 2h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 11H7.5L4 14v-3A1.5 1.5 0 0 1 2.5 9.5z" /></svg>;
 export const Signal = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 13v-2.5M6.5 13V8M10 13V5.5M13.5 13V3" /></svg>;
 
 /** The app mark: the Supasito "s" on its coral tile (a flat cut of the app icon in src-tauri/icons/Supasito.icon). */

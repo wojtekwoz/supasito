@@ -3,12 +3,13 @@ import { DRAFT, useSession, useSessionsOfCurrentSite, useSite, useStore } from "
 import { retryText, type Item, type SessionState } from "../agent/transcript";
 import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, isEffort, modelShort, supportsFast } from "../models";
 import { Markdown } from "../ui/Markdown";
-import { Crosshair, Doc, Globe, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
+import { Bubble, Collapse, Crosshair, Doc, Globe, Minus, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
 import { Checklist, claudeBlocked, toolsMissing } from "./Checklist";
 import { UsageButton } from "./Usage";
 import type { Selection } from "../types";
+import { useShown } from "./ui";
 
 export function SessionPane() {
   const site = useSite();
@@ -19,20 +20,71 @@ export function SessionPane() {
   const interrupt = useStore((s) => s.interrupt);
   const running = useStore((s) => (s.currentSessionId ? !!s.running[s.currentSessionId] : false));
   const title = currentSessionId === DRAFT ? "New session" : sessions.find((s) => s.id === currentSessionId)?.title ?? "Session";
+  const full = useStore((s) => s.previewFull);
+  const panelPos = useStore((s) => s.panelPos);
+  const setPanelPos = useStore((s) => s.setPanelPos);
+  const panelMin = useStore((s) => s.panelMin);
+  const setPanelMin = useStore((s) => s.setPanelMin);
+  const setPreviewFull = useStore((s) => s.setPreviewFull);
+  const showKnobs = useShown("knobs");
+  const pane = useRef<HTMLElement>(null);
+  // A dragged panel stays inside the window when it grows (a reply arriving) or the window shrinks.
+  useEffect(() => {
+    const el = pane.current;
+    if (!full || !panelPos || !el) return;
+    const keep = () => { const pos = useStore.getState().panelPos; if (pos) setPanelPos(clampPanel(pos, el)); };
+    const ro = new ResizeObserver(keep);
+    ro.observe(el);
+    window.addEventListener("resize", keep);
+    return () => { ro.disconnect(); window.removeEventListener("resize", keep); };
+  }, [full, !!panelPos, setPanelPos]);
+  const onGrip = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = pane.current;
+    if (!el || e.button !== 0) return;
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    const start = { x: e.clientX, y: e.clientY, left: r.left, bottom: window.innerHeight - r.bottom };
+    const grip = e.currentTarget;
+    grip.setPointerCapture(e.pointerId);
+    // The iframe under the pointer must not swallow the move events.
+    document.body.classList.add("panel-drag");
+    const move = (ev: PointerEvent) => setPanelPos(clampPanel({ left: start.left + ev.clientX - start.x, bottom: start.bottom - (ev.clientY - start.y) }, el));
+    const up = () => { document.body.classList.remove("panel-drag"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up); };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  };
 
   if (!site) return <Welcome />;
   return (
-    <section className="pane session">
+    <section className={cx("pane session", full && panelMin && "min")} ref={pane} style={full && panelPos ? { left: panelPos.left, bottom: panelPos.bottom } : undefined}>
       <div className="titlebar drag" data-tauri-drag-region>
         <span className="title" data-tauri-drag-region>{title}</span>
         {session?.busy && <button className="btn sm ghost" onClick={() => void interrupt()} title="Interrupt (Esc)"><Stop /> Stop</button>}
       </div>
+      {/* In full-width mode the pane floats; this grip along its top edge drags it, a double-click sends it back to the corner. Its
+          two buttons minimise the panel to a pill and leave full-width mode. */}
+      {full && !panelMin && (
+        <div className="grip" title="Drag to move · double-click to put it back" onPointerDown={onGrip} onDoubleClick={() => setPanelPos(null)}>
+          <i />
+          <span className="tools" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            <button className="icon-btn" title="Minimise the conversation" onClick={() => setPanelMin(true)}><Minus /></button>
+            <button className="icon-btn" title="Back to the sidebar and conversation (⌘\)" onClick={() => setPreviewFull(false)}><Collapse /></button>
+          </span>
+        </div>
+      )}
+      {full && panelMin && (
+        <button className="restore" title="Show the conversation" onClick={() => setPanelMin(false)}>
+          <Bubble />
+          <span className={cx("status-dot", session?.busy && "busy")} style={session?.items.some((i) => i.kind === "permission" && i.status === "pending") ? { background: "var(--warn)" } : undefined} />
+        </button>
+      )}
       {claudeBlocked(tools)
         ? <Setup />
         : <Transcript items={session?.items ?? []} busy={!!session?.busy} root={site.path} sessionId={currentSessionId} />}
       <Composer />
       {/* The session's knobs are the last thing in the pane, under the composer: model, effort, permission mode, fast mode. */}
-      {currentSessionId && !claudeBlocked(tools) && (
+      {showKnobs && currentSessionId && !claudeBlocked(tools) && (
         <div className="knobs">
           <Knobs session={session} mode={currentSessionId !== DRAFT && running ? session?.mode ?? null : undefined} />
         </div>
@@ -51,6 +103,15 @@ const MODES: { value: string; label: string; hint: string }[] = [
 /** A chip that opens a native dropdown: an icon (or a word) names the setting, `label` is its current value.
  *  The chip draws itself so it hugs the value; the real select sits invisibly on top and only supplies the menu
  *  (a visible native select would be as wide as its longest option). */
+/** Keeps the floating panel inside the window: 16 px from the edges, below the preview toolbar. */
+function clampPanel(pos: { left: number; bottom: number }, el: HTMLElement): { left: number; bottom: number } {
+  const m = 16;
+  const toolbar = document.querySelector(".preview .titlebar")?.getBoundingClientRect().bottom ?? 44;
+  const left = Math.round(Math.min(Math.max(m, pos.left), Math.max(m, window.innerWidth - m - el.offsetWidth)));
+  const bottom = Math.round(Math.min(Math.max(m, pos.bottom), Math.max(m, window.innerHeight - toolbar - m - el.offsetHeight)));
+  return left === pos.left && bottom === pos.bottom ? pos : { left, bottom };
+}
+
 function Pick({ icon, word, label, title, value, disabled, onChange, children }: { icon?: ReactNode; word?: string; label: string; title: string; value: string; disabled?: boolean; onChange: (v: string) => void; children: ReactNode }) {
   return (
     <label className={cx("chip pick", disabled && "disabled")} title={title}>
@@ -162,6 +223,11 @@ function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boo
   const retry = useStore((s) => (sessionId ? s.transcripts[sessionId]?.retry ?? null : null));
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // The floating panel in full-width mode is much shorter, and a minimised one hides the transcript (which forgets its scroll
+  // position), so its end must be re-stuck when the layout changes.
+  const full = useStore((s) => s.previewFull);
+  const min = useStore((s) => s.panelMin);
+  const showSteps = useShown("steps");
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -172,7 +238,7 @@ function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boo
   useEffect(() => {
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [items, busy]);
+  }, [items, busy, full, min]);
 
   // group consecutive tool items
   const groups: (Item | Item[])[] = [];
@@ -185,13 +251,8 @@ function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boo
 
   return (
     <div className="transcript" ref={ref}>
-      {items.length === 0 && (
-        <div className="notice" style={{ marginTop: 8 }}>
-          Describe a change, or switch on the picker <Crosshair style={{ width: 12, height: 12, verticalAlign: -2 }} /> and click the element you mean in the preview. Claude edits the code; the preview updates.
-        </div>
-      )}
       {groups.map((g, i) => Array.isArray(g)
-        ? <Steps key={"g" + i} items={g} root={root} />
+        ? (showSteps ? <Steps key={"g" + i} items={g} root={root} /> : null)
         : <Entry key={g.id} item={g} sessionId={sessionId} />)}
       {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && !items.some((i) => i.kind === "permission" && i.status === "pending") && (
         <div className="step" style={{ color: retry ? "var(--warn)" : "var(--ink-3)" }}><span className="st running" /><span className="label">{retry ? retryText(retry) : "Working…"}</span></div>
@@ -201,6 +262,7 @@ function Transcript({ items, busy, root, sessionId }: { items: Item[]; busy: boo
 }
 
 const Entry = memo(function Entry({ item, sessionId }: { item: Item; sessionId: string | null }) {
+  const showThinking = useShown("thinking");
   switch (item.kind) {
     case "user":
       return (
@@ -219,7 +281,7 @@ const Entry = memo(function Entry({ item, sessionId }: { item: Item; sessionId: 
       const live = item.streaming && !item.text;
       return (
         <div className="msg assistant">
-          {live && item.phase === "thinking"
+          {!showThinking ? null : live && item.phase === "thinking"
             ? <div className="thinking live"><span className="thinking-label">Thinking…</span>{item.thinking && <div className="thinking-body">{item.thinking}</div>}</div>
             : item.thinking ? <details className="thinking"><summary>Thinking</summary><div className="thinking-body">{item.thinking}</div></details> : null}
           <Markdown text={item.text} />
@@ -354,6 +416,9 @@ function Composer() {
   const setPicking = useStore((s) => s.setPicking);
   const dev = useStore((s) => (s.currentSiteId ? s.dev[s.currentSiteId] : null));
   const claudeOk = useStore((s) => !!s.tools && !claudeBlocked(s.tools));
+  const showPick = useShown("composerPick");
+  const showUsage = useShown("usage");
+  const showHint = useShown("hint");
   const busy = !!session?.busy;
   const canPick = dev?.status === "ready";
   const canSend = (text.trim().length > 0 || attachments.length > 0) && claudeOk;
@@ -371,6 +436,10 @@ function Composer() {
   }, [text]);
 
   useEffect(() => { if (selection || attachments.length) ref.current?.focus(); }, [selection, attachments.length]);
+  // Full-width mode is entered to keep talking, so the composer takes the keyboard; so does restoring a minimised panel.
+  const full = useStore((s) => s.previewFull);
+  const min = useStore((s) => s.panelMin);
+  useEffect(() => { if (full && !min) ref.current?.focus(); }, [full, min]);
 
   const submit = () => {
     if (!canSend) return;
@@ -428,10 +497,11 @@ function Composer() {
           </div>
         )}
         <div className="bar">
-          <button className={cx("icon-btn", picking && "on")} disabled={!canPick} title={canPick ? "Pick an element in the preview (⌘⇧E)" : "Preview must be running to pick"} onClick={() => setPicking(!picking)}><Crosshair /></button>
-          <span className="hint">{dragging ? "Drop the image to attach it" : picking ? "Click an element in the preview · Esc to cancel" : busy ? "Claude is working · Enter queues your message · Esc to stop" : "Enter to send · Shift+Enter for a new line · paste or drop an image"}</span>
+          {showPick && <button className={cx("icon-btn", picking && "on")} disabled={!canPick} title={canPick ? "Pick an element in the preview (⌘⇧E)" : "Preview must be running to pick"} onClick={() => setPicking(!picking)}><Crosshair /></button>}
+          {/* A hidden hint still speaks up while something transient is going on: a drop or a pick in progress. */}
+          {(showHint || dragging || picking) && <span className="hint">{dragging ? "Drop the image to attach it" : picking ? "Click an element in the preview · Esc to cancel" : busy ? "Claude is working · Enter queues your message · Esc to stop" : "Enter to send · Shift+Enter for a new line · paste or drop an image"}</span>}
           <span className="sp" />
-          <UsageButton />
+          {showUsage && <UsageButton />}
           {busy && <button className="send stop" title="Stop" onClick={() => void interrupt()}><Stop /></button>}
           <button className="send" title={busy ? "Queue" : "Send"} disabled={!canSend} onClick={submit}><Send /></button>
         </div>

@@ -191,11 +191,41 @@ a { color: var(--accent); }
 /* ---------- preview ---------- */
 .preview { background: var(--preview-bg); }
 .preview .titlebar { background: var(--pane); border-bottom: 1px solid var(--line); gap: 6px; }
-/* Full-width preview (⌘\): the preview pane covers the window. The rail and session keep their layout, scroll positions and
-   streaming underneath, only hidden; the title bar gains room for the traffic lights, which the rail normally holds. */
+/* Full-width preview (⌘\): the preview pane covers the window; the rail keeps its layout underneath, hidden; the title bar gains
+   room for the traffic lights, which the rail normally holds. */
 .app.full .preview { position: fixed; inset: 0; z-index: 10; }
 .app.full .preview .titlebar { padding-left: var(--lights); }
-.app.full .rail, .app.full .session { visibility: hidden; }
+.app.full .rail { visibility: hidden; }
+/* The conversation floats over the bottom-left corner, as minimal as it gets: the same session pane restyled (transcript, scroll
+   position, streaming and draft carry over), no title bar (the composer has Stop), no knobs, no hint text, a short transcript. It
+   fades while the picker is armed so the page under it can be clicked, hides for a capture, and sits above the dev log. */
+.app.full .session { position: fixed; left: 16px; bottom: 16px; z-index: 20; width: 360px; max-height: min(420px, calc(100vh - var(--titlebar) - 32px)); border: 1px solid var(--line-2); border-radius: 12px; background: color-mix(in srgb, var(--pane) 90%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); box-shadow: 0 12px 40px rgba(0,0,0,0.35); transition: opacity 120ms ease; }
+.app.full .session .titlebar, .app.full .session .knobs, .app.full .composer .hint { display: none; }
+.app.full .transcript { padding: 6px 12px 6px; gap: 12px; }
+.app.full .transcript:empty { display: none; }
+/* The grip along the panel's top edge: drag to move the panel anywhere over the preview; at its right, minimise and exit. */
+.app.full .session .grip { position: relative; flex: none; height: 20px; display: grid; place-items: center; cursor: grab; touch-action: none; }
+.app.full .session .grip i { width: 36px; height: 4px; border-radius: 2px; background: var(--line-2); }
+.app.full .session .grip:hover i { background: var(--ink-3); }
+.app.full .session .grip:active { cursor: grabbing; }
+.app.full .session .grip .tools { position: absolute; right: 4px; top: 1px; display: flex; gap: 1px; cursor: default; }
+.app.full .session .grip .icon-btn { width: 18px; height: 18px; border-radius: 5px; color: var(--ink-3); }
+.app.full .session .grip .icon-btn:hover { color: var(--ink); }
+.app.full .session .grip .icon-btn svg { width: 13px; height: 13px; }
+/* Minimised: the panel becomes a 36 px pill at the same spot, with a dot for working (accent) or waiting for approval (amber). */
+.app.full .session.min { width: 36px; height: 36px; max-height: none; border-radius: 18px; }
+.app.full .session.min > :not(.restore) { display: none; }
+.app.full .session.min .restore { position: relative; width: 100%; height: 100%; display: grid; place-items: center; border-radius: 18px; color: var(--ink-2); }
+.app.full .session.min .restore:hover { color: var(--ink); background: var(--elev-2); }
+.app.full .session.min .restore svg { width: 16px; height: 16px; }
+.app.full .session.min .restore .status-dot { position: absolute; right: 5px; top: 5px; box-shadow: 0 0 0 2px var(--pane); }
+/* While the panel is dragged, a full-window shield above the iframe keeps the page from seeing the pointer (it would select text). */
+body.panel-drag { cursor: grabbing; user-select: none; }
+body.panel-drag::after { content: ""; position: fixed; inset: 0; z-index: 15; cursor: grabbing; }
+.app.full .composer { border-top: 0; padding: 4px 10px 10px; }
+.app.full.picking .session { opacity: 0.25; pointer-events: none; }
+.app.full.devlog .session { bottom: calc(180px + 16px); }
+.app.capturing .session { visibility: hidden; }
 .seg { display: inline-flex; background: var(--elev); border-radius: 7px; padding: 2px; gap: 2px; }
 .seg .icon-btn { width: 26px; height: 24px; }
 .path { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 6px; height: 28px; background: var(--elev); border: 1px solid transparent; border-radius: 7px; padding: 0 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
@@ -228,6 +258,11 @@ a { color: var(--accent); }
 .modal { width: min(560px, 92vw); background: var(--elev); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 .modal h2 { margin: 0; font-size: 15px; }
 .modal .row2 { display: grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: center; }
+/* Tabs at the top of a dialog (Settings: Claude / Interface). */
+.tabs { display: inline-flex; align-self: flex-start; gap: 2px; background: var(--rail); border-radius: 8px; padding: 2px; }
+.tabs button { height: 26px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; color: var(--ink-2); }
+.tabs button:hover { color: var(--ink); }
+.tabs button.on { background: var(--elev-2); color: var(--ink); }
 .modal label { color: var(--ink-2); font-size: 12px; }
 .modal .foot { display: flex; justify-content: flex-end; gap: 8px; }
 .modal .log { font-family: var(--mono); font-size: 11.5px; background: var(--rail); border-radius: 6px; padding: 8px 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; color: var(--ink-2); user-select: text; }

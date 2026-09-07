@@ -95,7 +95,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 
 - **The preview follows the page** Claude edits.
 - **Device widths**: desktop, tablet (834 px) and phone (390 px). Reload and Open in browser sit next to them.
-- **Full width**: the arrows button at the left of the preview toolbar, or **⌘\**, hides the other panes. Picking an element, ⌘N or an approval request brings them back.
+- **Full width**: the arrows button at the left of the preview toolbar, or **⌘\**, hides the sidebar and lets the page fill the window. The conversation floats over the bottom-left corner, as small as it gets, so you can keep talking: drag it by the grip along its top edge to anywhere over the page (double-click the grip to put it back), minimise it to a small pill with the − at the grip's right (the pill's dot shows Claude working or waiting for an approval; an approval request, a picked element or ⌘N bring the panel back), it fades while you pick an element, stays out of screenshots and moves above the dev log. Model, mode and other sessions need the full layout; the arrows next to the − in the panel, the toolbar button or ⌘\ bring it back.
 - **Every turn ends with a line**: duration, cost, "N files changed" (click it for the diff) and **Undo**.
 - **Undo** restores the files that turn changed and removes the files it created. It needs git in the folder. Turns from before your last commit lose it.
 
@@ -104,6 +104,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 - **Mode**, in the bar under the composer: "Ask before commands" (the default: edits files freely, asks before running commands), "Don't ask this session", "Plan first" and "Ask about everything".
 - **Model, effort and fast mode** sit in the same bar and change the current session. Defaults for new sessions live in Settings (**⌘,**). Fast mode is Opus only and costs about twice as much.
 - **Thinking** streams while Claude reasons and folds into a collapsed row once the answer starts.
+- **Hide what you don't use**: Settings (**⌘,**) → Interface lists the optional parts of the window: the chips under the composer, the usage ring, the picker buttons, the keyboard hint, the tool-step rows and the Thinking row in the conversation; full width, device widths, pick, reload, open in browser, screenshot, dev log and the status chip on the preview toolbar; the editor and Finder buttons on sites. Untick to hide, at once; the shortcuts keep working; "Show everything" puts it all back.
 - **Usage ring** at the bottom of the composer fills as the conversation grows. Click it for the numbers, your plan's 5-hour and weekly limits, and the cost so far. When the conversation is full, Claude Code summarises older messages by itself; **⌘N** starts a clean session.
 
 **Publishing**

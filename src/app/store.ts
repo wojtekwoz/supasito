@@ -5,6 +5,14 @@ import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession,
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
+
+/** Sent by the "Set up the preview" button. Detection reads package.json's `dev` script (a known framework's
+ *  binary gets its port flag, anything else `npm run dev -- --port {port}`) or supasito.json's `dev`. */
+export const SETUP_PREVIEW_PROMPT = `Supasito shows this site in a live preview by running its dev server, but this folder has no dev command yet. Set that up without changing the site itself:
+1. Look at what is here: plain HTML, a framework without a dev script, or something else.
+2. Give the project a "dev" script in package.json that serves the site locally with live reload. For plain HTML use Vite (npm install -D vite, script "dev": "vite"); Supasito appends "--port <n>" when it runs the script. If the server cannot take --port that way, write supasito.json with {"dev": "<command> {port}"} instead; {port} is replaced at start.
+3. Install the dependencies so node_modules exists, and add node_modules to .gitignore if this is a git repository.
+4. Reply with one line saying what you set up.`;
 /** Resolves after `n` animation frames, i.e. once the DOM changes made so far have been painted; after 250 ms regardless, since
  *  frames stop while the window is occluded and waiting longer would not help the capture. */
 const paints = (n: number) => new Promise<void>((resolve) => {
@@ -92,6 +100,10 @@ export type Store = {
   freePortAndRestart: (siteId: string) => Promise<void>;
   toggleDevLog: () => void;
   refreshGit: (siteId: string) => Promise<void>;
+  /** Re-detect the site (dev command, install state) and start its dev server if that made it previewable. */
+  redetectSite: (siteId: string) => Promise<void>;
+  /** Supasito's first task for a folder with no dev server: ask Claude to set one up. */
+  setupPreview: (siteId: string) => Promise<void>;
   gitInit: (siteId: string) => Promise<void>;
   undoTurn: (sessionId: string, resultId: string) => Promise<void>;
   previewEvent: (kind: string, detail: string) => void;
@@ -294,6 +306,9 @@ export const useStore = create<Store>((set, get) => ({
         if (message?.type === "result") {
           const siteId = st.sites.find((s) => (st.sessions[s.id] ?? []).some((x) => x.id === sessionId))?.id ?? st.currentSiteId;
           if (siteId) void get().refreshGit(siteId);
+          // A turn may have made the site previewable (the setup task, or an install Claude ran): look again.
+          const site = siteId ? get().sites.find((s) => s.id === siteId) : undefined;
+          if (site && (!site.dev || site.needsInstall)) void get().redetectSite(site.id);
           get().syncBadge();
           if (!document.hasFocus()) void api.requestAttention().catch(() => {});
           // A sign-out mid-session (token expired, `claude auth logout`) shows up as an auth error; re-check so the checklist takes over.
@@ -579,6 +594,18 @@ export const useStore = create<Store>((set, get) => ({
   },
   toggleDevLog() { set({ devLogOpen: !get().devLogOpen }); },
 
+  async redetectSite(siteId) {
+    try {
+      const fresh = await api.siteRefresh(siteId);
+      set({ sites: get().sites.map((s) => (s.id === siteId ? fresh : s)) });
+      const d = get().dev[siteId];
+      if (fresh.dev && !fresh.needsInstall && (!d || d.status === "stopped" || d.status === "error") && get().currentSiteId === siteId) void get().startDev(siteId);
+    } catch (e) { get().showToast(String(e)); }
+  },
+  async setupPreview(siteId) {
+    if (get().currentSiteId !== siteId) return;
+    await get().send(SETUP_PREVIEW_PROMPT);
+  },
   async refreshGit(siteId) {
     try { const g = await api.siteGitStatus(siteId); set({ git: { ...get().git, [siteId]: g } }); } catch { /* ignore */ }
   },

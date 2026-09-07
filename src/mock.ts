@@ -44,7 +44,11 @@ const stopDelay = Number(query.get("stopDelay")) || 0;
 // `devFreePort` clears it, like the Rust side after killing the holder.
 const devTaken = query.get("dev")?.startsWith("taken") ? (query.get("dev")!.split(":")[1] ?? "known") : null;
 let portBlocked = devTaken !== null;
-if (mockSites[0] && !portBlocked) devs.set(site.id, { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! });
+// `?dev=none` — the first site has no dev command (a plain HTML folder); after one turn `siteRefresh` finds a Vite dev
+// script, as if Claude had set it up.
+const devNone = query.get("dev") === "none";
+if (devNone && mockSites[0]) Object.assign(mockSites[0], { dev: null, framework: null, packageManager: null });
+if (mockSites[0] && !portBlocked && !devNone) devs.set(site.id, { siteId: site.id, port: 3000, url: "mock:", status: "ready", command: site.dev! });
 (window as any).__mock = { devs, devStartCalls };
 const mockHolder = (): DevProblem["holder"] =>
   devTaken === "unknown" ? null
@@ -142,7 +146,11 @@ export function mockBackend(): Backend {
     sitePickFolder: async () => "/Users/you/Sites/another",
     siteAdd: async (path) => { const s = { ...site, id: "site-" + Math.random().toString(36).slice(2), path, name: path.split("/").pop() || "site", lastSessionId: null }; mockSites.push(s); return s; },
     siteRemove: async () => {},
-    siteRefresh: async (siteId) => siteOf(siteId),
+    siteRefresh: async (siteId) => {
+      const s = siteOf(siteId);
+      if (devNone && s === mockSites[0] && !s.dev && mockTurns > 0) Object.assign(s, { dev: "node_modules/.bin/vite --port {port}", framework: "vite", packageManager: "npm" });
+      return { ...s };
+    },
     siteInstall: async (siteId) => siteOf(siteId),
     siteGitStatus: async () => ({ isGit: true, changed: mockChanged, files: ["components/hero.tsx", "app/page.tsx"], branch: "main", remote: "git@github.com:you/clarityops.git" }),
     siteGitCommit: async (_siteId, message) => { await wait(400); console.debug("[commit]", message); mockChanged = 0; return { isGit: true, changed: 0, files: [], branch: "main", remote: "git@github.com:you/clarityops.git" }; },

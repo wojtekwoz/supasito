@@ -32,6 +32,8 @@ export function Preview() {
   const startDev = useStore((s) => s.startDev);
   const restartDev = useStore((s) => s.restartDev);
   const freePortAndRestart = useStore((s) => s.freePortAndRestart);
+  const setupPreview = useStore((s) => s.setupPreview);
+  const siteBusy = useStore((s) => (s.currentSiteId ? (s.sessions[s.currentSiteId] ?? []).some((x) => s.transcripts[x.id]?.busy) : false));
   const sites = useStore((s) => s.sites);
   const siteName = (id: string | null | undefined) => sites.find((x) => x.id === id)?.name;
   const installDeps = useStore((s) => s.installDeps);
@@ -171,8 +173,12 @@ export function Preview() {
                 </>
               ) : !site.dev ? (
                 <>
-                  <h3>No dev server found</h3>
-                  <p>Add a <code>dev</code> script to package.json, or an <code>supasito.json</code> with a <code>dev</code> command (use <code>{"{port}"}</code> where the port goes).</p>
+                  <h3 style={siteBusy ? { display: "flex", alignItems: "center", gap: 10 } : undefined}>{siteBusy && <span className="spinner" />}{siteBusy ? "Setting up the preview" : "This site can't be previewed yet"}</h3>
+                  <p>There is no dev server in this folder, so Supasito's first task is to set one up: Claude looks at the files, adds a <code>dev</code> script that serves the site with live reload, and installs what it needs. The site itself stays as it is.</p>
+                  {siteBusy
+                    ? <p>Claude is on it; the preview starts when the turn ends.</p>
+                    : <div><button className="btn primary" onClick={() => void setupPreview(site.id)}>Set up the preview</button></div>}
+                  <p style={{ fontSize: 12 }}>Or add a <code>dev</code> script to package.json yourself, or a <code>supasito.json</code> with a <code>dev</code> command (<code>{"{port}"}</code> where the port goes).</p>
                 </>
               ) : dev?.status === "error" && dev.problem?.kind === "port" ? (
                 <>

@@ -49,8 +49,7 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - `src-tauri/icons/Supasito.icon` — the app icon, an Icon Composer document (the coral tile with the "s").
   `pnpm icon` compiles it with actool into `icons/Assets.car` (the layered icon macOS 26 draws in light,
   dark and tinted; `src-tauri/Info.plist` names it via `CFBundleIconName`) and regenerates the flat
-  PNG/icns/ico set from `icons/default-1024.png`, Icon Composer's 1024px export. `Mark` in `Icons.tsx`
-  is the same glyph, flat, for the rail. Design source: see CHANGELOG session 15.
+  PNG/icns/ico set from `icons/default-1024.png`, Icon Composer's 1024px export. Design source: see CHANGELOG session 15.
 - `starters/next/` — the bundled "New site" starter (Next 16 + Tailwind 4). Commit files that
   `next dev` rewrites (tsconfig, CLAUDE.md block) so a fresh site starts clean.
 

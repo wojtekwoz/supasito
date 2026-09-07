@@ -38,11 +38,3 @@ export const Minus = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="
 export const Bubble = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M2.5 3.5A1.5 1.5 0 0 1 4 2h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 11H7.5L4 14v-3A1.5 1.5 0 0 1 2.5 9.5z" /></svg>;
 export const Signal = (p: SVGProps<SVGSVGElement>) => <svg {...base(p)}><path d="M3 13v-2.5M6.5 13V8M10 13V5.5M13.5 13V3" /></svg>;
 
-/** The app mark: the Supasito "s" on its coral tile (a flat cut of the app icon in src-tauri/icons/Supasito.icon). */
-export const Mark = (p: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 16 16" fill="none" {...p}>
-    <defs><linearGradient id="mark-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#FF7B5F" /><stop offset="1" stopColor="#EE4A31" /></linearGradient></defs>
-    <rect width="16" height="16" rx="4" fill="url(#mark-g)" />
-    <svg x="2.5" y="2.5" width="11" height="11" viewBox="221 168 900 900"><path fill="#FFE6DD" d="M620 226H919C940 226 945 245 932 260L705 471C692 483 698 496 716 496C862 496 979 604 979 743C979 889 862 1010 712 1010H385C363 1010 356 990 373 973L616 752C628 741 622 731 605 730C469 728 363 623 363 488C363 342 475 226 620 226Z" /></svg>
-  </svg>
-);

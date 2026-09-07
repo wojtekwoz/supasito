@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DRAFT, useSessionsOfCurrentSite, useStore } from "./store";
 import { ago, cx } from "../util";
-import { Book, Code, Folder, Gear, Mark, Plus, Sparkle, Star, Trash } from "../ui/Icons";
+import { Book, Code, Folder, Gear, Plus, Sparkle, Star, Trash } from "../ui/Icons";
 import type { Site } from "../types";
 import { useShown } from "./ui";
 
@@ -42,9 +42,7 @@ export function Rail() {
 
   return (
     <aside className="pane rail">
-      <div className="titlebar drag" data-tauri-drag-region>
-        <div className="brand" data-tauri-drag-region><Mark className="mark" />Supasito</div>
-      </div>
+      <div className="titlebar drag" data-tauri-drag-region />
       <div className="rail-body">
         <div>
           <div className="section-h">

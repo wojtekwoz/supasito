@@ -4,7 +4,6 @@
       "Bash(pnpm typecheck)",
       "Bash(pnpm exec tsc *)",
       "Bash(pnpm build)",
-      "Bash(pnpm lint*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)"

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { site } from "@/site";
 
 const nav = [
   { href: "#features", label: "Features" },
@@ -10,7 +11,7 @@ export function Header() {
   return (
     <header className="flex items-center justify-between px-8 py-5">
       <Link href="/" className="font-semibold tracking-tight">
-        New site
+        {site.name}
       </Link>
       <nav className="flex gap-6 text-[11px] uppercase tracking-[0.14em] text-ink-2">
         {nav.map((item) => (

@@ -3,8 +3,12 @@
 A marketing site built with Next.js (App Router), Tailwind v4 and TypeScript. It is edited through Supasito: the person you are talking to sees the live preview, not the code.
 
 ## Where things are
+- `site.ts` is the site's identity: name, description, email, public URL. The pages, the social
+  card, `robots.txt` and `sitemap.xml` all read from it. Rename the site here, not in the markup.
 - `app/page.tsx` composes the page from `components/*`. One component per section; keep it that way.
 - Design tokens live in `app/globals.css` under `@theme` (colors, fonts). Change tokens before adding one-off colors.
+- `app/opengraph-image.tsx` and `app/icon.tsx` draw the share card and the tab icon from `site.ts`.
+- `app/sitemap.ts` lists the routes: add a line there whenever you add a page.
 - No global state, no data fetching, no client components unless something is interactive.
 
 ## Brand (edit me)
@@ -14,6 +18,11 @@ A marketing site built with Next.js (App Router), Tailwind v4 and TypeScript. It
 
 ## Conventions
 - Prefer small, direct edits. Do not add dependencies unless asked.
+- Images go in `public/` and are rendered with `next/image`, always with `width` and `height`
+  (or `fill` inside a sized parent). Never use a bare `<img>` — it breaks layout on load.
+- Before publishing, set the real domain in `site.ts`; social cards and the sitemap need absolute links.
+- Nothing prints the current year: the page is prerendered, so a build-time year freezes at whatever
+  year the site was last published.
 - After editing, run `pnpm typecheck` when the change touched more than copy.
 - Never start the dev server; Supasito runs it.
 

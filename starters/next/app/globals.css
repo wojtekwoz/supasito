@@ -7,7 +7,8 @@
   --color-ink-2: #4B4E57;
   --color-line: #DEDAD0;
   --color-accent: #1F3A8A;
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  /* --font-display-face is loaded by next/font in app/layout.tsx. */
+  --font-display: var(--font-display-face), "Iowan Old Style", Palatino, Georgia, serif;
   --font-body: ui-sans-serif, -apple-system, "Helvetica Neue", Arial, sans-serif;
 }
 

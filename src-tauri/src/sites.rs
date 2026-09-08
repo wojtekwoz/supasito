@@ -304,6 +304,14 @@ pub fn npm_rule(rule: &str) -> String {
     rule.to_string()
 }
 
+/// The starter ships with a placeholder name in `site.ts`; the pages, the social card,
+/// robots.txt and sitemap.xml all read it from there, so this is what makes a new site
+/// carry its own name everywhere instead of saying "New site".
+pub fn personalise_site_ts(src: &str, name: &str) -> String {
+    let literal = serde_json::to_string(name.trim()).unwrap_or_else(|_| "\"New site\"".into());
+    src.replace("name: \"New site\",", &format!("name: {literal},"))
+}
+
 fn rewrite_for_npm(dest: &Path) {
     let settings = dest.join(".claude/settings.json");
     if let Some(mut v) = std::fs::read_to_string(&settings).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
@@ -318,6 +326,8 @@ fn rewrite_for_npm(dest: &Path) {
     if let Ok(text) = std::fs::read_to_string(&rules) {
         let _ = std::fs::write(&rules, text.replace("`pnpm typecheck`", "`npm run typecheck`"));
     }
+    // npm cannot read pnpm's lockfile: leaving it behind would pin nothing and go stale.
+    let _ = std::fs::remove_file(dest.join("pnpm-lock.yaml"));
 }
 
 /// Copy the bundled starter into `<parent>/<name>` and install dependencies, reporting each line
@@ -335,10 +345,16 @@ pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_
     if let Ok(pkg) = std::fs::read_to_string(dest.join("package.json")) {
         std::fs::write(dest.join("package.json"), pkg.replace("\"name\": \"supasito-starter\"", &format!("\"name\": \"{slug}\""))).map_err(|e| e.to_string())?;
     }
+    if let Ok(src) = std::fs::read_to_string(dest.join("site.ts")) {
+        std::fs::write(dest.join("site.ts"), personalise_site_ts(&src, name)).map_err(|e| e.to_string())?;
+    }
     if pm == "npm" { rewrite_for_npm(&dest); }
     let dest_s = dest.to_string_lossy().to_string();
     // 1. dependencies — without them the site cannot run, so a failure removes the folder again
-    let install_args: &[&str] = if pm == "pnpm" { &["install"] } else { &["install", "--no-audit", "--no-fund", "--loglevel=error"] };
+    // The starter commits a pnpm lockfile so every new site starts on the versions we tested.
+    // CI=1 would otherwise make pnpm demand a perfectly matching lockfile and fail outright on an
+    // older pnpm; --no-frozen-lockfile lets it re-resolve instead of refusing to create the site.
+    let install_args: &[&str] = if pm == "pnpm" { &["install", "--no-frozen-lockfile"] } else { &["install", "--no-audit", "--no-fund", "--loglevel=error"] };
     on_log(format!("$ {pm} {}", install_args.join(" ")));
     let mut child = tokio::process::Command::new(&pm_path).args(install_args).env("PATH", path_env).env("CI", "1")
         .current_dir(&dest).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
@@ -581,6 +597,20 @@ mod tests {
     }
 
     #[test]
+    fn the_new_sites_name_reaches_site_ts() {
+        let src = std::fs::read_to_string(starter().join("site.ts")).unwrap();
+        assert!(src.contains("name: \"New site\","), "the starter must keep the placeholder this rewrites");
+
+        let out = personalise_site_ts(&src, "  Acme Coffee  ");
+        assert!(out.contains("name: \"Acme Coffee\","), "the trimmed name replaces the placeholder");
+        assert!(!out.contains("New site"), "no placeholder may survive anywhere in the file");
+
+        // A name with a quote or a backslash must not break the module.
+        let odd = personalise_site_ts(&src, "Bob\"s \\ Bar");
+        assert!(odd.contains(r#"name: "Bob\"s \\ Bar","#), "quotes and backslashes are escaped: {odd}");
+    }
+
+    #[test]
     fn starter_rules_translate_to_npm() {
         assert_eq!(npm_rule("Bash(pnpm typecheck)"), "Bash(npm run typecheck)");
         assert_eq!(npm_rule("Bash(pnpm exec tsc *)"), "Bash(npx tsc *)");
@@ -590,7 +620,9 @@ mod tests {
         std::fs::create_dir_all(dir.join(".claude")).unwrap();
         std::fs::write(dir.join(".claude/settings.json"), r#"{"permissions":{"allow":["Bash(pnpm typecheck)","Bash(git diff*)"],"deny":["Bash(pnpm dev*)"]}}"#).unwrap();
         std::fs::write(dir.join("CLAUDE.md"), "run `pnpm typecheck` after edits").unwrap();
+        std::fs::write(dir.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
         rewrite_for_npm(&dir);
+        assert!(!dir.join("pnpm-lock.yaml").exists(), "npm cannot read pnpm's lockfile, so it must not be left behind");
         let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(v["permissions"]["allow"][0], "Bash(npm run typecheck)");
         assert_eq!(v["permissions"]["allow"][1], "Bash(git diff*)");
@@ -753,6 +785,11 @@ mod tests {
         assert_eq!(site.dev.as_deref(), Some("node_modules/.bin/next dev -p {port}"));
         assert!(Path::new(&site.path).join("node_modules/.bin/next").exists());
         assert!(Path::new(&site.path).join(".claude/settings.json").exists());
+        // The name has to reach the page, not just the app's own config: site.ts is what the
+        // title, the header, the footer, the social card and the sitemap all read.
+        let site_ts = std::fs::read_to_string(Path::new(&site.path).join("site.ts")).unwrap();
+        assert!(site_ts.contains(r#"name: "My Test Site","#), "site.ts still says: {site_ts}");
+        assert!(!site_ts.contains("New site"), "no placeholder name may survive");
         let _ = std::fs::remove_dir_all(&parent);
     }
 }

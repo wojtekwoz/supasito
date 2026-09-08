@@ -6,6 +6,7 @@ import { PlanRows } from "./Usage";
 import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, hasLongContext } from "../models";
 import { UI_GROUPS } from "./ui";
 import { cx } from "../util";
+import { openExternal } from "../backend";
 
 export function NewSiteDialog() {
   const ns = useStore((s) => s.newSite);
@@ -224,6 +225,11 @@ export function DiffDialog() {
   );
 }
 
+const FEEDBACK_EMAIL = "yo@wozu.co";
+// Subject only: the body stays empty so people write in their own words, and openExternal hands the
+// mailto: to the default mail app (a plain anchor opens nothing in the Tauri webview).
+const FEEDBACK_MAILTO = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent("Supasito feedback")}`;
+
 // A stable empty list: a selector that returned a fresh `[]` each render would keep zustand re-rendering.
 const NO_HIDDEN: string[] = [];
 
@@ -236,7 +242,7 @@ export function SettingsDialog() {
   const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
   const hidden = useStore((s) => s.settings.hidden) ?? NO_HIDDEN;
   const setHidden = useStore((s) => s.setHidden);
-  const [tab, setTab] = useState<"claude" | "interface">("claude");
+  const [tab, setTab] = useState<"claude" | "interface" | "feedback">("claude");
   const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits", effort: "", fastMode: false });
   const [customModel, setCustomModel] = useState(false);
   useEffect(() => {
@@ -261,7 +267,16 @@ export function SettingsDialog() {
         <div className="tabs" role="tablist">
           <button role="tab" aria-selected={tab === "claude"} className={cx(tab === "claude" && "on")} onClick={() => setTab("claude")}>Claude</button>
           <button role="tab" aria-selected={tab === "interface"} className={cx(tab === "interface" && "on")} onClick={() => setTab("interface")}>Interface</button>
+          <button role="tab" aria-selected={tab === "feedback"} className={cx(tab === "feedback" && "on")} onClick={() => setTab("feedback")}>Got feedback?</button>
         </div>
+        {tab === "feedback" && (
+          <>
+            <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 12.5 }}>Something broken, missing, or in the way? Tell me.</p>
+            <div className="foot" style={{ justifyContent: "flex-start" }}>
+              <button className="btn primary" onClick={() => void openExternal(FEEDBACK_MAILTO)}>Send feedback</button>
+            </div>
+          </>
+        )}
         {tab === "interface" && (
           <>
             <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 12.5 }}>Untick what you don't use. Changes apply right away and stay until you tick them back; keyboard shortcuts keep working.</p>

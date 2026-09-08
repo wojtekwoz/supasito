@@ -25,7 +25,10 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   `SUPASITO_PATH=/usr/bin:/bin` (bare Mac) while `pnpm dev` serves the UI on 1420.
 - Recording a CLI failure shape: `ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p … --output-format stream-json`
   for offline (10 retries, ~3 min), `HOME=<empty dir>` for signed out. Put the recorded lines in a reducer test.
-- `pnpm release --install --zip` = the unsigned "underground" build; signing needs a Developer ID (see README).
+- `pnpm release --install --zip` builds, installs and zips. Signing and notarization are on when
+  `.env.release` sets the Apple variables listed at the top of `scripts/release.sh` (Developer ID
+  identity + App Store Connect API key; key material lives outside the repo, nothing secret in git).
+  Without them the same command still produces the unsigned "underground" build.
 - `pnpm release [--install]` builds Supasito.app (and copies it to /Applications).
 
 ## Where things are

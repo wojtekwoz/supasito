@@ -2,7 +2,7 @@
 
 Supasito is a Mac app for changing a website by describing the change. You tell Claude Code what you want, watch the live site update in the same window, and publish when it looks right. The site stays an ordinary code folder on your Mac: no accounts, no cloud, no file format of its own.
 
-**Version 0.1. macOS only. Not yet signed.** It has been used on one Mac so far. Read [What to expect](#what-to-expect) before you install.
+**Version 0.1. macOS only. Signed and notarized by Apple.** It has been used on one Mac so far. Read [What to expect](#what-to-expect) before you install.
 
 ## Is it for you?
 
@@ -36,21 +36,15 @@ Supasito checks all of these when it starts and shows one line per missing tool,
 
 ## Install
 
-There is no signed download yet. Pick one of the two ways.
+Pick one of the two ways.
 
 ### From a zip
 
 Use this when someone built `Supasito-<version>-macos.zip` for you (see [Build a zip for someone else](#working-on-supasito)).
 
 1. Unzip it and drag **Supasito.app** into **Applications**.
-2. Clear the quarantine flag once. macOS refuses to open the app otherwise, because it is not notarized:
-
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Supasito.app
-   ```
-
-   Or open the app once, dismiss the warning, then click **Open Anyway** under System Settings → Privacy & Security.
-3. Open Supasito from Applications.
+2. Open Supasito from Applications. The build is signed and notarized, so macOS opens it after the
+   usual "downloaded from the internet" confirmation. No `xattr` step.
 
 ### From source
 
@@ -155,13 +149,14 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 
 - Used seriously on one Mac with Next.js and Astro sites. Plain Vite, SvelteKit and Nuxt 4 were each tried once from a fresh scaffold, and so was a pnpm-workspace monorepo with the site in `apps/web`.
 - Most of that use was in development mode. The packaged app you install here has had less.
-- Not signed or notarized, hence the one-time quarantine step.
+- Signed with a Developer ID certificate and notarized by Apple, so Gatekeeper opens it without a warning.
 - No auto-update. Replace the app to update it.
 - Bugs and questions: [github.com/wojtekwoz/supasito/issues](https://github.com/wojtekwoz/supasito/issues).
 
 ## If something goes wrong
 
-- **"Supasito is damaged and can't be opened"**: the quarantine flag. Run the `xattr` command from [From a zip](#from-a-zip).
+- **"Supasito is damaged and can't be opened"**: the download was corrupted, or it is an old unsigned
+  build. Download the zip again; releases from 0.1 on are notarized.
 - **The checklist says Claude Code is not found** but it is installed: open Settings (⌘,) and set **Claude path** to what `which claude` prints in Terminal.
 - **"Not signed in"**: run `claude auth login` in Terminal, finish in the browser, then click **Check again**.
 - **The preview says the dev server didn't start**: open the log (terminal icon). Missing Node.js or uninstalled packages are the usual causes, and the card offers to install. A server that never opens a port turns into an error after 90 seconds.
@@ -186,7 +181,7 @@ pnpm test               # transcript reducer, route mapping, cargo test
 pnpm release            # Supasito.app; --install copies it to /Applications, --zip adds the zip, --dmg a disk image
 ```
 
-- **Build a zip for someone else**: `pnpm release --install --zip` writes `release/Supasito-<version>-macos.zip`. It is unsigned, so tell the recipient about the quarantine step. Signing and notarization run when the Apple variables listed at the top of `scripts/release.sh` are set in `.env.release`; that needs a Developer ID Application certificate, and the path has not been exercised with a real one yet.
+- **Build a zip for someone else**: `pnpm release --install --zip` writes `release/Supasito-<version>-macos.zip`. Signing and notarization run when the Apple variables listed at the top of `scripts/release.sh` are set in `.env.release` (gitignored); without them the build still works but the recipient needs the quarantine step. The signed path was exercised end to end on 2026-09-08: notarization accepted, ticket stapled, and a quarantined copy unzipped on this Mac was accepted by Gatekeeper as "Notarized Developer ID".
 - **Smoke tests against the real CLI**: `SUPASITO_SMOKE_PROMPT="Change the hero headline" pnpm tauri dev`. Scenarios and knobs are in `src-tauri/src/smoke.rs`.
 - **Where things are**: `src/` is the React UI (rail, session, preview), `src-tauri/src/` the Rust core (agent bridge, dev-server supervisor, sites, publish), `starters/next/` the "New site" starter.
 - **More**: [CLAUDE.md](CLAUDE.md) for conventions and sharp edges, [PLAN.md](PLAN.md) for the thesis, decisions and next milestone, [CHANGELOG.md](CHANGELOG.md) for what was built and verified when.

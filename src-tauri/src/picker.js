@@ -22,13 +22,13 @@
     box.setAttribute('data-open-overlay', '');
     Object.assign(box.style, {
       position: 'fixed', pointerEvents: 'none', zIndex: '2147483646', boxSizing: 'border-box',
-      border: '1.5px solid #2743D6', background: 'rgba(39,67,214,0.08)', borderRadius: '2px',
+      border: '1.5px solid #FF5A3C', background: 'rgba(255,90,60,0.10)', borderRadius: '2px',
       left: '0', top: '0', width: '0', height: '0', display: 'none', transition: 'all 40ms linear'
     });
     label = document.createElement('div');
     Object.assign(label.style, {
       position: 'absolute', left: '-1.5px', top: '-22px', padding: '2px 6px', font: '11px/16px -apple-system, system-ui, sans-serif',
-      background: '#2743D6', color: '#fff', borderRadius: '3px 3px 0 0', whiteSpace: 'nowrap', maxWidth: '360px', overflow: 'hidden', textOverflow: 'ellipsis'
+      background: '#FF5A3C', color: '#1A0F0B', borderRadius: '3px 3px 0 0', whiteSpace: 'nowrap', maxWidth: '360px', overflow: 'hidden', textOverflow: 'ellipsis'
     });
     box.appendChild(label);
     (document.body || document.documentElement).appendChild(box);

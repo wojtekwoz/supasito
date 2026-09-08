@@ -166,9 +166,9 @@ export function Preview() {
                 <>
                   <h3>Dependencies aren't installed</h3>
                   <p>This site needs its packages before the dev server can start.</p>
-                  {noNode && <p style={{ color: "#C0392B" }}>Node.js isn't installed, so nothing can be installed yet. Get the LTS from nodejs.org, then come back.</p>}
+                  {noNode && <p className="danger">Node.js isn't installed, so nothing can be installed yet. Get the LTS from nodejs.org, then come back.</p>}
                   {newSite.running && <div className="log">{newSite.log.slice(-12).join("\n") || "Installing…"}</div>}
-                  {newSite.error && <p style={{ color: "#C0392B" }}>{newSite.error}</p>}
+                  {newSite.error && <p className="danger">{newSite.error}</p>}
                   <div><button className="btn primary" disabled={newSite.running || noNode} onClick={() => void installDeps(site.id)}>{newSite.running ? "Installing…" : `Run ${site.packageManager ?? "npm"} install`}</button></div>
                 </>
               ) : !site.dev ? (
@@ -193,7 +193,7 @@ export function Preview() {
               ) : dev?.status === "error" || dev?.status === "stopped" ? (
                 <>
                   <h3>{dev.status === "error" ? "The dev server didn't start" : "The dev server stopped"}</h3>
-                  {noNode && <p style={{ color: "#C0392B" }}>Node.js isn't installed, so the dev server can't run. Get the LTS from nodejs.org, then try again.</p>}
+                  {noNode && <p className="danger">Node.js isn't installed, so the dev server can't run. Get the LTS from nodejs.org, then try again.</p>}
                   <div className="log">{devLog.slice(-14).join("\n") || dev.command}</div>
                   <div><button className="btn primary" onClick={() => void restartDev(site.id)}>Try again</button></div>
                 </>

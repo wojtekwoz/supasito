@@ -124,7 +124,12 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 5. **Failure-path pass.** *Done except rate limit (session 12):* not logged in and offline recorded from the real CLI (offline = 10 silent retries over ~3 min, now shown live in the Working row); rate limit covered by the CLI's own strings, not provoked; publish sign-in failure and dev server without Node have hints. A dev server crash mid-session is the existing "stopped" card; a taken port is the "Port N is taken" card (session 18, verified by the `ports` smoke scenario).
 6. **Exercise the review fixes by hand.** *Session 12:* never-opens-a-port verified in the real app (error after 90 s, child killed); cancel during commit verified in the mock (deploy never ran); undo with untracked files is unit-tested in Rust. *Session 17:* undo verified against the real CLI by the `undo` smoke scenario (the command's own `undo_files`: tracked file restored, created file deleted, repo clean); fast site switching verified in the mock, which found a real race (the old server's `stopped` landing on the restart), fixed in the store. Remaining: `undoTurn`'s UI guards (isGit, committedAt, markUndone) and site switching in the Tauri window are mock-verified only.
 
-Then decide from use whether anything else deserves building. Default answer: no.
+7. **Auto-update.** Pulled out of the backlog now that signing exists and a build can reach other
+   people: without it, every fix asks them to download the app again. Tauri's updater plugin, the
+   same Developer ID, a manifest on GitHub Releases. See §9.
+
+Then decide from use whether anything else deserves building. Default answer: no. Version by version,
+§9.
 
 ## 8a. Exact model, effort, fast mode, reasoning (built 2026-09-06; see CHANGELOG session 14)
 
@@ -165,12 +170,67 @@ closes §8.1 on its own.
 
 - (2026-09-08) Trial started on the signed 0.1.0 build. Nothing logged yet.
 
-## 9. Backlog (deferred on purpose)
+## 9. Roadmap
+
+Each version is a claim you can make honestly when it ends, not a feature list. The thesis holds:
+almost everything below is confidence, not surface. Anything that would add a pane, a mode or a
+concept to learn belongs in §9a, not here.
+
+**v0.1 — it exists, and it installs. (Now.)** Signed with a Developer ID, notarized, stapled;
+Gatekeeper opens it with no warning. Used seriously by one person, on one machine, on two real sites.
+The honest claim stops there.
+
+**v0.2 — usable by someone who isn't you.** The six items in §8. Ordered by what blocks what:
+
+1. *The week on the release app* (§8.1). Everything else is guesswork until this runs, because it is
+   the only step that can surface a fault nobody thought to test for. Papercuts land in §8c.
+2. *Links and clipboard proved in the Tauri window.* Session 22 rebuilt the checklist around external
+   links and click-to-copy commands, then noted that neither was tried in the real webview — only in
+   the browser mock. The whole first-run story rests on them, so this is the cheapest high-value check
+   left and it gates item 3.
+3. *A fresh macOS user account reaches a working preview* following only the app's own text (§8.2's
+   open acceptance). A new account is the honest test: no Homebrew, no Node, no Claude Code, no git
+   identity. Session 22 wrote a line for each of those; nobody has walked the whole path.
+4. *A second Mac runs the zip* (§8.4's remainder). Different hardware, different macOS, no developer
+   tools. The notarized zip makes this a five-minute test on any Mac you can borrow.
+5. *Auto-update.* Moved up from the old backlog, and the one addition to §8. It was deferred while
+   there was nothing to distribute; now a signed build can reach other people, and a fix that cannot
+   reach them is not shipped. Signing was its prerequisite and is done: Tauri's updater plugin signs
+   the manifest with the same Developer ID and can serve it from GitHub Releases. It costs one new
+   surface, a "restart to update" line, which is the least the loop can pay for staying current.
+6. *The rest of §8's remainders*: rate limit provoked rather than inferred from the CLI's strings,
+   `undoTurn`'s UI guards and site switching exercised in the Tauri window rather than the mock.
+
+The claim at the end: a person who is not you installs Supasito, follows only what the app tells them,
+and publishes a site without asking you anything.
+
+**v0.3 — survives other people's projects.** Everything so far assumes projects shaped like yours.
+Known holes, all from §7: a monorepo with the site at the repository root, Nuxt with a custom srcDir,
+and the frameworks exercised exactly once each from a fresh scaffold rather than from a real codebase.
+Session listing also re-reads every JSONL head on each site switch, which is fine at a few dozen
+sessions and not at a few hundred; caching by file mtime is the fix and belongs here, when people with
+long histories exist. The claim: someone points Supasito at a project you have never seen and it works,
+or says precisely why not.
+
+**v0.4 — honest over a long session.** Two numbers the app shows have never been watched end to end:
+context fullness through a full 200k window with a real compaction, and fast mode actually running at
+`usage.speed: "fast"` rather than reporting that it is on. Both are currently argued from the CLI's
+schema and the docs. Cost per turn has the same shape of risk. The claim: the numbers by the composer
+are ones you would defend.
+
+**v1.0 — recommendable.** Nothing new; the previous three held up under other people's use for long
+enough that you would tell a stranger to install it. Windows is the open question at this point, and
+the answer may stay no. macOS-first is a decision (D9), not an accident, and a second platform costs
+the WebView2 mixed-content policy, the all-frames injection, process groups and the Dock APIs.
+
+## 9a. Not on the roadmap (deferred on purpose)
 
 - Windows build (WebView2 mixed-content policy, all-frames script, process groups; no Dock APIs).
-- Second agent backend behind the same `agent://` events.
-- Session-list caching by file mtime.
-- Auto-update.
+  Revisited at v1.0, not before.
+- Second agent backend behind the same `agent://` events. The `agent://` boundary keeps it possible;
+  building it now would be the second most important thing.
+- Everything on the §2 cut list: Inbox, Workflows, Agents, CMS, Brand, Campaigns, custom views,
+  multiplayer, analytics. Still cut.
 
 ## 10. Sources
 

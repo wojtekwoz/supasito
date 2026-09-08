@@ -31,6 +31,9 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   identity + App Store Connect API key; key material lives outside the repo, nothing secret in git).
   Without them the same command still produces the unsigned "underground" build.
 - `pnpm release [--install]` builds Supasito.app (and copies it to /Applications).
+- **The release-app trial is running** (PLAN §8.1): the user works in `/Applications/Supasito.app`,
+  not `tauri dev`. Do not start `pnpm tauri dev` without saying so — the two share the app-state
+  file. A fix only reaches the installed app after `pnpm release --install`. Papercuts go in PLAN §8c.
 
 ## Where things are
 - `src-tauri/src/agent/claude.rs` — the only place that speaks Claude Code's stream-json control

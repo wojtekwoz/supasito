@@ -101,10 +101,26 @@ pnpm release [--install]       # Supasito.app (optionally into /Applications)
 
 ## 8. Next milestone — v0.2 "usable by someone who isn't you"
 
-1. **Live on the release app for a week.** `pnpm release --install`, quit `tauri dev`, use Supasito.app for real work. Log every papercut. Acceptance: a list of things that bit, or the honest absence of one.
+1. **Live on the release app for a week.** `pnpm release --install`, quit `tauri dev`, use Supasito.app for real work. Log every papercut under §8c. Acceptance: a list of things that bit, or the honest absence of one.
+
+   *Why the installed app and not dev mode.* Nearly all use so far has been `pnpm tauri dev`: a debug
+   binary, the UI served by Vite with hot reload, and a relaunch on every Rust edit. The release app
+   differs in ways tests do not reach. Optimized code hits the dev-server and site-switch races at
+   different timings than the debug build and the mock. The UI comes from the bundle under the
+   production CSP, not from Vite on 1420. The starter is read from the app bundle's Resources, not the
+   repo. Launched from the Dock it inherits no shell environment, so `login_shell_path` in `state.rs`
+   is what finds `claude`, `node` and `git` — a path that barely matters in dev. The debug escape
+   hatches are compiled out: `SUPASITO_PATH` is `#[cfg(debug_assertions)]`, and the smoke scenarios do
+   not exist in a release build. And state accumulates across days rather than being wiped by the next
+   relaunch, so session lists grow and orphaned dev servers must be reaped rather than restarted away.
+
+   *Rules while the trial runs.* Do not run `pnpm tauri dev` alongside it; both read the same app-state
+   file, which is why `scripts/release.sh` refuses to build while a dev instance is alive. Changes do
+   not reach the installed app by themselves — `pnpm release --install` is what updates it, so a fix
+   made during the trial is invisible until someone rebuilds.
 2. **First-run checks that name what's missing.** *Built (session 12):* `toolchain.rs` + the checklist (session pane, welcome, Settings); Claude sign-in via `claude auth status`. Acceptance still open: a fresh macOS user account reaches a working preview following only the app's own text.
 3. **npm fallback for New site.** *Built (session 12):* pnpm if present, else npm, starter rules rewritten; the starter stays lockfile-free. *Acceptance closed (session 17):* on a PATH without pnpm the ignored cargo test created the site with npm (package-lock.json, rules rewritten) and its `next dev` answered.
-4. **Distributable build.** *Done (session 18).* Developer ID Application certificate (team AR9C3X8J27) and an App Store Connect API key for notarization; both referenced from `.env.release` (gitignored), key material in `~/.private/supasito-signing/`. `pnpm release --zip` signs with the hardened runtime, notarizes, staples and verifies. *Acceptance closed:* notarization accepted, and a copy unzipped from the zip with the quarantine flag set was accepted by Gatekeeper as "Notarized Developer ID". Remaining: a second Mac has still not run it.
+4. **Distributable build.** *Done (session 24).* Developer ID Application certificate (team AR9C3X8J27) and an App Store Connect API key for notarization; both referenced from `.env.release` (gitignored), key material in `~/.private/supasito-signing/`. `pnpm release --zip` signs with the hardened runtime, notarizes, staples and verifies. *Acceptance closed:* notarization accepted, and a copy unzipped from the zip with the quarantine flag set was accepted by Gatekeeper as "Notarized Developer ID". Remaining: a second Mac has still not run it.
 5. **Failure-path pass.** *Done except rate limit (session 12):* not logged in and offline recorded from the real CLI (offline = 10 silent retries over ~3 min, now shown live in the Working row); rate limit covered by the CLI's own strings, not provoked; publish sign-in failure and dev server without Node have hints. A dev server crash mid-session is the existing "stopped" card; a taken port is the "Port N is taken" card (session 18, verified by the `ports` smoke scenario).
 6. **Exercise the review fixes by hand.** *Session 12:* never-opens-a-port verified in the real app (error after 90 s, child killed); cancel during commit verified in the mock (deploy never ran); undo with untracked files is unit-tested in Rust. *Session 17:* undo verified against the real CLI by the `undo` smoke scenario (the command's own `undo_files`: tracked file restored, created file deleted, repo clean); fast site switching verified in the mock, which found a real race (the old server's `stopped` landing on the restart), fixed in the store. Remaining: `undoTurn`'s UI guards (isGit, committedAt, markUndone) and site switching in the Tauri window are mock-verified only.
 
@@ -139,6 +155,15 @@ Three knobs on the same loop: which model makes the change, how hard it thinks, 
 **Acceptance (all met in the mock, session 21).** With `?sites=many` the rail shows three starred rows plus "All sites… (14)" and Sessions stays visible without scrolling; starring from the dropdown moves the site into the rail immediately; unstarring the current site keeps it in the rail until another site is selected; typing "cl" in the filter leaves only ClarityOps; ⌘⇧O opens, Escape closes; a state file without the two fields loads unchanged (`cargo test`); with two sites and nothing starred the rail is identical to today's.
 
 **Cut.** Folders/groups, tags, drag-to-reorder, recents as a separate section in the rail, an "all sites" grid page, per-site icons or favicons. Each is a surface, none shortens the loop.
+
+## 8c. Papercuts from living on the release app
+
+Every annoyance from day-to-day use of `/Applications/Supasito.app`, however small: anything that made
+you pause, click twice, or wonder what the app was doing. Not only bugs. Date each one and say what you
+were trying to do; an entry nobody can reproduce is still worth having. Empty is a real result and
+closes §8.1 on its own.
+
+- (2026-09-08) Trial started on the signed 0.1.0 build. Nothing logged yet.
 
 ## 9. Backlog (deferred on purpose)
 

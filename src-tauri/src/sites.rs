@@ -107,7 +107,13 @@ impl Site {
             })
         });
 
-        self.needs_install = root.join("package.json").exists() && !root.join("node_modules").exists();
+        // Only when there is something to install: a manifest can list scripts and no dependencies at all
+        // (a plain-HTML site served by a one-liner), and `npm install` then creates no node_modules — flagging
+        // that site would leave the user on a card whose button can never clear it.
+        let has_deps = ["dependencies", "devDependencies", "optionalDependencies"]
+            .iter()
+            .any(|k| pkg.get(k).and_then(|d| d.as_object()).is_some_and(|d| !d.is_empty()));
+        self.needs_install = has_deps && !root.join("node_modules").exists();
 
         let host = if root.join("vercel.json").exists() || root.join(".vercel").exists() { Some("vercel") }
             else if root.join("wrangler.toml").exists() || root.join("wrangler.jsonc").exists() || root.join("wrangler.json").exists() { Some("cloudflare") }
@@ -580,6 +586,18 @@ mod tests {
         assert_eq!(site.package_manager.as_deref(), Some("pnpm"));
         assert_eq!(site.dev.as_deref(), Some("pnpm run dev --port {port}"));
         assert!(site.needs_install);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_manifest_without_dependencies_needs_no_install() {
+        let dir = std::env::temp_dir().join(format!("open-detect-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A plain-HTML site: scripts, no dependencies. `npm install` would create no node_modules here,
+        // so treating it as "needs install" is a dead end the user cannot clear.
+        std::fs::write(dir.join("package.json"), r#"{"scripts":{"dev":"python3 -m http.server 4173"}}"#).unwrap();
+        let site = Site::from_path(dir.to_str().unwrap()).unwrap();
+        assert!(!site.needs_install);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

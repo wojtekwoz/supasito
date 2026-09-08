@@ -36,7 +36,8 @@ export function Preview() {
   const siteBusy = useStore((s) => (s.currentSiteId ? (s.sessions[s.currentSiteId] ?? []).some((x) => s.transcripts[x.id]?.busy) : false));
   const sites = useStore((s) => s.sites);
   const siteName = (id: string | null | undefined) => sites.find((x) => x.id === id)?.name;
-  const installDeps = useStore((s) => s.installDeps);
+  const prepareSite = useStore((s) => s.prepareSite);
+  const fixPreview = useStore((s) => s.fixPreview);
   const noNode = useStore((s) => !!s.tools && !s.tools.node.ok);
   const newSite = useStore((s) => s.newSite);
   const gitInit = useStore((s) => s.gitInit);
@@ -166,12 +167,17 @@ export function Preview() {
             <div className="box">
               {site.needsInstall ? (
                 <>
-                  <h3>Dependencies aren't installed</h3>
-                  <p>This site needs its packages before the dev server can start.</p>
-                  {noNode && <p className="danger">Node.js isn't installed, so nothing can be installed yet. Get the LTS from nodejs.org, then come back.</p>}
-                  {newSite.running && <div className="log">{newSite.log.slice(-12).join("\n") || "Installing…"}</div>}
-                  {newSite.error && <p className="danger">{newSite.error}</p>}
-                  <div><button className="btn primary" disabled={newSite.running || noNode} onClick={() => void installDeps(site.id)}>{newSite.running ? "Installing…" : `Run ${site.packageManager ?? "npm"} install`}</button></div>
+                  <h3 style={newSite.running ? { display: "flex", alignItems: "center", gap: 10 } : undefined}>{newSite.running && <span className="spinner" />}{newSite.running ? "Getting this site ready" : "This site needs a few pieces first"}</h3>
+                  <p>Websites are built from parts made by other people, and this one's parts aren't on your Mac yet. Supasito can fetch them — it usually takes a minute.</p>
+                  {noNode && <p className="danger">One thing first: this needs Node.js, which isn't on this Mac yet. Install the LTS version from nodejs.org, then come back here.</p>}
+                  {newSite.running && <div className="log">{newSite.log.slice(-12).join("\n") || "Fetching…"}</div>}
+                  {newSite.error && <><p className="danger">That didn't work: {newSite.error}</p><p>Claude can look at the folder and sort it out for you.</p></>}
+                  {siteBusy && <p>Claude is on it; the preview starts when the turn ends.</p>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn primary" disabled={newSite.running || noNode || siteBusy} onClick={() => void prepareSite(site.id)}>{newSite.running ? "Getting ready…" : newSite.error ? "Try again" : "Get this site ready"}</button>
+                    {newSite.error && <button className="btn" disabled={siteBusy} onClick={() => void fixPreview(site.id, "installing what the site needs failed")}>Ask Claude to fix it</button>}
+                  </div>
+                  <p style={{ fontSize: 12 }}>Under the hood this runs <code>{site.packageManager ?? "npm"} install</code> in the site folder.</p>
                 </>
               ) : !site.dev ? (
                 <>
@@ -194,10 +200,14 @@ export function Preview() {
                 </>
               ) : dev?.status === "error" || dev?.status === "stopped" ? (
                 <>
-                  <h3>{dev.status === "error" ? "The dev server didn't start" : "The dev server stopped"}</h3>
-                  {noNode && <p className="danger">Node.js isn't installed, so the dev server can't run. Get the LTS from nodejs.org, then try again.</p>}
+                  <h3>{dev.status === "error" ? "The preview couldn't start" : "The preview stopped"}</h3>
+                  <p>{dev.status === "error" ? "The command that serves this site locally didn't come up. Claude can read the output below and fix it." : "The command that serves this site locally is no longer running."}</p>
+                  {noNode && <p className="danger">Node.js isn't on this Mac, so the site can't be served. Install the LTS version from nodejs.org, then try again.</p>}
                   <div className="log">{devLog.slice(-14).join("\n") || dev.command}</div>
-                  <div><button className="btn primary" onClick={() => void restartDev(site.id)}>Try again</button></div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn primary" onClick={() => void restartDev(site.id)}>Try again</button>
+                    <button className="btn" disabled={siteBusy} onClick={() => void fixPreview(site.id, `the dev command \`${dev.command || site.dev}\` ${dev.status === "error" ? "does not start" : "stopped on its own"}`)}>Ask Claude to fix it</button>
+                  </div>
                 </>
               ) : (
                 <>

@@ -13,6 +13,18 @@ export const SETUP_PREVIEW_PROMPT = `Supasito shows this site in a live preview 
 2. Give the project a "dev" script in package.json that serves the site locally with live reload. For plain HTML use Vite (npm install -D vite, script "dev": "vite"); Supasito appends "--port <n>" when it runs the script. If the server cannot take --port that way, write supasito.json with {"dev": "<command> {port}"} instead; {port} is replaced at start.
 3. Install the dependencies so node_modules exists, and add node_modules to .gitignore if this is a git repository.
 4. Reply with one line saying what you set up.`;
+
+/** Sent when the preview exists on paper but does not work: the install failed, or the dev command errors out. */
+export const fixPreviewPrompt = (problem: string, log: string) => `Supasito shows this site in a live preview by running its dev server, and that is not working right now: ${problem}
+
+The last output was:
+${log || "(no output)"}
+
+Get this site running locally, without changing how the site looks:
+1. Read package.json and any supasito.json here and work out why the command fails.
+2. Fix it: install what is missing, correct the "dev" script, or write supasito.json with {"dev": "<command> {port}"} — Supasito replaces {port} when it starts the server, and otherwise appends "--port <n>" to the package.json script, so use supasito.json whenever the server cannot take its port that way.
+3. Run the command once yourself to check it serves the site, then stop it again.
+4. Reply with one line saying what you fixed.`;
 /** Resolves after `n` animation frames, i.e. once the DOM changes made so far have been painted; after 250 ms regardless, since
  *  frames stop while the window is occluded and waiting longer would not help the capture. */
 const paints = (n: number) => new Promise<void>((resolve) => {
@@ -20,6 +32,13 @@ const paints = (n: number) => new Promise<void>((resolve) => {
   step(n);
   setTimeout(resolve, 250);
 });
+/** A repair asked for from the preview pane is its own task, so it starts on a clean session rather than
+ *  landing at the end of whatever the user was talking about. An untouched draft is already clean. */
+function startFreshSession(get: () => Store) {
+  const id = get().currentSessionId;
+  if (id && (get().transcripts[id]?.items.length ?? 0) > 0) get().newSession();
+}
+
 export type Device = "desktop" | "tablet" | "phone";
 
 type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy" };
@@ -84,7 +103,8 @@ export type Store = {
   setSiteMenuOpen: (open: boolean) => void;
   favoriteSite: (id: string, on: boolean) => Promise<void>;
   removeSite: (id: string) => Promise<void>;
-  installDeps: (id: string) => Promise<void>;
+  /** The preview card's one button: install what the site needs, and hand over to Claude if that is not enough. */
+  prepareSite: (id: string) => Promise<void>;
   createSite: (name: string) => Promise<void>;
   openNewSite: (open: boolean) => void;
   newSession: () => void;
@@ -104,6 +124,8 @@ export type Store = {
   redetectSite: (siteId: string) => Promise<void>;
   /** Supasito's first task for a folder with no dev server: ask Claude to set one up. */
   setupPreview: (siteId: string) => Promise<void>;
+  /** Hand a broken install or a dev server that will not start to Claude, with the output it failed on. */
+  fixPreview: (siteId: string, problem: string) => Promise<void>;
   gitInit: (siteId: string) => Promise<void>;
   undoTurn: (sessionId: string, resultId: string) => Promise<void>;
   previewEvent: (kind: string, detail: string) => void;
@@ -453,15 +475,20 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  async installDeps(id) {
+  async prepareSite(id) {
     set({ newSite: { ...get().newSite, running: true, log: [], error: null } });
+    let site: Site;
     try {
-      const site = await api.siteInstall(id);
-      set({ sites: get().sites.map((s) => (s.id === id ? site : s)), newSite: { ...get().newSite, running: false } });
-      if (site.dev) void get().startDev(id);
+      site = await api.siteInstall(id);
     } catch (e) {
       set({ newSite: { ...get().newSite, running: false, error: String(e) } });
+      return; // the card shows what went wrong and offers Claude as the next step
     }
+    set({ sites: get().sites.map((s) => (s.id === id ? site : s)), newSite: { ...get().newSite, running: false } });
+    // Installing is only half the job. If the site is previewable now, show it; if the install left it
+    // where it was (a manifest with nothing to install, no dev command), Claude takes it from here.
+    if (site.dev && !site.needsInstall) { void get().startDev(id); return; }
+    await get().setupPreview(id);
   },
 
   openNewSite(open) { set({ newSite: { open, running: false, log: [], error: null } }); },
@@ -604,7 +631,14 @@ export const useStore = create<Store>((set, get) => ({
   },
   async setupPreview(siteId) {
     if (get().currentSiteId !== siteId) return;
+    startFreshSession(get);
     await get().send(SETUP_PREVIEW_PROMPT);
+  },
+  async fixPreview(siteId, problem) {
+    if (get().currentSiteId !== siteId) return;
+    const log = [...(get().newSite.error ? [get().newSite.error!] : []), ...(get().devLogs[siteId] ?? [])].slice(-30).join("\n");
+    startFreshSession(get);
+    await get().send(fixPreviewPrompt(problem, log));
   },
   async refreshGit(siteId) {
     try { const g = await api.siteGitStatus(siteId); set({ git: { ...get().git, [siteId]: g } }); } catch { /* ignore */ }

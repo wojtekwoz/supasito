@@ -168,7 +168,13 @@ you pause, click twice, or wonder what the app was doing. Not only bugs. Date ea
 were trying to do; an entry nobody can reproduce is still worth having. Empty is a real result and
 closes §8.1 on its own.
 
-- (2026-09-08) Trial started on the signed 0.1.0 build. Nothing logged yet.
+- (2026-09-08) Trial started on the signed 0.1.0 build.
+- (2026-09-08) Opened `~/supasito` (the landing page: a package.json with scripts and no dependencies)
+  and the preview showed "Dependencies aren't installed" with a "Run npm install" button that did
+  nothing. It was doing exactly what it said — `npm install` on a manifest with no dependencies creates
+  no `node_modules`, so the check that raised the card could never be cleared by the button that card
+  offered. Fixed in session 28; the wider lesson is that every dead-end card in the preview pane now
+  hands off to Claude rather than repeating an action that has already failed.
 
 ## 9. Roadmap
 

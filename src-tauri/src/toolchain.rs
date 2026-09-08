@@ -65,6 +65,10 @@ pub struct Toolchain {
     pub git: Tool,
     /// The one "New site" will use: pnpm when present, else npm (which ships with Node).
     pub package_manager: Option<PackageManager>,
+    /// Homebrew is on the PATH, so the checklist can offer `brew install …` instead of an installer.
+    pub has_brew: bool,
+    /// git knows a `user.email`. Without one the first Publish fails at `git commit`, so say it up front.
+    pub git_identity: bool,
 }
 
 /// First executable named `bin` on `path_env` (a colon-separated PATH).
@@ -109,6 +113,21 @@ fn git_version(out: &str) -> String {
     out.split_whitespace().nth(2).unwrap_or(out.trim()).to_string()
 }
 
+/// `git config --get user.email`, read from the home folder so a repo-local identity elsewhere
+/// doesn't stand in for the one a new site will use. Exit code is 1 when unset, hence the None arm.
+async fn git_identity(git_path: &str, path_env: &str) -> bool {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let out = tokio::time::timeout(
+        Duration::from_secs(8),
+        Command::new(git_path).args(["config", "--get", "user.email"]).current_dir(home).env("PATH", path_env).env_remove("CLAUDECODE").output(),
+    )
+    .await;
+    match out {
+        Ok(Ok(o)) if o.status.success() => !String::from_utf8_lossy(&o.stdout).trim().is_empty(),
+        _ => false,
+    }
+}
+
 async fn package_manager(path_env: &str) -> Option<PackageManager> {
     for name in ["pnpm", "npm"] {
         if let Some(p) = which(name, path_env) {
@@ -145,7 +164,12 @@ async fn claude(configured: Option<&str>, path_env: &str) -> ClaudeStatus {
 
 pub async fn check(configured_claude: Option<&str>, path_env: &str) -> Toolchain {
     let (claude, node, git, package_manager) = tokio::join!(claude(configured_claude, path_env), node(path_env), git(path_env), package_manager(path_env));
-    Toolchain { claude, node, git, package_manager }
+    let git_identity = match (git.ok, git.path.as_deref()) {
+        (true, Some(p)) => git_identity(p, path_env).await,
+        _ => false,
+    };
+    let has_brew = which("brew", path_env).is_some();
+    Toolchain { claude, node, git, package_manager, has_brew, git_identity }
 }
 
 #[cfg(test)]
@@ -186,5 +210,7 @@ mod tests {
         assert!(t.node.ok && t.node.version.as_deref().map(|v| v.chars().next().unwrap().is_ascii_digit()).unwrap_or(false), "{:?}", t.node);
         assert!(t.git.ok && t.git.version.is_some(), "{:?}", t.git);
         assert!(t.package_manager.is_some(), "{:?}", t.package_manager);
+        // Set on any Mac that has ever committed; the checklist warns when it isn't.
+        assert!(t.git_identity, "git user.email is unset, so Publish would fail at commit");
     }
 }

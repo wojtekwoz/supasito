@@ -1,39 +1,101 @@
 // What this Mac has: Claude Code (and its sign-in), Node.js, git, a package manager. One line
-// per missing tool saying how to get it, so a first-time user can follow the app's own text.
+// per missing tool saying where to get it and what to run, so a first-time user can follow the
+// app's own text. Links go through openExternal — in the Tauri webview a plain anchor opens nothing.
 import { useState, type ReactNode } from "react";
+import { openExternal } from "../backend";
 import { useStore } from "./store";
 import type { Toolchain } from "../types";
-import { cx } from "../util";
+import { copyText, cx } from "../util";
 
-type Row = { key: string; label: string; ok: boolean | null; detail: string; fix?: ReactNode; optional?: boolean };
+type Row = { key: string; label: string; ok: boolean | null; detail: string; fix?: ReactNode; optional?: boolean; warn?: boolean };
+
+/** The bundled starter is Next 16, which needs Node 20 or newer. */
+const NODE_MIN = 20;
+
+/** A link that opens in the user's browser instead of navigating the app window. */
+function Ext({ href, children }: { href: string; children: ReactNode }) {
+  return <a href={href} onClick={(e) => { e.preventDefault(); void openExternal(href); }}>{children}</a>;
+}
+
+/** A Terminal command; clicking copies it, so nobody has to retype `xcode-select --install`.
+ *  `block` puts a long one on its own line, where wrapping still reads as one command. */
+function Cmd({ children, block }: { children: string; block?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <code
+      className={cx("cmd", block && "block")}
+      title="Click to copy"
+      onClick={(e) => {
+        const el = e.currentTarget;
+        void copyText(children).then((ok) => {
+          if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1400); return; }
+          // Clipboard refused: select the command so ⌘C still works.
+          const sel = window.getSelection();
+          if (!sel) return;
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        });
+      }}
+    >
+      {copied ? "Copied" : children}
+    </code>
+  );
+}
+
+/** Leading number of a version string ("24.4.0" → 24), or null when it isn't one. */
+function major(version?: string | null): number | null {
+  const n = Number.parseInt(String(version ?? "").split(".")[0] ?? "", 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Node is installed but older than the starter can use. */
+export function nodeTooOld(t: Toolchain | null): boolean {
+  const m = t?.node.ok ? major(t.node.version) : null;
+  return m !== null && m < NODE_MIN;
+}
 
 /** True when the session or the preview cannot work yet. */
 export function claudeBlocked(t: Toolchain | null): boolean {
   return !!t && (!t.claude.ok || t.claude.loggedIn === false);
 }
 export function toolsMissing(t: Toolchain | null): boolean {
-  return !!t && (claudeBlocked(t) || !t.node.ok || !t.git.ok || (t.node.ok && !t.packageManager));
+  return !!t && (claudeBlocked(t) || !t.node.ok || nodeTooOld(t) || !t.git.ok || (t.node.ok && !t.packageManager));
+}
+/** Everything is here, but something will bite later — git has no name to save versions under. */
+export function toolsWarn(t: Toolchain | null): boolean {
+  return !!t && t.gitIdentity === false;
 }
 
 export function toolRows(t: Toolchain | null): Row[] {
   if (!t) return ["Claude Code", "Node.js", "git", "Package manager"].map((label) => ({ key: label, label, ok: null, detail: "Checking…" }));
   const c = t.claude;
+  const brew = !!t.hasBrew;
   const claude: Row = !c.ok
-    ? { key: "claude", label: "Claude Code", ok: false, detail: "Not found", fix: <>Install it from <a href="https://claude.com/claude-code" target="_blank" rel="noreferrer">claude.com/claude-code</a>, then run <code>claude</code> once in Terminal and sign in.</> }
+    ? { key: "claude", label: "Claude Code", ok: false, detail: "Not found", fix: <>Install it from <Ext href="https://claude.com/claude-code">claude.com/claude-code</Ext>, then run <Cmd>claude</Cmd> once in Terminal and sign in.</> }
     : c.loggedIn === false
-      ? { key: "claude", label: "Claude Code", ok: false, detail: `${c.version ?? ""} · not signed in`.trim(), fix: <>In Terminal, run <code>claude auth login</code> and finish the sign-in in your browser.</> }
+      ? { key: "claude", label: "Claude Code", ok: false, detail: `${c.version ?? ""} · not signed in`.trim(), fix: <>In Terminal, run <Cmd>claude auth login</Cmd> and finish the sign-in in your browser.</> }
       : { key: "claude", label: "Claude Code", ok: true, detail: [c.version, c.loggedIn ? `signed in${c.authMethod && c.authMethod !== "none" ? ` (${c.authMethod})` : ""}` : null].filter(Boolean).join(" · ") };
-  const node: Row = t.node.ok
-    ? { key: "node", label: "Node.js", ok: true, detail: t.node.version ?? "" }
-    : { key: "node", label: "Node.js", ok: false, detail: "Not found", fix: <>Runs the site's dev server. Install the LTS from <a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a> (or <code>brew install node</code>); npm comes with it.</> };
-  const git: Row = t.git.ok
-    ? { key: "git", label: "git", ok: true, detail: t.git.version ?? "" }
-    : { key: "git", label: "git", ok: false, detail: t.git.path === "/usr/bin/git" ? "Command line tools not installed" : "Not found", fix: <>Keeps the history behind Undo and Publish. In Terminal, run <code>xcode-select --install</code> (Apple's command line tools include git).</> };
+  const getNode = <>Download the LTS installer from <Ext href="https://nodejs.org/en/download">nodejs.org</Ext>{brew ? <> or run <Cmd>brew install node</Cmd></> : null}, then click Check again.</>;
+  const node: Row = !t.node.ok
+    ? { key: "node", label: "Node.js", ok: false, detail: "Not found", fix: <>Runs your site's dev server, and npm comes with it. {getNode}</> }
+    : nodeTooOld(t)
+      ? { key: "node", label: "Node.js", ok: false, warn: true, detail: `${t.node.version} · too old`, fix: <>The starter needs Node {NODE_MIN} or newer. {getNode}</> }
+      : { key: "node", label: "Node.js", ok: true, detail: t.node.version ?? "" };
+  const gitFor = <>Supasito uses git for Undo and Publish. </>;
+  const git: Row = !t.git.ok
+    ? t.git.path === "/usr/bin/git"
+      ? { key: "git", label: "git", ok: false, detail: "Command line tools not installed", fix: <>{gitFor}In Terminal, run <Cmd>xcode-select --install</Cmd>, click Install in the dialog macOS opens, and wait for it to finish.</> }
+      : { key: "git", label: "git", ok: false, detail: "Not found", fix: <>{gitFor}Install it from <Ext href="https://git-scm.com/downloads/mac">git-scm.com</Ext>{brew ? <> or run <Cmd>brew install git</Cmd></> : <> — or run <Cmd>xcode-select --install</Cmd>, which includes git</>}.</> }
+    : t.gitIdentity === false
+      ? { key: "git", label: "git", ok: false, warn: true, detail: `${t.git.version ?? ""} · no name set`.trim(), fix: <>git saves each version under your name, and won't save any until it has one. In Terminal, run both:<Cmd block>git config --global user.name "Your Name"</Cmd><Cmd block>git config --global user.email you@example.com</Cmd></> }
+      : { key: "git", label: "git", ok: true, detail: t.git.version ?? "" };
   const pm = t.packageManager;
   const packageManager: Row = pm
-    ? { key: "pm", label: "Packages", ok: true, detail: `${pm.name} ${pm.version ?? ""}`.trim(), fix: pm.name === "npm" ? <>Works. pnpm is faster for new sites: <code>npm install -g pnpm</code>.</> : undefined, optional: true }
+    ? { key: "pm", label: "Packages", ok: true, detail: `${pm.name} ${pm.version ?? ""}`.trim(), fix: pm.name === "npm" ? <>Works as is. pnpm installs new sites faster: <Cmd>npm install -g pnpm</Cmd> (<Ext href="https://pnpm.io/installation">pnpm.io</Ext>).</> : undefined, optional: true }
     : t.node.ok
-      ? { key: "pm", label: "Packages", ok: false, detail: "npm not found", fix: <>npm normally comes with Node.js; reinstall Node from <a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a>.</> }
+      ? { key: "pm", label: "Packages", ok: false, detail: "npm not found", fix: <>Installs what the site needs. npm normally comes with Node.js — reinstall it from <Ext href="https://nodejs.org/en/download">nodejs.org</Ext>.</> }
       : { key: "pm", label: "Packages", ok: null, detail: "Comes with Node.js", optional: true };
   return [claude, node, git, packageManager];
 }
@@ -48,11 +110,11 @@ export function Checklist({ compact }: { compact?: boolean }) {
   return (
     <div className={cx("checklist", compact && "compact")}>
       {rows.map((r) => (
-        <div key={r.key} className={cx("check", r.ok === true && "ok", r.ok === false && !r.optional && "missing")}>
-          <span className={cx("check-dot", r.ok === true && "ok", r.ok === false && "no")} />
+        <div key={r.key} className={cx("check", r.ok === true && "ok", r.ok === false && (r.warn ? "warn" : !r.optional && "missing"))}>
+          <span className={cx("check-dot", r.ok === true && "ok", r.ok === false && (r.warn ? "warn" : "no"))} />
           <span className="label">{r.label}</span>
           <span className="detail">{r.detail}</span>
-          {r.fix && (r.ok !== true || !compact) && <span className="fix">{r.fix}</span>}
+          {r.fix && <span className="fix">{r.fix}</span>}
         </div>
       ))}
       <div className="actions">

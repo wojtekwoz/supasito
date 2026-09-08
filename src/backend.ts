@@ -117,6 +117,12 @@ async function tauriBackend(): Promise<Backend> {
   };
 }
 
+/** Open a link in the user's browser. A plain `<a target="_blank">` opens nothing in the Tauri
+ *  webview, so every external link in the UI has to come through here. */
+export async function openExternal(url: string): Promise<void> {
+  (await backend()).openExternal(url);
+}
+
 let backendPromise: Promise<Backend> | null = null;
 export function backend(): Promise<Backend> {
   if (!backendPromise) {

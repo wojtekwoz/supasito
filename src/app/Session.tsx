@@ -6,7 +6,7 @@ import { Markdown } from "../ui/Markdown";
 import { Bubble, Collapse, Crosshair, Doc, Globe, Minus, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
-import { Checklist, claudeBlocked, toolsMissing } from "./Checklist";
+import { Checklist, claudeBlocked, nodeTooOld, toolsMissing, toolsWarn } from "./Checklist";
 import { UsageButton } from "./Usage";
 import type { Selection } from "../types";
 import { useShown } from "./ui";
@@ -192,15 +192,16 @@ function Welcome() {
   const openNewSite = useStore((s) => s.openNewSite);
   const tools = useStore((s) => s.tools);
   const missing = toolsMissing(tools);
+  const warn = toolsWarn(tools);
   return (
     <section className="pane session">
       <div className="titlebar drag" data-tauri-drag-region />
       <div className="welcome">
-        <div className={cx("box", missing && "wide")}>
-          {missing ? (
+        <div className={cx("box", (missing || warn) && "wide")}>
+          {missing || warn ? (
             <>
               <h2>Before you start</h2>
-              <p>Supasito builds sites with tools already on your Mac. Get the missing ones, then check again.</p>
+              <p>Supasito builds sites with tools already on your Mac. {missing ? "Get the missing ones, then check again." : "One of them needs a minute of setup, or Publish will stop later."}</p>
               <Checklist />
             </>
           ) : (
@@ -211,7 +212,7 @@ function Welcome() {
           )}
           <div className="actions">
             <button className="btn primary" onClick={() => void addSiteFromFolder()}>Open a folder…</button>
-            <button className="btn" onClick={() => openNewSite(true)} disabled={!!tools && !tools.node.ok} title={tools && !tools.node.ok ? "Needs Node.js" : undefined}>New site</button>
+            <button className="btn" onClick={() => openNewSite(true)} disabled={!!tools && (!tools.node.ok || nodeTooOld(tools))} title={tools && !tools.node.ok ? "Needs Node.js" : tools && nodeTooOld(tools) ? "Needs a newer Node.js" : undefined}>New site</button>
           </div>
         </div>
       </div>

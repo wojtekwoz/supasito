@@ -65,10 +65,12 @@ export function Preview() {
       if (d.type === "selected") setSelection(d.selection);
       else if (d.type === "pick") setPicking(!!d.active);
       else if (d.type === "ready") { setPreviewInfo(String(d.page ?? "/"), String(d.title ?? "")); previewEvent("ready", `${d.page ?? "/"} "${d.title ?? ""}"`); }
+      // Escape pressed while the page had the keyboard: the only thing it means out here is "leave full width".
+      else if (d.type === "key" && d.key === "Escape") { if (useStore.getState().previewFull) setPreviewFull(false); }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [setSelection, setPicking, setPreviewInfo, previewEvent]);
+  }, [setSelection, setPicking, setPreviewInfo, previewEvent, setPreviewFull]);
 
   useEffect(() => { post({ type: "pick", active: picking }); }, [picking]);
 
@@ -123,7 +125,7 @@ export function Preview() {
   return (
     <section className="pane preview">
       <div className="titlebar drag" data-tauri-drag-region>
-        {shown.fullWidth && <button className={cx("icon-btn", full && "on")} title={full ? "Back to the sidebar and conversation (⌘\\)" : "Preview at full width (⌘\\)"} onClick={() => setPreviewFull(!full)}>{full ? <Collapse /> : <Expand />}</button>}
+        {shown.fullWidth && <button className={cx("icon-btn", full && "on")} title={full ? "Back to the sidebar and conversation (⌘\\ or Esc)" : "Preview at full width (⌘\\)"} onClick={() => setPreviewFull(!full)}>{full ? <Collapse /> : <Expand />}</button>}
         {shown.devices && <div className="seg">
           {(["desktop", "tablet", "phone"] as Device[]).map((d) => (
             <button key={d} className={cx("icon-btn", device === d && "on")} title={d} onClick={() => setDevice(d)}>

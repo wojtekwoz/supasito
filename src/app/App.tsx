@@ -50,6 +50,8 @@ export default function App() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); useStore.getState().setSettingsOpen(true); return; }
       if (e.key === "Escape") {
+        // The composer handles its own Escape (closing the slash-command list) and marks the event handled.
+        if (e.defaultPrevented) return;
         const st = useStore.getState();
         if (st.diff.open) { st.closeDiff(); return; }
         if (st.rules.open && !st.rules.saving) { st.closeRules(); return; }
@@ -60,7 +62,9 @@ export default function App() {
         if (st.siteMenuOpen) { st.setSiteMenuOpen(false); return; }
         if (st.settingsOpen) { st.setSettingsOpen(false); return; }
         const cur = st.currentSessionId ? st.transcripts[st.currentSessionId] : null;
-        if (cur?.busy && !(e.target instanceof HTMLInputElement)) void st.interrupt();
+        if (cur?.busy && !(e.target instanceof HTMLInputElement)) { void st.interrupt(); return; }
+        // Nothing else to dismiss: Escape leaves full-width mode, like the arrows in the panel and ⌘\.
+        if (st.previewFull && st.currentSiteId) st.setPreviewFull(false);
       }
     };
     window.addEventListener("keydown", onKey);

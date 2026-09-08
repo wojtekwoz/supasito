@@ -169,6 +169,13 @@
     if (active && e.key === 'Escape') { setActive(false); post({ type: 'pick', active: false }); }
   }, true);
 
+  // While the page has the keyboard, Escape never reaches the app window, so full-width mode could not be
+  // left from inside the preview: forward it. Last in the bubble phase, so a page that uses Escape itself
+  // (its own dialog, say) keeps it — it has either handled the event or stopped it before this runs.
+  window.addEventListener('keydown', (e) => {
+    if (!active && e.key === 'Escape' && !e.defaultPrevented) post({ type: 'key', key: 'Escape' });
+  });
+
   const announce = () => post({ type: 'ready', page: pagePath(), title: document.title });
   window.addEventListener('DOMContentLoaded', announce);
   window.addEventListener('load', announce);

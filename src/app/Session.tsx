@@ -69,7 +69,7 @@ export function SessionPane() {
           <i />
           <span className="tools" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
             <button className="icon-btn" title="Minimise the conversation" onClick={() => setPanelMin(true)}><Minus /></button>
-            <button className="icon-btn" title="Back to the sidebar and conversation (⌘\)" onClick={() => setPreviewFull(false)}><Collapse /></button>
+            <button className="icon-btn" title="Back to the sidebar and conversation (⌘\ or Esc)" onClick={() => setPreviewFull(false)}><Collapse /></button>
           </span>
         </div>
       )}

@@ -89,7 +89,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 
 - **The preview follows the page** Claude edits.
 - **Device widths**: desktop, tablet (834 px) and phone (390 px). Reload and Open in browser sit next to them.
-- **Full width**: the arrows button at the left of the preview toolbar, or **⌘\**, hides the sidebar and lets the page fill the window. The conversation floats over the bottom-left corner, as small as it gets, so you can keep talking: drag it by the grip along its top edge to anywhere over the page (double-click the grip to put it back), minimise it to a small pill with the − at the grip's right (the pill's dot shows Claude working or waiting for an approval; an approval request, a picked element or ⌘N bring the panel back), it fades while you pick an element, stays out of screenshots and moves above the dev log. Model, mode and other sessions need the full layout; the arrows next to the − in the panel, the toolbar button or ⌘\ bring it back.
+- **Full width**: the arrows button at the left of the preview toolbar, or **⌘\**, hides the sidebar and lets the page fill the window. The conversation floats over the bottom-left corner, as small as it gets, so you can keep talking: drag it by the grip along its top edge to anywhere over the page (double-click the grip to put it back), minimise it to a small pill with the − at the grip's right (the pill's dot shows Claude working or waiting for an approval; an approval request, a picked element or ⌘N bring the panel back), it fades while you pick an element, stays out of screenshots and moves above the dev log. Model, mode and other sessions need the full layout; the arrows next to the − in the panel, the toolbar button, ⌘\ or Esc bring it back (Esc works with the page itself focused, unless the page uses the key).
 - **Every turn ends with a line**: duration, cost, "N files changed" (click it for the diff) and **Undo**.
 - **Undo** restores the files that turn changed and removes the files it created. It needs git in the folder. Turns from before your last commit lose it.
 
@@ -123,9 +123,9 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 | --- | --- |
 | Enter | Send, or queue while Claude works |
 | Shift+Enter | New line |
-| Esc | Stop picking, or stop the current turn |
+| Esc | Stop picking, stop the current turn, or leave full width |
 | ⌘⇧E | Pick an element |
-| ⌘\ | Preview at full width |
+| ⌘\ | Preview at full width (Esc leaves it) |
 | ⌘N | New session |
 | ⌘, | Settings |
 

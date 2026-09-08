@@ -175,6 +175,10 @@ closes §8.1 on its own.
   no `node_modules`, so the check that raised the card could never be cleared by the button that card
   offered. Fixed in session 28; the wider lesson is that every dead-end card in the preview pane now
   hands off to Claude rather than repeating an action that has already failed.
+- (2026-09-08) Same site, next wall: Supasito appended `--port 4322` to a dev script that serves with
+  `python3 -m http.server`, which takes its port as a positional argument and exits on the flag. Supasito
+  had invented a flag for a command it did not recognise. Fixed in session 29 — it now runs an
+  unrecognised script as written and asks the OS where the server went.
 
 ## 9. Roadmap
 

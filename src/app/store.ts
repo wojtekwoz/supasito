@@ -7,10 +7,10 @@ import { routeForFile } from "../routes";
 export const DRAFT = "draft";
 
 /** Sent by the "Set up the preview" button. Detection reads package.json's `dev` script (a known framework's
- *  binary gets its port flag, anything else `npm run dev -- --port {port}`) or supasito.json's `dev`. */
+ *  binary gets its port flag, an unrecognised script is run as-is on the port it picks) or supasito.json's `dev`. */
 export const SETUP_PREVIEW_PROMPT = `Supasito shows this site in a live preview by running its dev server, but this folder has no dev command yet. Set that up without changing the site itself:
 1. Look at what is here: plain HTML, a framework without a dev script, or something else.
-2. Give the project a "dev" script in package.json that serves the site locally with live reload. For plain HTML use Vite (npm install -D vite, script "dev": "vite"); Supasito appends "--port <n>" when it runs the script. If the server cannot take --port that way, write supasito.json with {"dev": "<command> {port}"} instead; {port} is replaced at start.
+2. Give the project a "dev" script in package.json that serves the site locally with live reload. For plain HTML use Vite (npm install -D vite, script "dev": "vite"). Supasito runs the script and reads the address the server prints, so a script that picks its own port is fine; to let Supasito choose the port instead, write supasito.json with {"dev": "<command> {port}"} — {port} is replaced at start.
 3. Install the dependencies so node_modules exists, and add node_modules to .gitignore if this is a git repository.
 4. Reply with one line saying what you set up.`;
 
@@ -22,7 +22,7 @@ ${log || "(no output)"}
 
 Get this site running locally, without changing how the site looks:
 1. Read package.json and any supasito.json here and work out why the command fails.
-2. Fix it: install what is missing, correct the "dev" script, or write supasito.json with {"dev": "<command> {port}"} — Supasito replaces {port} when it starts the server, and otherwise appends "--port <n>" to the package.json script, so use supasito.json whenever the server cannot take its port that way.
+2. Fix it: install what is missing, correct the "dev" script, or write supasito.json with {"dev": "<command> {port}"} — Supasito replaces {port} when it starts the server, and otherwise runs the command as written and reads the address it prints.
 3. Run the command once yourself to check it serves the site, then stop it again.
 4. Reply with one line saying what you fixed.`;
 /** Resolves after `n` animation frames, i.e. once the DOM changes made so far have been painted; after 250 ms regardless, since

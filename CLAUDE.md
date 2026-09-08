@@ -44,7 +44,9 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - `src-tauri/src/devserver.rs` — dev-server supervisor. A port counts as free only if it binds *and* refuses a
   connection (a wildcard listener passes a loopback bind on macOS), and as ready only when the listener is in our own
   process group. Readiness must stay dual-stack
-  (Vite/Astro bind `[::1]` only); the port the server prints wins.
+  (Vite/Astro bind `[::1]` only); the port the server prints wins, and when it prints nothing we can parse,
+  `lsof` says which port our own process group listens on and that wins instead (python buffers its banner
+  behind the pipe). Only a dev command that recognises `{port}` gets one — see `sites.rs`.
 - `src-tauri/src/picker.js` — injected into every frame (`initialization_script_for_all_frames`);
   posts selections to the parent. Server Component owners come from React 19 component-info objects.
 - `src/agent/transcript.ts` — reducer from stream-json to transcript items. Items are immutable

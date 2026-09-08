@@ -207,12 +207,35 @@ fn conflict_port(line: &str) -> Option<u16> {
     Some(0)
 }
 
-/// A line said "taken" without naming the port: the one we asked for if something listens there,
-/// else a port the command itself names that is busy, else the one we asked for.
-fn resolve_conflict(asked: u16, command: &str) -> u16 {
-    if accepts(asked) { return asked; }
-    let named = command.split(|c: char| !c.is_ascii_digit()).filter_map(|d| d.parse::<u16>().ok()).find(|p| *p >= 1024 && *p != asked && accepts(*p));
-    named.unwrap_or(asked)
+/// A line said "taken" without naming the port: the one we asked for if something listens there, else a
+/// port the command itself names that is busy. `None` when neither holds — a command that picks its own
+/// port names none in its text (`npm run dev` hides what the script runs), and blaming the port we happen
+/// to have offered would put a holder on screen that has nothing to do with the failure.
+fn resolve_conflict(asked: u16, command: &str) -> Option<u16> {
+    if accepts(asked) { return Some(asked); }
+    command.split(|c: char| !c.is_ascii_digit()).filter_map(|d| d.parse::<u16>().ok()).find(|p| *p >= 1024 && *p != asked && accepts(*p))
+}
+
+/// The port our own dev server ended up on, found by asking the OS which TCP port the process group we
+/// spawned is listening on. A server that chooses its own port and never prints a line we can parse would
+/// otherwise sit until the 90s timeout: `python3 -m http.server 4173` announces its address on stdout,
+/// which is block-buffered behind a pipe and so never arrives, and its request log never names the port.
+async fn group_listen_port(pgid: u32) -> Option<u16> {
+    let out = tokio::process::Command::new("lsof").args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpgn"]).output().await.ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut group = 0;
+    for line in text.lines() {
+        match line.chars().next() {
+            // `-F` prints one field per line: p<pid>, then g<pgid>, then n<addr>:<port> per socket.
+            Some('g') => group = line[1..].parse::<u32>().unwrap_or(0),
+            Some('n') if group == pgid && pgid != 0 => {
+                let port = line.rsplit(':').next().and_then(|d| d.parse::<u16>().ok());
+                if let Some(p) = port.filter(|p| *p > 0) { return Some(p); }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Who listens on `port` right now (`lsof`, then `ps` for the command line and `lsof` again for the cwd).
@@ -513,6 +536,7 @@ async fn watch(l: Launch, pid: u32) {
     let running = l.running.clone();
     let app = l.app.clone();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+    let mut rounds = 0u32;
     loop {
         if tokio::time::Instant::now() > deadline {
             let mut r = running.lock().await;
@@ -565,6 +589,27 @@ async fn watch(l: Launch, pid: u32) {
                 }
             }
         }
+        // Nothing on the port we offered. Every two seconds, ask the OS where our own server actually
+        // went: a command that picks its own port is right to do so, and following it beats timing out.
+        if !announced && rounds % 8 == 7 {
+            if let Some(p) = group_listen_port(ours).await {
+                let mut r = running.lock().await;
+                if r.pid != pid || r.child.is_none() { return; }
+                if p != r.info.port {
+                    let line = format!("This site's server is listening on port {p}, not {}; following it.", r.info.port);
+                    r.log.push(line.clone());
+                    let _ = app.emit("dev://log", json!({ "siteId": l.site.id, "line": line }));
+                    r.info.port = p;
+                    r.info.url = format!("http://localhost:{p}");
+                }
+                r.announced_port = Some(p);
+                r.foreign = None;
+                r.info.status = "ready".into();
+                let _ = app.emit("dev://status", &r.info);
+                break;
+            }
+        }
+        rounds += 1;
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     // keep watching for exit
@@ -603,7 +648,7 @@ async fn exited(l: &Launch, pid: u32, status: std::process::ExitStatus) {
         r.log.push(format!("dev server exited with {status}"));
         (r.conflict_port.filter(|_| r.info.status != "ready"), r.info.port, r.tried.clone(), r.info.status == "ready", r.info.command.clone())
     };
-    let conflict = conflict.map(|p| if p == 0 { resolve_conflict(asked, &command) } else { p });
+    let conflict = conflict.and_then(|p| if p == 0 { resolve_conflict(asked, &command) } else { Some(p) });
     let Some(port) = conflict else {
         let mut r = running.lock().await;
         if r.pid != pid { return; }
@@ -728,9 +773,23 @@ mod tests {
         let idle = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         // that listener is dropped at once, and macOS tears it down a few milliseconds later
         assert!((0..40).any(|_| !accepts(idle) || { std::thread::sleep(Duration::from_millis(25)); false }));
-        assert_eq!(resolve_conflict(busy, "python3 -m http.server 1"), busy);
-        assert_eq!(resolve_conflict(idle, &format!("python3 -m http.server {busy}")), busy);
-        assert_eq!(resolve_conflict(idle, "python3 -m http.server 1"), idle);
+        assert_eq!(resolve_conflict(busy, "python3 -m http.server 1"), Some(busy));
+        assert_eq!(resolve_conflict(idle, &format!("python3 -m http.server {busy}")), Some(busy));
+        assert_eq!(resolve_conflict(idle, "npm run dev"), None, "no port to blame is better than the wrong one");
+    }
+
+    /// The OS knows where a server went even when it never says so: this is the only thing standing
+    /// between a dev command that picks its own port and the 90-second timeout.
+    #[test]
+    fn finds_the_port_our_own_process_group_listens_on() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let out = std::process::Command::new("ps").args(["-o", "pgid=", "-p", &std::process::id().to_string()]).output().unwrap();
+        let pgid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert_eq!(rt.block_on(group_listen_port(pgid)), Some(port));
+        assert_eq!(rt.block_on(group_listen_port(0)), None, "pgid 0 must never match anything");
+        drop(l);
     }
 
     /// A wildcard listener with SO_REUSEADDR (what Node does, and what std does here) must count as taken.

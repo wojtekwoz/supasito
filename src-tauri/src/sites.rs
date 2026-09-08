@@ -10,7 +10,8 @@ pub struct Site {
     pub id: String,
     pub path: String,
     pub name: String,
-    /// Dev command. May contain `{port}`; otherwise Supasito appends a port flag it infers.
+    /// Dev command. `{port}` is replaced with the port Supasito picked; a command without it serves on
+    /// whatever port it chooses and devserver.rs follows the one the server prints.
     pub dev: Option<String>,
     /// Production publish command.
     pub publish: Option<String>,
@@ -99,11 +100,22 @@ impl Site {
                     return Some(format!("node_modules/.bin/{bin} {flag} {{port}}"));
                 }
             }
-            Some(match pm.as_str() {
-                "npm" => format!("npm run dev -- {flag} {{port}}"),
-                "yarn" => format!("yarn run dev {flag} {{port}}"),
-                "bun" => format!("bun run dev {flag} {{port}}"),
-                _ => format!("pnpm run dev {flag} {{port}}"),
+            // Only a framework we recognise gets a port flag appended, because only then do we know the
+            // flag exists. An unknown script may serve with python, php, ruby or a server of its own,
+            // and `--port <n>` it does not understand kills a site that would have run: `python3 -m
+            // http.server 4173` takes its port as a positional argument and exits on the flag. Without
+            // one the server picks its own port, PORT is in its environment, and devserver.rs follows
+            // the port it prints — Supasito only loses the ability to move it, which the port-conflict
+            // card already explains.
+            let run = match pm.as_str() {
+                "npm" => "npm run dev --",
+                "yarn" => "yarn run dev",
+                "bun" => "bun run dev",
+                _ => "pnpm run dev",
+            };
+            Some(match bin {
+                Some(_) => format!("{run} {flag} {{port}}"),
+                None => run.trim_end_matches(" --").to_string(),
             })
         });
 
@@ -586,6 +598,19 @@ mod tests {
         assert_eq!(site.package_manager.as_deref(), Some("pnpm"));
         assert_eq!(site.dev.as_deref(), Some("pnpm run dev --port {port}"));
         assert!(site.needs_install);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unrecognised_dev_script_keeps_its_own_port() {
+        let dir = std::env::temp_dir().join(format!("open-detect-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Python's http.server takes its port as a positional argument and exits on `--port`, so
+        // appending a flag to a script we do not recognise breaks a site that would have run.
+        std::fs::write(dir.join("package.json"), r#"{"scripts":{"dev":"python3 -m http.server 4173"}}"#).unwrap();
+        let site = Site::from_path(dir.to_str().unwrap()).unwrap();
+        assert_eq!(site.framework, None);
+        assert_eq!(site.dev.as_deref(), Some("npm run dev"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

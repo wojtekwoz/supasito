@@ -169,6 +169,25 @@ async fn ports(app: &AppHandle) -> i32 {
     let b2 = settle(fixed.id.clone()).await;
     check(b2.as_ref().map(|d| d.status == "ready" && d.port == 4321).unwrap_or(false), &format!("fixed-port site ready after freeing: {:?}", b2.as_ref().map(|d| (d.status.clone(), d.port))));
 
+    // D: the shape that started this — a package.json dev script that hardcodes its own port and cannot
+    // take an appended --port. Supasito must run it as written and find where it actually went, which no
+    // output can tell it: python's banner is block-buffered behind our pipe and never arrives.
+    eprintln!("[smoke] D: package.json script with a port of its own");
+    let own = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let p = dir.join("ports-d");
+    std::fs::create_dir_all(&p).unwrap();
+    std::fs::write(p.join("package.json"), format!(r#"{{"name":"ports-d","scripts":{{"dev":"python3 -m http.server {own} --bind 127.0.0.1"}}}}"#)).unwrap();
+    std::fs::write(p.join("index.html"), "<h1>d</h1>").unwrap();
+    let own_port = crate::sites::Site::from_path(p.to_str().unwrap()).unwrap();
+    check(own_port.dev.as_deref() == Some("npm run dev"), &format!("no port flag appended to a script we do not recognise: {:?}", own_port.dev));
+    let _ = state.dev.start(app.clone(), own_port.clone(), state.path_env.clone()).await;
+    let d = settle(own_port.id.clone()).await;
+    check(d.as_ref().map(|x| x.status == "ready" && x.port == own).unwrap_or(false), &format!("followed the server to its own port {own}: {:?}", d.as_ref().map(|x| (x.status.clone(), x.port))));
+    let served = tokio::process::Command::new("curl").args(["-s", &format!("http://127.0.0.1:{own}/")]).output().await
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    check(served.contains("<h1>d</h1>"), &format!("the preview URL serves the site: {served:?}"));
+    let _ = state.dev.stop(app, &own_port.id).await;
+
     let _ = holder.kill();
     let _ = std::fs::remove_dir_all(&dir);
     eprintln!("[smoke] ports: {failures} failure(s)");

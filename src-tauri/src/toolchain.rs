@@ -49,6 +49,17 @@ fn user_defaults() -> Option<ClaudeDefaults> {
     Some(parse_user_settings(&text))
 }
 
+/// Codex CLI (OpenAI), the second backend. Optional: the checklist needs one agent, not both.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexStatus {
+    pub ok: bool,
+    pub path: Option<String>,
+    pub version: Option<String>,
+    /// From `codex login status` ("Logged in using ChatGPT", exit 0; verified 0.149.0); None when it could not be asked.
+    pub logged_in: Option<bool>,
+}
+
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageManager {
@@ -61,6 +72,7 @@ pub struct PackageManager {
 #[serde(rename_all = "camelCase")]
 pub struct Toolchain {
     pub claude: ClaudeStatus,
+    pub codex: CodexStatus,
     pub node: Tool,
     pub git: Tool,
     /// The one "New site" will use: pnpm when present, else npm (which ships with Node).
@@ -162,14 +174,33 @@ async fn claude(configured: Option<&str>, path_env: &str) -> ClaudeStatus {
     ClaudeStatus { ok: true, path: Some(path), version, logged_in, auth_method, defaults: user_defaults() }
 }
 
+/// `codex login status` exits 0 and prints "Logged in using …" when signed in; anything else is signed out.
+pub fn parse_codex_login(status_ok: bool, text: &str) -> bool {
+    status_ok && text.to_ascii_lowercase().contains("logged in")
+}
+
+async fn codex(path_env: &str) -> CodexStatus {
+    let Some(path) = crate::agent::codex::locate(None, path_env).await else { return CodexStatus::default() };
+    let version = crate::agent::codex::version(&path, path_env).await;
+    let logged_in = tokio::time::timeout(
+        Duration::from_secs(15),
+        Command::new(&path).args(["login", "status"]).env("PATH", path_env).output(),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .map(|o| parse_codex_login(o.status.success(), &format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))));
+    CodexStatus { ok: true, path: Some(path), version, logged_in }
+}
+
 pub async fn check(configured_claude: Option<&str>, path_env: &str) -> Toolchain {
-    let (claude, node, git, package_manager) = tokio::join!(claude(configured_claude, path_env), node(path_env), git(path_env), package_manager(path_env));
+    let (claude, codex, node, git, package_manager) = tokio::join!(claude(configured_claude, path_env), codex(path_env), node(path_env), git(path_env), package_manager(path_env));
     let git_identity = match (git.ok, git.path.as_deref()) {
         (true, Some(p)) => git_identity(p, path_env).await,
         _ => false,
     };
     let has_brew = which("brew", path_env).is_some();
-    Toolchain { claude, node, git, package_manager, has_brew, git_identity }
+    Toolchain { claude, codex, node, git, package_manager, has_brew, git_identity }
 }
 
 #[cfg(test)]
@@ -193,6 +224,13 @@ mod tests {
         assert_eq!(parse_auth_status(r#"{"loggedIn": false, "authMethod": "none"}"#), (Some(false), Some("none".into())));
         assert_eq!(parse_auth_status(r#"{"loggedIn": true, "authMethod": "claude.ai", "email": "x"}"#), (Some(true), Some("claude.ai".into())));
         assert_eq!(parse_auth_status("error: unknown command 'auth'"), (None, None));
+    }
+
+    #[test]
+    fn codex_login_status_is_read_from_its_one_line() {
+        assert!(parse_codex_login(true, "Logged in using ChatGPT\n"));
+        assert!(!parse_codex_login(false, "Not logged in"));
+        assert!(!parse_codex_login(true, ""));
     }
 
     #[test]

@@ -40,6 +40,12 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
 - `src-tauri/src/agent/claude.rs` — the only place that speaks Claude Code's stream-json control
   protocol (verified on 2.1.257: `--permission-prompt-tool stdio` → `control_request/can_use_tool`).
   Keep protocol details here; the UI only sees `agent://message|permission|exit` events.
+- `src-tauri/src/agent/codex.rs` — the only place that speaks Codex's app-server protocol (JSON-RPC over stdio,
+  verified on codex-cli 0.149.0): one app-server per site, thread ids carried as `codex:<id>`, approvals shimmed
+  into the Claude-shaped `agent://permission` request. `src/agent/codex.ts` is its reducer; the fixture comes
+  from `node scripts/codex-probe.mjs <scratch repo>`. The model picker is the backend picker (`is_codex_model`).
+  CODEX.md is the plan and the edge cases. Smoke on Codex: `SUPASITO_SMOKE_MODEL=gpt-5.6-luna` with the debug
+  binary, `HOME=<empty dir> CODEX_HOME=~/.codex SUPASITO_PATH=$PATH` (see smoke.rs).
 - `src-tauri/src/toolchain.rs` — first-run checks (Node, pnpm/npm, git, Claude Code + `claude auth status`).
   The UI's `Checklist.tsx` renders it; the mock simulates each failure with `?tools=…` (list under `pnpm dev` above).
 - `src-tauri/src/updates.rs` — the only request the app makes on its own: once a day it asks

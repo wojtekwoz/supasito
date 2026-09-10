@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
 import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
-import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
+import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, emptySession, expirePermissions, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
+import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
+import { isCodexModel, modelShort } from "../models";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
@@ -335,13 +337,14 @@ export const useStore = create<Store>((set, get) => ({
           const rid = message.response?.request_id;
           if (typeof rid === "string") pendingControl.delete(rid);
         }
-        const cur = st.transcripts[sessionId] ?? emptySession();
+        const codex = backendOf(sessionId) === "codex";
+        const cur = st.transcripts[sessionId] ?? { ...emptySession(), backend: codex ? "codex" : "claude" };
         const before = cur.lastWrite?.seq ?? 0;
-        const changed = applyMessage(cur, message);
+        const changed = codex ? applyCodexMessage(cur, message) : applyMessage(cur, message);
         if (!st.transcripts[sessionId]) st.transcripts[sessionId] = cur;
         if (changed) set({ transcripts: bump(st.transcripts, sessionId) });
-        if (message?.type === "rate_limit_event") {
-          const windows = parseRateLimit(message.rate_limit_info);
+        if (message?.type === "rate_limit_event" || message?.method === "account/rateLimits/updated") {
+          const windows = codex ? parseCodexRateLimits(message.params) : parseRateLimit(message.rate_limit_info);
           if (windows.length) set({ planUsage: { windows, at: now() } });
         }
         // Follow the page Claude is editing, for the session that is on screen.
@@ -350,7 +353,7 @@ export const useStore = create<Store>((set, get) => ({
           const route = routeForFile(cur.lastWrite.file, site?.path);
           if (route && route !== st.previewPath) set({ navigateRequest: { path: route, seq: cur.lastWrite.seq } });
         }
-        if (message?.type === "result") {
+        if (message?.type === "result" || message?.method === "turn/completed") {
           const siteId = st.sites.find((s) => (st.sessions[s.id] ?? []).some((x) => x.id === sessionId))?.id ?? st.currentSiteId;
           if (siteId) void get().refreshGit(siteId);
           // A turn may have made the site previewable (the setup task, or an install Claude ran): look again.
@@ -360,6 +363,7 @@ export const useStore = create<Store>((set, get) => ({
           if (!document.hasFocus()) void api.requestAttention().catch(() => {});
           // A sign-out mid-session (token expired, `claude auth logout`) shows up as an auth error; re-check so the checklist takes over.
           if (message.is_error && isAuthFailure(message.result)) void get().recheckTools();
+          if (codex && message.params?.turn?.status === "failed" && isAuthFailure(message.params.turn.error?.message)) void get().recheckTools();
         }
       });
       await api.on("agent://permission", (req: PermissionRequest) => {
@@ -546,7 +550,9 @@ export const useStore = create<Store>((set, get) => ({
       const lines = await api.sessionTranscript(siteId, id);
       if (get().currentSiteId !== siteId) return;
       const st = get().transcripts[id] ?? emptySession();
-      if (st.items.length === 0) { for (const l of lines) applyMessage(st, l); st.resumed = st.items.length > 0; }
+      const apply = backendOf(id) === "codex" ? applyCodexMessage : applyMessage;
+      if (st.items.length === 0) { for (const l of lines) apply(st, l); st.resumed = st.items.length > 0; }
+      st.backend = backendOf(id);
       st.loaded = true;
       st.busy = st.busy && !!get().running[id];
       set({ transcripts: { ...get().transcripts, [id]: { ...st, items: [...st.items] } } });
@@ -775,6 +781,12 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) { get().showToast(String(e)); }
   },
   async setSessionModel(model) {
+    // A model on the other backend cannot take over a running conversation: its history lives in the other CLI's store.
+    const id = get().currentSessionId;
+    if (id && id !== DRAFT && model && (isCodexModel(model) ? "codex" : "claude") !== backendOf(id)) {
+      get().showToast(`This conversation runs on ${backendOf(id) === "codex" ? "Codex" : "Claude Code"}. Start a new chat to use ${modelShort(model)}.`);
+      return;
+    }
     await changeKnob(get, set, { model: model || null }, model ? (id) => api.agentSetModel(id, model) : null);
   },
   async setSessionEffort(effort) {

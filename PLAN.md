@@ -237,8 +237,9 @@ the WebView2 mixed-content policy, the all-frames injection, process groups and 
 
 - Windows build (WebView2 mixed-content policy, all-frames script, process groups; no Dock APIs).
   Revisited at v1.0, not before.
-- Second agent backend behind the same `agent://` events. The `agent://` boundary keeps it possible;
-  building it now would be the second most important thing.
+- Second agent backend behind the same `agent://` events — **now being built on the `codex-backend`
+  branch**, plan and edge cases in CODEX.md. The boundary held: one enum in agent/mod.rs, one reducer
+  in src/agent/codex.ts, no new pane. Whether it ships before v0.2 closes is the positioning call CODEX.md §2 names.
 - Everything on the §2 cut list: Inbox, Workflows, Agents, CMS, Brand, Campaigns, custom views,
   multiplayer, analytics. Still cut.
 

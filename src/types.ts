@@ -73,7 +73,9 @@ export type ClaudeStatus = Tool & { loggedIn?: boolean | null; authMethod?: stri
 /** What this Mac has. `packageManager` is the one New site will use: pnpm if present, else npm.
  *  `hasBrew` decides whether the checklist offers `brew install …`; `gitIdentity` is false when
  *  `git config user.email` is unset, which would otherwise only surface as a failed Publish. */
-export type Toolchain = { claude: ClaudeStatus; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null; hasBrew?: boolean; gitIdentity?: boolean };
+/** Codex CLI, the optional second backend; `loggedIn` from `codex login status`. */
+export type CodexStatus = Tool & { loggedIn?: boolean | null };
+export type Toolchain = { claude: ClaudeStatus; codex?: CodexStatus | null; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null; hasBrew?: boolean; gitIdentity?: boolean };
 /** `hidden` lists the interface elements switched off in Settings → Interface (keys in src/app/ui.ts).
  *  `updatesEnabled` is the once-a-day check for a newer Supasito, on unless Settings → Updates turns it off. */
 export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null; updatesEnabled?: boolean | null };

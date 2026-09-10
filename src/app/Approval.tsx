@@ -30,6 +30,7 @@ export function PermissionCard({ item, sessionId }: { item: PermItem; sessionId:
         <>
           <div className="desc">{relPath(String(i.file_path ?? ""), root)}</div>
           {"old_string" in i && <div className="diff"><div className="del">{String(i.old_string ?? "").slice(0, 800)}</div><div className="add">{String(i.new_string ?? "").slice(0, 800)}</div></div>}
+          {typeof i.diff === "string" && i.diff && <div className="cmd">{i.diff.slice(0, 800)}</div>}
         </>
       );
       break;
@@ -42,7 +43,7 @@ export function PermissionCard({ item, sessionId }: { item: PermItem; sessionId:
 
   return (
     <div className="card permission">
-      <div className="h"><Shield className="glyph" />Claude wants to use {name}</div>
+      <div className="h"><Shield className="glyph" />{sessionId.startsWith("codex:") ? "Codex" : "Claude"} wants to use {name}</div>
       {r.description && <div className="desc">{r.description}</div>}
       {body}
       {item.status === "pending" ? (

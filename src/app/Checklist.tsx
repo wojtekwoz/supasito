@@ -69,7 +69,7 @@ export function toolsWarn(t: Toolchain | null): boolean {
 }
 
 export function toolRows(t: Toolchain | null): Row[] {
-  if (!t) return ["Claude Code", "Node.js", "git", "Package manager"].map((label) => ({ key: label, label, ok: null, detail: "Checking…" }));
+  if (!t) return ["Claude Code", "Codex", "Node.js", "git", "Package manager"].map((label) => ({ key: label, label, ok: null, detail: "Checking…" }));
   const c = t.claude;
   const brew = !!t.hasBrew;
   const claude: Row = !c.ok
@@ -91,13 +91,20 @@ export function toolRows(t: Toolchain | null): Row[] {
     : t.gitIdentity === false
       ? { key: "git", label: "git", ok: false, warn: true, detail: `${t.git.version ?? ""} · no name set`.trim(), fix: <>git saves each version under your name, and won't save any until it has one. In Terminal, run both:<Cmd block>git config --global user.name "Your Name"</Cmd><Cmd block>git config --global user.email you@example.com</Cmd></> }
       : { key: "git", label: "git", ok: true, detail: t.git.version ?? "" };
+  // Codex is the optional second agent: never blocks, but say what was found so a GPT model is not a surprise.
+  const x = t.codex;
+  const codex: Row = !x?.ok
+    ? { key: "codex", label: "Codex", ok: null, detail: "Not installed", optional: true, fix: <>Optional: OpenAI's Codex runs the GPT models in the model picker. <Cmd>npm install -g @openai/codex</Cmd>{brew ? <> or <Cmd>brew install codex</Cmd></> : null}, then <Cmd>codex login</Cmd>.</> }
+    : x.loggedIn === false
+      ? { key: "codex", label: "Codex", ok: false, warn: true, detail: `${x.version ?? ""} · not signed in`.trim(), optional: true, fix: <>In Terminal, run <Cmd>codex login</Cmd> and finish the sign-in in your browser. Only needed for the GPT models.</> }
+      : { key: "codex", label: "Codex", ok: true, detail: [x.version, x.loggedIn ? "signed in" : null].filter(Boolean).join(" · "), optional: true };
   const pm = t.packageManager;
   const packageManager: Row = pm
     ? { key: "pm", label: "Packages", ok: true, detail: `${pm.name} ${pm.version ?? ""}`.trim(), fix: pm.name === "npm" ? <>Works as is. pnpm installs new sites faster: <Cmd>npm install -g pnpm</Cmd> (<Ext href="https://pnpm.io/installation">pnpm.io</Ext>).</> : undefined, optional: true }
     : t.node.ok
       ? { key: "pm", label: "Packages", ok: false, detail: "npm not found", fix: <>Installs what the site needs. npm normally comes with Node.js — reinstall it from <Ext href="https://nodejs.org/en/download">nodejs.org</Ext>.</> }
       : { key: "pm", label: "Packages", ok: null, detail: "Comes with Node.js", optional: true };
-  return [claude, node, git, packageManager];
+  return [claude, codex, node, git, packageManager];
 }
 
 export function Checklist({ compact }: { compact?: boolean }) {

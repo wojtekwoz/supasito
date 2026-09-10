@@ -277,6 +277,42 @@ exits on the flag. Supasito had made up a flag for a command it did not recognis
 - The two Claude prompts no longer tell it that Supasito appends `--port <n>`, because for the scripts those prompts are about, it doesn't.
 - Verified for real, not just in unit tests: `SUPASITO_SMOKE_SCENARIO=ports` run against the debug binary under a throwaway `HOME` (so the installed app's state and its running servers were untouched). A new case D builds the shape that started this — a package.json whose `dev` hardcodes a free port — and asserts the detected command is bare `npm run dev`, that the site reaches `ready` **on the port python chose**, and that the preview URL serves the file. All nine checks pass, the three pre-existing port-conflict cases included. Plus unit tests: `group_listen_port` against a real listener in this process's own group, and the detection rule.
 
+### Session 31 (2026-09-10) — Codex as a second backend, on the `codex-backend` branch
+The plan is CODEX.md; this session built its first three milestones. Every claim below was run through
+the real app binary (debug build, `HOME=<empty dir> CODEX_HOME=~/.codex SUPASITO_PATH=$PATH`) against
+codex-cli 0.149.0 with `SUPASITO_SMOKE_MODEL=gpt-5.6-luna`.
+
+- **The model picker is the backend picker.** `src/models.ts` lists GPT-5.6 Terra/Sol/Luna next to the
+  Claude models (ids from `model/list`); an OpenAI id makes `start_agent` spawn a Codex thread instead of a
+  claude process (`is_codex_model` in codex.rs). Switching a running conversation across backends is refused
+  with a toast — its history lives in the other CLI's store.
+- **`src-tauri/src/agent/codex.rs`** speaks the app-server protocol (JSON-RPC 2.0 over stdio): one
+  app-server per site hosting that site's threads, thread ids carried as `codex:<id>`, `agent://` events
+  unchanged. `agent/mod.rs` gains the `Agent` enum so lib.rs has one code path; `AppState::agent(id)` picks.
+  Approvals (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`) are shimmed into the
+  Claude-shaped `can_use_tool` request so `Approval.tsx` renders them unchanged; the file-change one carries
+  no diff, so the preceding `fileChange` item is joined by `itemId`. Every other server request is answered
+  with a JSON-RPC error, since an unanswered one blocks the turn forever. Orphaned app-servers are matched by
+  an argv marker (`-c supasito.site="<id>"`), never by name — the ChatGPT desktop app runs its own.
+- **`src/agent/codex.ts`** turns notifications into the same `Item[]`: reasoning folds into the assistant
+  bubble as thinking (needs `summary:"auto"` on `turn/start`, else it arrives empty), `fileChange.changes[].kind`
+  gives Undo its `created` flag without the `agent://fs` probe, `commandExecution` is a Bash row,
+  `thread/tokenUsage/updated` feeds the context ring with the real `modelContextWindow` (258 400 for Luna),
+  `account/rateLimits/updated` feeds the plan rows, and **cost is null** — the protocol carries no dollars, so
+  the row shows nothing rather than $0. Unknown item types render as a generic row. Fixture:
+  `src/agent/fixtures/codex-0.149.0-write-turn.jsonl`, recorded by `scripts/codex-probe.mjs`.
+- **Verified through the app:** a turn that writes a file and runs a command; both approval kinds asked for
+  and answered through `agent_respond`; `turn/interrupt` ending a turn as `interrupted` at 6 s with the next
+  turn working; a message sent mid-turn reaching Codex as `turn/steer` — it answers inside the same turn, so
+  the smoke's `queue` scenario now checks for both replies in one `turn/completed` on Codex.
+- **Toolchain and checklist:** `codex` located, versioned and asked `codex login status`; an optional Codex
+  row on the checklist that never blocks.
+- **Found the hard way:** a `match self.servers.lock().await.get(..)` scrutinee keeps its guard alive across
+  the arm, and the arm locked the same mutex — a deadlock that showed as "start_agent never returns".
+- **Not yet (CODEX.md §8, milestones 4–7):** the Codex model list fetched live, Codex threads in the
+  session list and replayed from `thread/read` (a resumed thread starts at its next turn), `?agent=codex` in
+  the mock, AGENTS.md for site rules, the deny reason as a steer verified live, images as data URLs verified.
+
 ### Session 30 (2026-09-08) — Supasito can update itself, and that is also the install count
 There was no updater at all: someone who downloaded 0.1.0 would never learn 0.2.0 existed. Fixing that
 also answers "how many users are there", because the honest way to count installs is a request the user

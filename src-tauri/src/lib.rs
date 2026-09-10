@@ -401,8 +401,32 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     let effort = std::env::var("SUPASITO_SMOKE_EFFORT").ok().or(effort);
     #[cfg(debug_assertions)]
     let fast_mode = std::env::var("SUPASITO_SMOKE_FAST").map(|v| v == "1").unwrap_or(fast_mode);
-    let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
     let preview = state.dev.status(site_id).await.map(|d| d.url);
+    let system = agent::system_prompt(&site, preview.as_deref());
+    // The model picker is the backend picker: an OpenAI model id means a Codex thread. Resuming keeps the
+    // backend the id names, whatever the current default.
+    let codex = match resume.as_deref() {
+        Some(id) => agent::codex::is_codex_session(id),
+        None => model.as_deref().map(agent::codex::is_codex_model).unwrap_or(false),
+    };
+    if codex {
+        let codex_path = agent::codex::locate(None, &state.path_env).await.ok_or("Codex was not found. Install it (`npm install -g @openai/codex` or `brew install codex`) and run `codex login`, or pick a Claude model.")?;
+        let model = model.filter(|m| agent::codex::is_codex_model(m)).unwrap_or_else(|| "gpt-5.6-luna".to_string());
+        let opts = agent::codex::StartOpts {
+            resume: resume.as_deref().map(|id| agent::codex::thread_id(id).to_string()),
+            site_id: site_id.to_string(),
+            cwd: site.path.clone(),
+            model,
+            effort,
+            fast_mode,
+            permission_mode: mode,
+            developer_instructions: system,
+            codex_path,
+            path_env: state.path_env.clone(),
+        };
+        return state.codex.start(app.clone(), opts).await;
+    }
+    let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
     let session_id = resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let opts = agent::claude::StartOpts {
         session_id: session_id.clone(),
@@ -413,7 +437,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
         effort,
         fast_mode,
         permission_mode: mode,
-        system_append: agent::system_prompt(&site, preview.as_deref()),
+        system_append: system,
         claude_path,
         path_env: state.path_env.clone(),
     };
@@ -429,48 +453,50 @@ async fn agent_start(app: AppHandle, site_id: String, resume: Option<String>, ov
 /// Both return the control request id; a rejection reaches the UI as `agent://control_error` with that id.
 #[tauri::command]
 async fn agent_set_model(state: State<'_, AppState>, session_id: String, model: String) -> Result<String, String> {
-    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    let h = state.agent(&session_id).await?;
     h.set_model(&model).await
 }
 
 #[tauri::command]
 async fn agent_apply_settings(state: State<'_, AppState>, session_id: String, settings: Value) -> Result<String, String> {
-    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    let h = state.agent(&session_id).await?;
     h.apply_settings(settings).await
 }
 
 #[tauri::command]
 async fn agent_send(state: State<'_, AppState>, session_id: String, text: String, selection: Option<Value>, images: Option<Vec<agent::ImageIn>>) -> Result<(), String> {
-    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    let h = state.agent(&session_id).await?;
     h.send_user(agent::compose_user_content(&text, selection.as_ref(), &images.unwrap_or_default())).await
 }
 
 #[tauri::command]
 async fn agent_respond(state: State<'_, AppState>, session_id: String, request_id: String, response: Value) -> Result<(), String> {
-    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    let h = state.agent(&session_id).await?;
     h.respond(&request_id, response).await
 }
 
 #[tauri::command]
 async fn agent_set_mode(state: State<'_, AppState>, session_id: String, mode: String) -> Result<(), String> {
-    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    let h = state.agent(&session_id).await?;
     h.set_permission_mode(&mode).await
 }
 
 #[tauri::command]
 async fn agent_interrupt(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let h = state.agents.get(&session_id).await.ok_or("session is not running")?;
+    let h = state.agent(&session_id).await?;
     h.interrupt().await
 }
 
 #[tauri::command]
 async fn agent_stop(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    state.agents.stop(&session_id).await
+    if agent::codex::is_codex_session(&session_id) { state.codex.stop(&session_id).await } else { state.agents.stop(&session_id).await }
 }
 
 #[tauri::command]
 async fn agent_running(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
-    Ok(state.agents.running().await)
+    let mut all = state.agents.running().await;
+    all.extend(state.codex.running().await);
+    Ok(all)
 }
 
 #[tauri::command]
@@ -482,6 +508,8 @@ async fn sessions_list(state: State<'_, AppState>, site_id: String) -> Result<Ve
 #[tauri::command]
 async fn session_transcript(state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
     let site = state.site(&site_id)?;
+    // Codex threads replay through thread/read (CODEX.md §8, milestone 5); until then a resumed one starts from its next turn.
+    if agent::codex::is_codex_session(&session_id) { return Ok(Vec::new()); }
     tauri::async_runtime::spawn_blocking(move || agent::sessions::transcript(&site.path, &session_id)).await.map_err(|e| e.to_string())?
 }
 
@@ -532,9 +560,11 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let state = app.state::<AppState>();
                 let agents = &state.agents;
+                let codex = &state.codex;
                 let dev = &state.dev;
                 tauri::async_runtime::block_on(async {
                     agents.stop_all().await;
+                    codex.stop_all().await;
                     dev.stop_all().await;
                 });
                 let _ = app.emit("app://exiting", ());

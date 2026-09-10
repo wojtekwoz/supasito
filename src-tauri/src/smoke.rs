@@ -6,7 +6,9 @@
 //! - SUPASITO_SMOKE_PROMPT     the message to send ("-" = only start the dev server, then exit)
 //! - SUPASITO_SMOKE_SITE       pick the registered site whose name or path contains this
 //! - SUPASITO_SMOKE_SITE_PATH  use this folder as the site (registered in memory only, never saved)
-//! - SUPASITO_SMOKE_MODEL      model alias for the run (e.g. haiku)
+//! - SUPASITO_SMOKE_MODEL      model alias for the run (e.g. haiku); an OpenAI id (gpt-5.6-luna) runs the
+//!                         scenario on Codex instead (agent/codex.rs). With HOME pointed at an empty
+//!                         folder, set CODEX_HOME=~/.codex so Codex stays signed in and SUPASITO_PATH=$PATH.
 //! - SUPASITO_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
 //! - SUPASITO_SMOKE_FAST       1 = start with fast mode on (Opus only)
 //! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools | ports
@@ -33,6 +35,26 @@ use crate::{agent, state::AppState};
 const HERO_SELECTION: &str = r#"{"page":"/","tag":"h1","id":"","classes":["mx-auto","mt-4","max-w-3xl","font-display","text-6xl","leading-[1.02]","tracking-tight","text-balance"],"text":"Say what you want. Watch it change.","selector":"main > section.px-6.pb-16:nth-of-type(1) > h1.mx-auto.mt-4","rect":{"x":256,"y":193,"w":768,"h":122},"styles":{"color":"rgb(23, 24, 28)","font-family":"Iowan Old Style","font-size":"60px","font-weight":"400"},"outerHtml":"<h1 class=\"mx-auto mt-4 max-w-3xl font-display text-6xl leading-[1.02] tracking-tight text-balance\">Say what you want. Watch it change.</h1>","source":null,"react":{"components":["Hero","Page"]}}"#;
 
 fn summarize(m: &Value) {
+    if let Some(method) = m["method"].as_str() {
+        // Codex app-server notifications (the interesting ones; deltas and housekeeping stay quiet)
+        let p = &m["params"];
+        match method {
+            "item/completed" => match p["item"]["type"].as_str() {
+                Some("agentMessage") => eprintln!("[smoke] codex: {}", p["item"]["text"].as_str().unwrap_or("").replace('\n', " ")),
+                Some("commandExecution") => eprintln!("[smoke] command {} exit={} status={}", p["item"]["command"], p["item"]["exitCode"], p["item"]["status"]),
+                Some("fileChange") => eprintln!("[smoke] fileChange {} status={}", p["item"]["changes"].as_array().map(|c| c.iter().map(|x| format!("{}:{}", x["kind"]["type"], x["path"])).collect::<Vec<_>>().join(",")).unwrap_or_default(), p["item"]["status"]),
+                Some("reasoning") => eprintln!("[smoke] reasoning: {}", p["item"]["summary"]),
+                _ => {}
+            },
+            "turn/completed" => eprintln!("[smoke] turn/completed status={} error={} durationMs={}", p["turn"]["status"], p["turn"]["error"]["message"], p["turn"]["durationMs"]),
+            "supasito/session" => eprintln!("[smoke] codex thread {} model={} mode={}", p["threadId"], p["model"], p["mode"]),
+            "thread/tokenUsage/updated" => eprintln!("[smoke] tokens: last.input={} window={}", p["tokenUsage"]["last"]["inputTokens"], p["tokenUsage"]["modelContextWindow"]),
+            "account/rateLimits/updated" => eprintln!("[smoke] rate limit: primary {}% of a {} min window", p["rateLimits"]["primary"]["usedPercent"], p["rateLimits"]["primary"]["windowDurationMins"]),
+            "error" => eprintln!("[smoke] codex error: {} willRetry={}", p["error"]["message"], p["willRetry"]),
+            _ => {}
+        }
+        return;
+    }
     match m["type"].as_str() {
         Some("assistant") => {
             for b in m["message"]["content"].as_array().cloned().unwrap_or_default() {
@@ -67,7 +89,8 @@ async fn wait_turn(rx: &mut mpsc::Receiver<Value>, secs: u64) -> (Option<Value>,
             Ok(Some(m)) => {
                 if m["type"] == "__exit" { eprintln!("[smoke] process exited while waiting"); return (None, model); }
                 if m["type"] == "assistant" { if let Some(s) = m["message"]["model"].as_str() { model = Some(s.to_string()); } }
-                if m["type"] == "result" { return (Some(m), model); }
+                if m["method"] == "supasito/session" { if let Some(s) = m["params"]["model"].as_str() { model = Some(s.to_string()); } }
+                if m["type"] == "result" || m["method"] == "turn/completed" { return (Some(m), model); }
             }
             Ok(None) => return (None, model),
             Err(_) => { eprintln!("[smoke] timed out waiting for a result"); return (None, model); }
@@ -98,7 +121,12 @@ async fn wait_turn_files(rx: &mut mpsc::Receiver<Value>, secs: u64) -> (Option<V
                         if let Some(p) = path { if !files.iter().any(|f| f == p) { files.push(p.to_string()); } }
                     }
                 }
-                if m["type"] == "result" { return (Some(m), files); }
+                if m["method"] == "item/started" && m["params"]["item"]["type"] == "fileChange" {
+                    for c in m["params"]["item"]["changes"].as_array().cloned().unwrap_or_default() {
+                        if let Some(p) = c["path"].as_str() { if !files.iter().any(|f| f == p) { files.push(p.to_string()); } }
+                    }
+                }
+                if m["type"] == "result" || m["method"] == "turn/completed" { return (Some(m), files); }
             }
             Ok(None) => return (None, files),
             Err(_) => { eprintln!("[smoke] timed out waiting for a result"); return (None, files); }
@@ -290,7 +318,7 @@ pub async fn run(app: AppHandle, prompt: String) {
             let app3 = app2.clone();
             tauri::async_runtime::spawn(async move {
                 let st = app3.state::<AppState>();
-                if let Some(h) = st.agents.get(&sid).await {
+                if let Ok(h) = st.agent(&sid).await {
                     let _ = h.respond(&rid, json!({ "behavior": "allow", "updatedInput": input })).await;
                 }
             });
@@ -308,7 +336,7 @@ pub async fn run(app: AppHandle, prompt: String) {
         Err(e) => { eprintln!("[smoke] agent start failed: {e}"); app.exit(1); return; }
     };
     eprintln!("[smoke] session {session_id}");
-    let h = state.agents.get(&session_id).await.expect("handle");
+    let h = state.agent(&session_id).await.expect("handle");
     let send = |text: &str, sel: Option<Value>| h.send_user(agent::compose_user_content(text, sel.as_ref(), &[]));
 
     let scenario = std::env::var("SUPASITO_SMOKE_SCENARIO").unwrap_or_else(|_| "prompt".into());
@@ -316,14 +344,34 @@ pub async fn run(app: AppHandle, prompt: String) {
     match scenario.as_str() {
         "queue" => {
             eprintln!("[smoke] scenario queue: two messages back to back");
+            // Codex answers within the turn: the second message is steered into the running one (turn/steer),
+            // so both words arrive in a single turn/completed. Collect what the agent said to check that.
+            let said = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            {
+                let said = said.clone();
+                app.listen_any("agent://message", move |e| {
+                    let v: Value = serde_json::from_str(e.payload()).unwrap_or(Value::Null);
+                    let m = &v["message"];
+                    if m["method"] == "item/completed" && m["params"]["item"]["type"] == "agentMessage" {
+                        if let Some(t) = m["params"]["item"]["text"].as_str() { said.lock().unwrap().push(t.to_string()); }
+                    }
+                });
+            }
             let _ = send("Reply with exactly the single word ONE and nothing else.", None).await;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             let _ = send("Reply with exactly the single word TWO and nothing else.", None).await;
             let r1 = wait_result(&mut rx, 90).await;
             eprintln!("[smoke] first result after {:.1}s: {}", started.elapsed().as_secs_f32(), r1.as_ref().map(|r| r["result"].to_string()).unwrap_or("none".into()));
-            let r2 = wait_result(&mut rx, 90).await;
-            eprintln!("[smoke] second result after {:.1}s: {}", started.elapsed().as_secs_f32(), r2.as_ref().map(|r| r["result"].to_string()).unwrap_or("none".into()));
-            eprintln!("[smoke] QUEUE {}", if r1.is_some() && r2.is_some() { "OK: both turns completed in order" } else { "FAILED" });
+            if agent::codex::is_codex_session(&session_id) {
+                let said = said.lock().unwrap().clone();
+                let both = said.iter().any(|t| t.contains("ONE")) && said.iter().any(|t| t.contains("TWO"));
+                eprintln!("[smoke] codex said: {said:?}");
+                eprintln!("[smoke] QUEUE {}", if r1.is_some() && both { "OK: the second message was steered into the running turn and both were answered" } else { "FAILED" });
+            } else {
+                let r2 = wait_result(&mut rx, 90).await;
+                eprintln!("[smoke] second result after {:.1}s: {}", started.elapsed().as_secs_f32(), r2.as_ref().map(|r| r["result"].to_string()).unwrap_or("none".into()));
+                eprintln!("[smoke] QUEUE {}", if r1.is_some() && r2.is_some() { "OK: both turns completed in order" } else { "FAILED" });
+            }
         }
         "interrupt" => {
             eprintln!("[smoke] scenario interrupt: long task, stop after 6s, then a follow-up");
@@ -452,6 +500,7 @@ pub async fn run(app: AppHandle, prompt: String) {
         Err(e) => eprintln!("[smoke] git status failed: {e}"),
     }
     state.agents.stop_all().await;
+    state.codex.stop_all().await;
     state.dev.stop_all().await;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     app.exit(0);

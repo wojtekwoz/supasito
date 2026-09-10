@@ -57,6 +57,8 @@ pub struct AppState {
     pub persisted: Mutex<Persisted>,
     pub file: PathBuf,
     pub agents: agent::claude::Registry,
+    /// Codex threads, one app-server per site (agent/codex.rs).
+    pub codex: agent::codex::Registry,
     pub dev: devserver::Registry,
     /// Running publish commands by site id (process-group leader pid), so they can be cancelled.
     pub publishes: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
@@ -86,6 +88,7 @@ impl AppState {
             persisted: Mutex::new(persisted),
             file,
             agents: agent::claude::Registry::new(dir.join("agent-pids.json")),
+            codex: agent::codex::Registry::new(dir.join("codex-pids.json")),
             dev: devserver::Registry::new(dir.join("dev-pids.json")),
             publishes: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             path_env: login_shell_path(),
@@ -96,6 +99,16 @@ impl AppState {
         let p = self.persisted.lock().unwrap().clone();
         let s = serde_json::to_string_pretty(&p).map_err(|e| e.to_string())?;
         std::fs::write(&self.file, s).map_err(|e| e.to_string())
+    }
+
+    /// The running session behind an id, whichever backend it is.
+    pub async fn agent(&self, session_id: &str) -> Result<agent::Agent, String> {
+        if agent::codex::is_codex_session(session_id) {
+            self.codex.get(session_id).await.map(agent::Agent::Codex)
+        } else {
+            self.agents.get(session_id).await.map(agent::Agent::Claude)
+        }
+        .ok_or_else(|| "session is not running".to_string())
     }
 
     pub fn site(&self, id: &str) -> Result<Site, String> {

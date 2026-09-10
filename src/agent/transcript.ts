@@ -43,11 +43,18 @@ export type SessionState = {
   overrides: SessionOverrides;
   /** Fast mode as the CLI reports it in system/init and result (`on`, `off`, `cooldown`; verified 2.1.257) with its reason when off. */
   fast: { state: string; reason: string | null } | null;
+  /** Which CLI runs this session. Claude's messages go through `applyMessage`, Codex's through `applyCodexMessage` (src/agent/codex.ts). */
+  backend: Backend;
 };
+
+export type Backend = "claude" | "codex";
+/** Codex sessions carry the thread id behind a prefix, so every string-keyed map in the app works unchanged and the backend is known from the id alone. */
+export const CODEX_PREFIX = "codex:";
+export const backendOf = (sessionId: string | null | undefined): Backend => (sessionId?.startsWith(CODEX_PREFIX) ? "codex" : "claude");
 
 export type PlanWindow = { name: string; utilization: number; resetsAt: number | null };
 
-export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null, retry: null, plan: [], context: null, cost: { session: 0, process: 0, turns: 0 }, resumed: false, overrides: {}, fast: null });
+export const emptySession = (): SessionState => ({ items: [], busy: false, model: null, loaded: false, stderr: [], interrupting: false, lastWrite: null, usage: null, commands: [], mode: null, retry: null, plan: [], context: null, cost: { session: 0, process: 0, turns: 0 }, resumed: false, overrides: {}, fast: null, backend: "claude" });
 
 /** The model's context window. The result's modelUsage carries the exact size; until then, 1M for "[1m]" models, else 200k. */
 export function contextWindowFor(model: string | null): number {
@@ -80,7 +87,7 @@ function noteFast(state: SessionState, msg: any): boolean {
   return true;
 }
 
-function streamingAssistant(items: Item[]): Extract<Item, { kind: "assistant" }> | null {
+export function streamingAssistant(items: Item[]): Extract<Item, { kind: "assistant" }> | null {
   for (let k = items.length - 1; k >= 0; k--) { const it = items[k]; if (it.kind === "assistant" && it.streaming) return it; }
   return null;
 }
@@ -133,7 +140,7 @@ export function retryText(r: NonNullable<SessionState["retry"]>): string {
 let counter = 0;
 export const uid = (p = "i") => `${p}_${Date.now().toString(36)}_${(counter++).toString(36)}`;
 
-const basename = (p: string) => (p || "").split("/").filter(Boolean).slice(-2).join("/");
+export const basename = (p: string) => (p || "").split("/").filter(Boolean).slice(-2).join("/");
 
 export function toolLabel(name: string, input: any): string {
   const i = input || {};
@@ -181,7 +188,7 @@ function findAssistant(items: Item[], id: string) {
   return null;
 }
 /** Items are never mutated in place: a changed item is replaced by a copy so memoised rows re-render only when their own item changed. */
-function patch<K extends Item["kind"]>(items: Item[], pred: (it: Item) => boolean, kind: K, changes: Partial<Extract<Item, { kind: K }>>): boolean {
+export function patch<K extends Item["kind"]>(items: Item[], pred: (it: Item) => boolean, kind: K, changes: Partial<Extract<Item, { kind: K }>>): boolean {
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
     if (it.kind === kind && pred(it)) { items[k] = { ...it, ...changes } as Item; return true; }

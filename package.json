@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "pnpm run test:ui && cd src-tauri && cargo test",
-    "test:ui": "node --experimental-strip-types --no-warnings src/routes.test.ts && node --experimental-strip-types --no-warnings src/agent/transcript.test.ts",
+    "test:ui": "node --experimental-strip-types --no-warnings src/routes.test.ts && node --experimental-strip-types --no-warnings src/agent/transcript.test.ts && node --experimental-strip-types --no-warnings src/agent/codex.test.ts",
     "release": "bash scripts/release.sh",
     "icon": "bash scripts/icon.sh"
   },

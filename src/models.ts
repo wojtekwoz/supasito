@@ -15,6 +15,8 @@ export const MODELS: ModelOption[] = [
   { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", hint: "Codex; fast and affordable" },
 ];
 
+/** What a Codex session runs on when no model was chosen (mirrors `DEFAULT_MODEL` in codex.rs). */
+export const CODEX_DEFAULT = "gpt-5.6-sol";
 /** An OpenAI model id means the session runs on Codex, not Claude Code (mirrors `is_codex_model` in codex.rs). */
 export const isCodexModel = (id: string | null | undefined) => !!id && /^(gpt-|o3|o4)|codex/i.test(id.trim());
 

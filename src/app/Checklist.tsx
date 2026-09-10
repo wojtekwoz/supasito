@@ -56,12 +56,15 @@ export function nodeTooOld(t: Toolchain | null): boolean {
   return m !== null && m < NODE_MIN;
 }
 
-/** True when the session or the preview cannot work yet. */
-export function claudeBlocked(t: Toolchain | null): boolean {
-  return !!t && (!t.claude.ok || t.claude.loggedIn === false);
+/** Installed and signed in (or too old to say). Either agent on its own is enough to run Supasito. */
+export const claudeUsable = (t: Toolchain | null) => !!t && t.claude.ok && t.claude.loggedIn !== false;
+export const codexUsable = (t: Toolchain | null) => !!t?.codex?.ok && t.codex.loggedIn !== false;
+/** True when no agent can run a session: neither Claude Code nor Codex is installed and signed in. */
+export function agentBlocked(t: Toolchain | null): boolean {
+  return !!t && !claudeUsable(t) && !codexUsable(t);
 }
 export function toolsMissing(t: Toolchain | null): boolean {
-  return !!t && (claudeBlocked(t) || !t.node.ok || nodeTooOld(t) || !t.git.ok || (t.node.ok && !t.packageManager));
+  return !!t && (agentBlocked(t) || !t.node.ok || nodeTooOld(t) || !t.git.ok || (t.node.ok && !t.packageManager));
 }
 /** Everything is here, but something will bite later — git has no name to save versions under. */
 export function toolsWarn(t: Toolchain | null): boolean {
@@ -72,10 +75,12 @@ export function toolRows(t: Toolchain | null): Row[] {
   if (!t) return ["Claude Code", "Codex", "Node.js", "git", "Package manager"].map((label) => ({ key: label, label, ok: null, detail: "Checking…" }));
   const c = t.claude;
   const brew = !!t.hasBrew;
+  // One agent is enough. While the other one works, a missing agent is a grey optional line, not a red one.
+  const covered = claudeUsable(t) || codexUsable(t);
   const claude: Row = !c.ok
-    ? { key: "claude", label: "Claude Code", ok: false, detail: "Not found", fix: <>Install it from <Ext href="https://claude.com/claude-code">claude.com/claude-code</Ext>, then run <Cmd>claude</Cmd> once in Terminal and sign in.</> }
+    ? { key: "claude", label: "Claude Code", ok: covered ? null : false, optional: covered, detail: covered ? "Not installed" : "Not found", fix: <>{covered ? "Optional: runs the Claude models in the model picker. " : null}Install it from <Ext href="https://claude.com/claude-code">claude.com/claude-code</Ext>, then run <Cmd>claude</Cmd> once in Terminal and sign in.</> }
     : c.loggedIn === false
-      ? { key: "claude", label: "Claude Code", ok: false, detail: `${c.version ?? ""} · not signed in`.trim(), fix: <>In Terminal, run <Cmd>claude auth login</Cmd> and finish the sign-in in your browser.</> }
+      ? { key: "claude", label: "Claude Code", ok: false, warn: covered, optional: covered, detail: `${c.version ?? ""} · not signed in`.trim(), fix: <>In Terminal, run <Cmd>claude auth login</Cmd> and finish the sign-in in your browser.{covered ? " Only needed for the Claude models." : ""}</> }
       : { key: "claude", label: "Claude Code", ok: true, detail: [c.version, c.loggedIn ? `signed in${c.authMethod && c.authMethod !== "none" ? ` (${c.authMethod})` : ""}` : null].filter(Boolean).join(" · ") };
   const getNode = <>Download the LTS installer from <Ext href="https://nodejs.org/en/download">nodejs.org</Ext>{brew ? <> or run <Cmd>brew install node</Cmd></> : null}, then click Check again.</>;
   const node: Row = !t.node.ok
@@ -94,9 +99,9 @@ export function toolRows(t: Toolchain | null): Row[] {
   // Codex is the optional second agent: never blocks, but say what was found so a GPT model is not a surprise.
   const x = t.codex;
   const codex: Row = !x?.ok
-    ? { key: "codex", label: "Codex", ok: null, detail: "Not installed", optional: true, fix: <>Optional: OpenAI's Codex runs the GPT models in the model picker. <Cmd>npm install -g @openai/codex</Cmd>{brew ? <> or <Cmd>brew install codex</Cmd></> : null}, then <Cmd>codex login</Cmd>.</> }
+    ? { key: "codex", label: "Codex", ok: covered ? null : false, detail: covered ? "Not installed" : "Not found", optional: covered, fix: <>{covered ? "Optional: OpenAI's Codex runs the GPT models in the model picker. " : "OpenAI's Codex, with a ChatGPT plan. "}<Cmd>npm install -g @openai/codex</Cmd>{brew ? <> or <Cmd>brew install codex</Cmd></> : null}, then <Cmd>codex login</Cmd>.</> }
     : x.loggedIn === false
-      ? { key: "codex", label: "Codex", ok: false, warn: true, detail: `${x.version ?? ""} · not signed in`.trim(), optional: true, fix: <>In Terminal, run <Cmd>codex login</Cmd> and finish the sign-in in your browser. Only needed for the GPT models.</> }
+      ? { key: "codex", label: "Codex", ok: false, warn: covered, detail: `${x.version ?? ""} · not signed in`.trim(), optional: covered, fix: <>In Terminal, run <Cmd>codex login</Cmd> and finish the sign-in in your browser.{covered ? " Only needed for the GPT models." : ""}</> }
       : { key: "codex", label: "Codex", ok: true, detail: [x.version, x.loggedIn ? "signed in" : null].filter(Boolean).join(" · "), optional: true };
   const pm = t.packageManager;
   const packageManager: Row = pm

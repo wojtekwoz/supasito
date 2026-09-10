@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DRAFT, useSessionsOfCurrentSite, useStore } from "./store";
+import { isCodexModel } from "../models";
 import { ago, cx } from "../util";
 import { Book, Code, Folder, Gear, Plus, Sparkle, Star, Trash } from "../ui/Icons";
 import type { Site } from "../types";
@@ -33,6 +34,8 @@ export function Rail() {
   const transcripts = useStore((s) => s.transcripts);
   const claude = useStore((s) => s.claude);
   const codex = useStore((s) => s.tools?.codex ?? null);
+  // a new chat starts on Codex when the default model is a GPT one, or when Claude Code is not installed
+  const draftModel = useStore((s) => s.transcripts[DRAFT]?.overrides.model ?? s.settings.model ?? null);
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
   const showSiteTools = useShown("siteTools");
   // Starred sites, plus the current one if it is not starred; with nothing starred, every site as before.
@@ -117,7 +120,7 @@ export function Rail() {
       <UpdateRow />
       <div className="rail-foot">
         {/* the CLI behind the conversation on screen: Codex for a codex: session, Claude Code otherwise */}
-        {currentSessionId?.startsWith("codex:") ? (
+        {currentSessionId?.startsWith("codex:") || (currentSessionId === DRAFT && (isCodexModel(draftModel) || (!claude?.ok && !!codex?.ok))) ? (
           <>
             <span className={cx("status-dot", codex?.ok ? "live" : "")} />
             <span className="t">{codex?.ok ? `Codex ${codex.version ?? ""}` : "Codex not found"}</span>

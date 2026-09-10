@@ -83,7 +83,9 @@ export type Settings = { claudePath?: string | null; model?: string | null; perm
 /** A newer Supasito, as a check found it. `notes` is the release body; `date` its publish date. */
 export type UpdateInfo = { version: string; current: string; notes?: string | null; date?: string | null };
 /** Per-session choices Supasito passes when it starts or restarts the claude process; unset = the Settings default. */
-export type SessionOverrides = { model?: string | null; effort?: string | null; fastMode?: boolean | null };
+export type SessionOverrides = { model?: string | null; effort?: string | null; fastMode?: boolean | null;
+  /** The conversation so far, when this session continues one that ran on the other agent; sent once, with the first start. */
+  handoff?: string | null };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
 
 export type RestoreReport = { restored: string[]; deleted: string[]; skipped: string[] };

@@ -322,6 +322,20 @@ codex-cli 0.149.0 with `SUPASITO_SMOKE_MODEL=gpt-5.6-luna`.
   approvals until the card is answered; `?tools=nocodex|codexlogin` for the checklist. Caught one thing the
   reducer tests had not: Codex's `usedPercent` is 0–100 where Claude's utilization is 0–1 — the ring read
   "plan 1100%" until it was scaled.
+- **Either agent is enough.** The first-run gate is "no agent at all" (`agentBlocked`), not "no Claude Code":
+  a Mac with only Codex installed and signed in runs sessions on it, the Setup screen names whichever is
+  missing, and the checklist shows the other agent as an optional grey line. With no model chosen,
+  `start_agent` picks the agent that is installed (Claude Code when both are); the model picker offers only
+  the models whose agent is here; the footer and header say which agent a new chat will start on. Messages
+  name the agent behind the session ("Codex ended the session") instead of assuming Claude.
+- **Continuing a conversation on the other agent.** Picking a GPT model in a Claude chat (or a Claude model
+  in a Codex one) no longer refuses: it starts a new session on that agent with the conversation so far —
+  user and agent messages, files each turn changed — handed over in the system prompt (`handoffText`,
+  `Overrides.handoff`, sent once, never on resume), and says so in a notice. The other agent's process is not
+  involved; the files are on disk as it left them.
+- **Fixed from the first test:** Settings kept Claude Code's `[1m]` suffix when the default switched to a GPT
+  model, and a running Claude session was handed that default as `--model`, which Claude Code refuses. The
+  Claude path drops Codex models, the Codex path strips the suffix, the 1M box hides for GPT ids.
 - **Not yet (CODEX.md §8):** the Codex model list fetched live from `model/list` (three ids are hardcoded
   for now), AGENTS.md as the rules file, the deny reason as a steer and images as data URLs verified live.
 

@@ -39,6 +39,9 @@ pub struct Overrides {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub fast_mode: Option<bool>,
+    /// The conversation so far when this session continues one from the other agent; goes into the
+    /// system prompt of the first start only (a resumed session has its own history).
+    pub handoff: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -425,7 +428,7 @@ mod tests {
         assert_eq!(o.effort, None);
         assert_eq!(o.fast_mode, Some(true));
         let o: Overrides = serde_json::from_str("{}").unwrap();
-        assert!(o.model.is_none() && o.effort.is_none() && o.fast_mode.is_none());
+        assert!(o.model.is_none() && o.effort.is_none() && o.fast_mode.is_none() && o.handoff.is_none());
     }
 
     #[test]

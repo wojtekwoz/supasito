@@ -6,7 +6,7 @@ import { Markdown } from "../ui/Markdown";
 import { Bubble, Collapse, Crosshair, Doc, Globe, Minus, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
-import { Checklist, claudeBlocked, nodeTooOld, toolsMissing, toolsWarn } from "./Checklist";
+import { Checklist, agentBlocked, claudeUsable, codexUsable, nodeTooOld, toolsMissing, toolsWarn } from "./Checklist";
 import { UsageButton } from "./Usage";
 import type { Selection } from "../types";
 import { useShown } from "./ui";
@@ -79,12 +79,12 @@ export function SessionPane() {
           <span className={cx("status-dot", session?.busy && "busy")} style={session?.items.some((i) => i.kind === "permission" && i.status === "pending") ? { background: "var(--warn)" } : undefined} />
         </button>
       )}
-      {claudeBlocked(tools)
+      {agentBlocked(tools)
         ? <Setup />
         : <Transcript items={session?.items ?? []} busy={!!session?.busy} root={site.path} sessionId={currentSessionId} />}
       <Composer />
       {/* The session's knobs are the last thing in the pane, under the composer: model, effort, permission mode, fast mode. */}
-      {showKnobs && currentSessionId && !claudeBlocked(tools) && (
+      {showKnobs && currentSessionId && !agentBlocked(tools) && (
         <div className="knobs">
           <Knobs session={session} mode={currentSessionId !== DRAFT && running ? session?.mode ?? null : undefined} />
         </div>
@@ -136,7 +136,11 @@ function ModeSelect({ mode }: { mode: string | null }) {
  *  asked for; a draft shows the defaults it will start with. Changes wait for an idle session. */
 function Knobs({ session, mode }: { session: SessionState | null; mode?: string | null }) {
   const settings = useStore((s) => s.settings);
+  const tools = useStore((s) => s.tools);
   const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
+  // Only the models whose agent is installed and signed in; with one agent the list is just its models.
+  const offered = MODELS.filter((m) => (isCodexModel(m.value) ? codexUsable(tools) : claudeUsable(tools)));
+  const claudeDefault = claudeUsable(tools) ? `your Claude Code default${defaults?.model ? ` (${defaults.model})` : ""}` : "Codex's default (GPT-5.6 Sol)";
   const setModel = useStore((s) => s.setSessionModel);
   const setEffort = useStore((s) => s.setSessionEffort);
   const setFast = useStore((s) => s.setSessionFast);
@@ -150,7 +154,7 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
   const effort = o.effort ?? settings.effort ?? null;
   const fastState = session?.fast?.state ?? null;
   const fastOn = fastState ? fastState !== "off" : !!(o.fastMode ?? settings.fastMode);
-  const options = [...(model && !MODELS.some((m) => m.value === model) ? [{ value: model, label: modelShort(model) }] : []), ...MODELS];
+  const options = [...(model && !offered.some((m) => m.value === model) ? [{ value: model, label: modelShort(model) }] : []), ...offered];
   const wait = busy ? " Wait for the turn to finish to change it." : "";
   const fastTitle = fastState === "cooldown"
     ? "Fast mode is cooling down after a rate limit; Claude Code returns to it by itself."
@@ -159,7 +163,7 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
       : `Turn on fast mode: same model, up to 2.5× faster output, about twice the cost.${session?.fast?.reason ? ` Claude Code reports: ${session.fast.reason}.` : ""}${wait}`;
   return (
     <>
-      <Pick icon={<Robot className="glyph" />} label={model ? modelShort(model) : "default"} title={`Model${model ? `: ${model}` : ": your Claude Code default"}.${wait}`} value={model ?? ""} disabled={busy} onChange={(v) => void setModel(v)}>
+      <Pick icon={<Robot className="glyph" />} label={model ? modelShort(model) : "default"} title={`Model${model ? `: ${model}` : `: ${claudeDefault}`}.${wait}`} value={model ?? ""} disabled={busy} onChange={(v) => void setModel(v)}>
         {!model && <option value="">default</option>}
         {options.map((m) => <option key={m.value} value={m.value}>{m.value === model ? modelShort(m.value) : `${m.label} · ${m.value}`}</option>)}
       </Pick>
@@ -177,14 +181,16 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
   );
 }
 
-/** Shown instead of the transcript while Claude Code is missing or signed out. */
+/** Shown instead of the transcript while no agent can run: neither Claude Code nor Codex is installed and signed in. */
 function Setup() {
-  const signedOut = useStore((s) => !!s.tools?.claude.ok);
+  const tools = useStore((s) => s.tools);
+  const installed = [tools?.claude.ok ? "Claude Code" : null, tools?.codex?.ok ? "Codex" : null].filter(Boolean) as string[];
+  const signedOut = installed.length > 0;
   return (
     <div className="welcome">
       <div className="box wide" style={{ textAlign: "left" }}>
-        <h2>{signedOut ? "Sign in to Claude Code" : "Supasito needs Claude Code"}</h2>
-        <p>Supasito drives the Claude Code you already use, with your own subscription. {signedOut ? "It's installed but not signed in on this Mac." : "It isn't on this Mac yet, or it isn't on the PATH."} Follow the line below, then check again.</p>
+        <h2>{signedOut ? `Sign in to ${installed.join(" or ")}` : "Supasito needs Claude Code or Codex"}</h2>
+        <p>Supasito drives the coding agent you already use, with your own subscription: Claude Code (Anthropic) or Codex (OpenAI) — either one is enough. {signedOut ? `${installed.join(" and ")} ${installed.length > 1 ? "are" : "is"} installed but not signed in on this Mac.` : "Neither is on this Mac yet, or on the PATH."} Follow a line below, then check again.</p>
         <Checklist />
       </div>
     </div>
@@ -420,7 +426,7 @@ function Composer() {
   const picking = useStore((s) => s.picking);
   const setPicking = useStore((s) => s.setPicking);
   const dev = useStore((s) => (s.currentSiteId ? s.dev[s.currentSiteId] : null));
-  const claudeOk = useStore((s) => !!s.tools && !claudeBlocked(s.tools));
+  const claudeOk = useStore((s) => !!s.tools && !agentBlocked(s.tools));
   const showPick = useShown("composerPick");
   const showUsage = useShown("usage");
   const showHint = useShown("hint");

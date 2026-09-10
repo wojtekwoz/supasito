@@ -1,6 +1,6 @@
 // Run with: node --experimental-strip-types src/agent/transcript.test.ts
 import { readFileSync } from "node:fs";
-import { addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, filesTouchedInTurn, fmtTokens, parseRateLimit, resetProcessCost, retryText, settlePermission, usageTokens, type Item } from "./transcript.ts";
+import { addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, filesTouchedInTurn, fmtTokens, handoffText, parseRateLimit, resetProcessCost, retryText, settlePermission, usageTokens, type Item } from "./transcript.ts";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail?: unknown) => {
@@ -259,4 +259,17 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 }
 
 console.log(failures === 0 ? "transcript: all checks pass" : `transcript: ${failures} failure(s)`);
+// Handoff: what another agent gets when a conversation continues on it.
+{
+  const items: Item[] = [
+    { kind: "user", id: "u1", text: "Make the hero blue" },
+    { kind: "assistant", id: "a1", text: "Done — hero.tsx now uses bg-blue-600.", thinking: "", streaming: false, parentToolUseId: null },
+    { kind: "tool", id: "t1", name: "Edit", input: {}, label: "", result: "", status: "done", parentToolUseId: null },
+    { kind: "result", id: "r1", isError: false, stopped: false, text: "", costUsd: null, durationMs: null, numTurns: null, files: ["/s/hero.tsx"], created: [], undone: false, at: 0, models: [], speed: null },
+  ];
+  const h = handoffText(items);
+  check("handoff: user, agent and files, no tool rows", h === "User: Make the hero blue\nAgent: Done — hero.tsx now uses bg-blue-600.\n(files changed: /s/hero.tsx)", h);
+  check("handoff: cut from the front", handoffText(items, 20).startsWith("…") && handoffText(items, 20).length === 21);
+}
+
 if (failures) throw new Error(`${failures} transcript check(s) failed`);

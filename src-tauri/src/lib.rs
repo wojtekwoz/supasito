@@ -392,6 +392,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     };
     // The session's own choices win over the Settings defaults.
     let o = overrides.unwrap_or_default();
+    let handoff = if resume.is_none() { o.handoff.filter(|h| !h.trim().is_empty()) } else { None };
     let model = o.model.filter(|m| !m.is_empty()).or(model);
     let effort = o.effort.filter(|e| !e.is_empty()).or(effort);
     let fast_mode = o.fast_mode.unwrap_or(fast_mode);
@@ -402,17 +403,27 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     #[cfg(debug_assertions)]
     let fast_mode = std::env::var("SUPASITO_SMOKE_FAST").map(|v| v == "1").unwrap_or(fast_mode);
     let preview = state.dev.status(site_id).await.map(|d| d.url);
-    let system = agent::system_prompt(&site, preview.as_deref());
+    let mut system = agent::system_prompt(&site, preview.as_deref());
+    if let Some(h) = handoff {
+        system.push_str("\n\nThe user is continuing a conversation that ran with another coding agent. What was said so far (the files it mentions are on disk as it left them):\n");
+        system.push_str(&h);
+    }
     // The model picker is the backend picker: an OpenAI model id means a Codex thread. Resuming keeps the
-    // backend the id names, whatever the current default.
+    // backend the id names, whatever the current default. With no model chosen, whichever agent is installed
+    // runs the session — people mostly have one — and Claude Code when both are.
+    let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await;
+    let codex_path = agent::codex::locate(None, &state.path_env).await;
     let codex = match resume.as_deref() {
         Some(id) => agent::codex::is_codex_session(id),
-        None => model.as_deref().map(agent::codex::is_codex_model).unwrap_or(false),
+        None => match model.as_deref() {
+            Some(m) => agent::codex::is_codex_model(m),
+            None => claude_path.is_none() && codex_path.is_some(),
+        },
     };
     if codex {
-        let codex_path = agent::codex::locate(None, &state.path_env).await.ok_or("Codex was not found. Install it (`npm install -g @openai/codex` or `brew install codex`) and run `codex login`, or pick a Claude model.")?;
+        let codex_path = codex_path.ok_or("Codex was not found. Install it (`npm install -g @openai/codex` or `brew install codex`) and run `codex login`, or pick a Claude model.")?;
         // `[1m]` is Claude Code's long-context suffix; Settings could still carry it from an earlier Claude choice.
-        let model = model.filter(|m| agent::codex::is_codex_model(m)).map(|m| m.trim_end_matches("[1m]").to_string()).unwrap_or_else(|| "gpt-5.6-luna".to_string());
+        let model = model.filter(|m| agent::codex::is_codex_model(m)).map(|m| m.trim_end_matches("[1m]").to_string()).unwrap_or_else(|| agent::codex::DEFAULT_MODEL.to_string());
         let system = agent::codex::with_site_rules(system, &site.path);
         let opts = agent::codex::StartOpts {
             resume: resume.as_deref().map(|id| agent::codex::thread_id(id).to_string()),
@@ -431,7 +442,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     // A Claude session (new while the default is a GPT model would have gone to Codex above; this is a resumed
     // or already-running one) must not be handed the Codex default: `--model gpt-…` makes Claude Code refuse the turn.
     let model = model.filter(|m| !agent::codex::is_codex_model(m));
-    let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
+    let claude_path = claude_path.ok_or(if codex_path.is_some() { "Claude Code was not found. Pick a GPT model to use Codex, or install Claude Code from https://claude.com/claude-code and sign in." } else { "No coding agent was found. Install Claude Code (https://claude.com/claude-code) or Codex (`npm install -g @openai/codex`) and sign in." })?;
     let session_id = resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let opts = agent::claude::StartOpts {
         session_id: session_id.clone(),

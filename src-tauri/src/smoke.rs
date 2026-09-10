@@ -11,6 +11,7 @@
 //!                         folder, set CODEX_HOME=~/.codex so Codex stays signed in and SUPASITO_PATH=$PATH.
 //! - SUPASITO_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
 //! - SUPASITO_SMOKE_FAST       1 = start with fast mode on (Opus only)
+//! - SUPASITO_SMOKE_HANDOFF    text handed over as "the conversation so far" (what continuing on the other agent sends)
 //! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools | ports | history
 //!                         (model: set_model sonnet between two turns, start with SUPASITO_SMOKE_MODEL=haiku;
 //!                         fast: apply_flag_settings fastMode between two turns, start with SUPASITO_SMOKE_MODEL=opus)
@@ -331,7 +332,9 @@ pub async fn run(app: AppHandle, prompt: String) {
     app.listen_any("agent://stderr", |e| eprintln!("[smoke] stderr: {}", e.payload()));
     app.listen_any("agent://control_error", |e| eprintln!("[smoke] CONTROL ERROR: {}", e.payload()));
 
-    let session_id = match crate::start_agent(&app, &site.id, None, None).await {
+    // SUPASITO_SMOKE_HANDOFF: the conversation a continued session carries over (agent::claude::Overrides.handoff)
+    let overrides = std::env::var("SUPASITO_SMOKE_HANDOFF").ok().map(|h| agent::claude::Overrides { handoff: Some(h), ..Default::default() });
+    let session_id = match crate::start_agent(&app, &site.id, None, overrides).await {
         Ok(id) => id,
         Err(e) => { eprintln!("[smoke] agent start failed: {e}"); app.exit(1); return; }
     };

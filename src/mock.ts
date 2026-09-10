@@ -174,7 +174,8 @@ export function mockBackend(): Backend {
     toolchainCheck: async () => {
       const q = new URLSearchParams(location.search);
       const sim = q.get("tools");
-      const claude = sim === "missing" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai", defaults: { model: "claude-fable-5-1[1m]", effort: "high" } };
+      // `?tools=noclaude` is the Codex-only Mac: everything must still work through the GPT models
+      const claude = sim === "missing" || sim === "noclaude" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai", defaults: { model: "claude-fable-5-1[1m]", effort: "high" } };
       const node = sim === "missing" || sim === "nonode" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/node", version: sim === "oldnode" ? "18.20.4" : "24.4.0" };
       const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : sim === "nogitpath" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
       const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;

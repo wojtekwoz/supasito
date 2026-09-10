@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
 import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
-import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, emptySession, expirePermissions, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
+import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, emptySession, expirePermissions, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
 import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
 import { isCodexModel, modelShort } from "../models";
 import { routeForFile } from "../routes";
@@ -215,6 +215,8 @@ function publishFailure(cmd: string, code: number | null | undefined, log: strin
   if (/log ?in|credentials|not authenticated|unauthori[sz]ed|401|403|token/i.test(text) && tool) return `The ${tool} CLI isn't signed in. In Terminal, run \`${tool} login\` inside this site's folder, then try again.`;
   return `Publish exited with code ${code ?? "?"}. The output above says why; fix it and try again.`;
 }
+/** What to call the CLI behind a session in messages ("Codex" or "Claude Code"). */
+const agentName = (sessionId: string | null | undefined) => (backendOf(sessionId) === "codex" ? "Codex" : "Claude Code");
 const isAuthFailure = (text: unknown) => typeof text === "string" && /not logged in|authentication_failed|invalid api key|please run \/login/i.test(text);
 
 function bump(transcripts: Record<string, SessionState>, id: string): Record<string, SessionState> {
@@ -249,7 +251,7 @@ async function changeKnob(get: () => Store, set: (p: Partial<Store>) => void, pa
   const id = get().currentSessionId;
   if (!id) return;
   const cur = get().transcripts[id] ?? emptySession();
-  if (cur.busy) { get().showToast("Wait for Claude to finish this turn, then change it."); return; }
+  if (cur.busy) { get().showToast(`Wait for ${agentName(id)} to finish this turn, then change it.`); return; }
   cur.overrides = { ...cur.overrides, ...patch };
   if (patch.model) cur.model = patch.model; // shown until the next system/init reports the exact id
   if (typeof patch.fastMode === "boolean") cur.fast = { state: patch.fastMode ? "on" : "off", reason: null };
@@ -258,7 +260,7 @@ async function changeKnob(get: () => Store, set: (p: Partial<Store>) => void, pa
   if (id === DRAFT || !get().running[id]) return; // applied when the process starts
   const restart = async () => {
     await api.agentStop(id).catch(() => {});
-    if (await waitUntil(() => !get().running[id], 8000)) get().showToast("Claude Code restarts with the new setting on your next message.");
+    if (await waitUntil(() => !get().running[id], 8000)) get().showToast(`${agentName(id)} restarts with the new setting on your next message.`);
   };
   if (!live) { await restart(); return; }
   try {
@@ -387,7 +389,7 @@ export const useStore = create<Store>((set, get) => ({
           const expired = expirePermissions(cur);
           if (cur.busy) {
             const tail = cur.stderr.slice(-3).map((l) => l.trim()).filter(Boolean).join(" · ");
-            addNotice(cur, code === 0 ? "Claude ended the session." : `Claude exited unexpectedly (code ${code ?? "?"}).${tail ? ` ${tail}` : ""} Send a message to resume.`, code === 0 ? "info" : "error");
+            addNotice(cur, code === 0 ? `${agentName(sessionId)} ended the session.` : `${agentName(sessionId)} exited unexpectedly (code ${code ?? "?"}).${tail ? ` ${tail}` : ""} Send a message to resume.`, code === 0 ? "info" : "error");
             cur.busy = false;
           }
           set({ running, transcripts: bump(st.transcripts, sessionId) });
@@ -404,8 +406,8 @@ export const useStore = create<Store>((set, get) => ({
         if (fallback) { pendingControl.delete(requestId); fallback(); return; }
         const cur = get().transcripts[sessionId];
         const msg = typeof error === "string" ? error : JSON.stringify(error);
-        if (cur) { addNotice(cur, `Claude Code rejected a control request: ${msg}`, "error"); set({ transcripts: bump(get().transcripts, sessionId) }); }
-        else get().showToast(`Claude Code rejected a control request: ${msg}`);
+        if (cur) { addNotice(cur, `${agentName(sessionId)} rejected a control request: ${msg}`, "error"); set({ transcripts: bump(get().transcripts, sessionId) }); }
+        else get().showToast(`${agentName(sessionId)} rejected a control request: ${msg}`);
       });
       await api.on("agent://stderr", ({ sessionId, line }) => {
         const cur = get().transcripts[sessionId];
@@ -577,7 +579,8 @@ export const useStore = create<Store>((set, get) => ({
       if (sessionId === DRAFT) {
         const draft = st.transcripts[DRAFT] ?? emptySession();
         const id = await api.agentStart(siteId, null, draft.overrides);
-        const transcripts = { ...st.transcripts, [id]: { ...draft, loaded: true } };
+        const { handoff: _sent, ...kept } = draft.overrides;
+        const transcripts = { ...st.transcripts, [id]: { ...draft, loaded: true, overrides: kept, backend: backendOf(id) } };
         delete transcripts[DRAFT];
         const info: SessionInfo = { id, title: text.trim().slice(0, 90), lastModified: now(), createdAt: now(), messageCount: 1 };
         set({ transcripts, currentSessionId: id, sessions: { ...st.sessions, [siteId]: [info, ...(st.sessions[siteId] ?? [])] }, running: { ...st.running, [id]: true } });
@@ -781,10 +784,20 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) { get().showToast(String(e)); }
   },
   async setSessionModel(model) {
-    // A model on the other backend cannot take over a running conversation: its history lives in the other CLI's store.
+    // A model on the other agent cannot take over the running process (the history lives in the other CLI's
+    // store), so the conversation continues in a new session on that agent, with what was said so far handed over.
     const id = get().currentSessionId;
-    if (id && id !== DRAFT && model && (isCodexModel(model) ? "codex" : "claude") !== backendOf(id)) {
-      get().showToast(`This conversation runs on ${backendOf(id) === "codex" ? "Codex" : "Claude Code"}. Start a new chat to use ${modelShort(model)}.`);
+    const cur = id ? get().transcripts[id] : null;
+    if (id && id !== DRAFT && cur && model && (isCodexModel(model) ? "codex" : "claude") !== backendOf(id)) {
+      if (cur.busy) { get().showToast(`Wait for ${agentName(id)} to finish this turn, then change it.`); return; }
+      const from = agentName(id);
+      const handoff = handoffText(cur.items);
+      get().newSession();
+      const draft = get().transcripts[DRAFT] ?? emptySession();
+      draft.overrides = { ...cur.overrides, model, handoff: handoff || null };
+      draft.model = model;
+      addNotice(draft, `Continuing with ${modelShort(model)}. ${from} is not part of this session; the conversation so far was handed over, and the site's files are as you left them.`);
+      set({ transcripts: { ...get().transcripts, [DRAFT]: draft } });
       return;
     }
     await changeKnob(get, set, { model: model || null }, model ? (id) => api.agentSetModel(id, model) : null);

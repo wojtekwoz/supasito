@@ -23,6 +23,8 @@ use tokio::{
 
 /// Session ids of Codex threads carry this prefix everywhere outside this file.
 pub const PREFIX: &str = "codex:";
+/// What a Codex session runs on when no model was chosen: the one `model/list` marks `isDefault` (0.149.0).
+pub const DEFAULT_MODEL: &str = "gpt-5.6-sol";
 
 pub fn is_codex_session(session_id: &str) -> bool {
     session_id.starts_with(PREFIX)

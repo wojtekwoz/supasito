@@ -442,6 +442,20 @@ export function addUser(state: SessionState, text: string, selection: Selection 
   state.busy = true;
 }
 
+/** The conversation as plain text for handing to another agent: what was said and which files each turn
+ *  changed, newest last, cut from the front to fit `max` characters. The files themselves the new agent reads from disk. */
+export function handoffText(items: Item[], max = 8000): string {
+  const lines: string[] = [];
+  for (const it of items) {
+    if (it.kind === "user" && it.text.trim()) lines.push(`User: ${it.text.trim()}`);
+    else if (it.kind === "assistant" && it.text.trim()) lines.push(`Agent: ${it.text.trim()}`);
+    else if (it.kind === "result" && it.files.length) lines.push(`(files changed: ${it.files.join(", ")}${it.undone ? " — then undone" : ""})`);
+  }
+  let out = lines.join("\n");
+  if (out.length > max) out = "…" + out.slice(out.length - max);
+  return out;
+}
+
 export function addNotice(state: SessionState, text: string, tone: "info" | "error" = "info") {
   state.items.push({ kind: "notice", id: uid("n"), text, tone });
 }

@@ -3,7 +3,7 @@ import { useStore } from "./store";
 import { Check } from "../ui/Icons";
 import { Checklist } from "./Checklist";
 import { PlanRows } from "./Usage";
-import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, hasLongContext } from "../models";
+import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, hasLongContext, isCodexModel } from "../models";
 import { UI_GROUPS } from "./ui";
 import { cx } from "../util";
 import { openExternal } from "../backend";
@@ -264,7 +264,8 @@ export function SettingsDialog() {
   const pickModel = (v: string) => {
     if (v === "custom") { setCustomModel(true); if (known) setForm({ ...form, model: "" }); return; }
     setCustomModel(false);
-    setForm({ ...form, model: v ? v + (oneM ? "[1m]" : "") : "" });
+    // the 1M suffix is Claude Code's; a GPT id with it appended is a model nobody has
+    setForm({ ...form, model: v ? v + (oneM && !isCodexModel(v) ? "[1m]" : "") : "" });
   };
   return (
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
@@ -348,7 +349,7 @@ export function SettingsDialog() {
               <option value="custom">Custom model name or alias…</option>
             </select>
             {custom && <input className="text-input" placeholder="e.g. claude-sonnet-5, opus[1m], opusplan" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value.trim() })} />}
-            {known && !custom && <label className="opt-row"><input type="checkbox" checked={oneM} onChange={(e) => setForm({ ...form, model: base + (e.target.checked ? "[1m]" : "") })} /> 1M-token context window (<code>[1m]</code>; needs a plan that includes it)</label>}
+            {known && !custom && !isCodexModel(base) && <label className="opt-row"><input type="checkbox" checked={oneM} onChange={(e) => setForm({ ...form, model: base + (e.target.checked ? "[1m]" : "") })} /> 1M-token context window (<code>[1m]</code>; needs a plan that includes it)</label>}
           </div>
         </div>
         <div className="row2"><label>Effort</label>

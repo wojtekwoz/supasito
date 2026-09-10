@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { DRAFT, useSession, useSessionsOfCurrentSite, useSite, useStore } from "./store";
 import { retryText, type Item, type SessionState } from "../agent/transcript";
-import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, isEffort, modelShort, supportsFast } from "../models";
+import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, isCodexModel, isEffort, modelShort, supportsFast } from "../models";
 import { Markdown } from "../ui/Markdown";
 import { Bubble, Collapse, Crosshair, Doc, Globe, Minus, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
@@ -142,7 +142,11 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
   const setFast = useStore((s) => s.setSessionFast);
   const busy = !!session?.busy;
   const o = session?.overrides ?? {};
-  const model = session?.model ?? o.model ?? settings.model ?? defaults?.model ?? null;
+  // A running session on one backend must not show the other backend's default (a Claude session while the
+  // Settings default is a GPT model): the process ignores that model, so the chip says "default" instead.
+  const codex = session?.backend === "codex";
+  const settingsFits = !session?.loaded || !settings.model || isCodexModel(settings.model) === codex;
+  const model = session?.model ?? o.model ?? (settingsFits ? settings.model : null) ?? (codex ? null : defaults?.model) ?? null;
   const effort = o.effort ?? settings.effort ?? null;
   const fastState = session?.fast?.state ?? null;
   const fastOn = fastState ? fastState !== "off" : !!(o.fastMode ?? settings.fastMode);

@@ -411,7 +411,8 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     };
     if codex {
         let codex_path = agent::codex::locate(None, &state.path_env).await.ok_or("Codex was not found. Install it (`npm install -g @openai/codex` or `brew install codex`) and run `codex login`, or pick a Claude model.")?;
-        let model = model.filter(|m| agent::codex::is_codex_model(m)).unwrap_or_else(|| "gpt-5.6-luna".to_string());
+        // `[1m]` is Claude Code's long-context suffix; Settings could still carry it from an earlier Claude choice.
+        let model = model.filter(|m| agent::codex::is_codex_model(m)).map(|m| m.trim_end_matches("[1m]").to_string()).unwrap_or_else(|| "gpt-5.6-luna".to_string());
         let system = agent::codex::with_site_rules(system, &site.path);
         let opts = agent::codex::StartOpts {
             resume: resume.as_deref().map(|id| agent::codex::thread_id(id).to_string()),
@@ -427,6 +428,9 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
         };
         return state.codex.start(app.clone(), opts).await;
     }
+    // A Claude session (new while the default is a GPT model would have gone to Codex above; this is a resumed
+    // or already-running one) must not be handed the Codex default: `--model gpt-…` makes Claude Code refuse the turn.
+    let model = model.filter(|m| !agent::codex::is_codex_model(m));
     let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await.ok_or("Claude Code was not found. Install it from https://claude.com/claude-code and sign in, or set its path in Settings.")?;
     let session_id = resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let opts = agent::claude::StartOpts {

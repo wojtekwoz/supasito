@@ -74,6 +74,14 @@ a { color: var(--accent); }
 .status-dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .status-dot.live { background: var(--ok); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* One line above the foot, only while an update is waiting. */
+.rail-update { flex: none; display: grid; gap: 6px; padding: 9px 10px; border-top: 1px solid var(--line); background: rgba(245, 193, 94, 0.10); font-size: 11.5px; }
+.rail-update .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 500; }
+.rail-update .p { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.rail-update .acts { display: flex; align-items: center; gap: 8px; }
+.rail-update .btn.sm { height: 22px; padding: 0 8px; font-size: 11.5px; }
+.rail-update .later { color: var(--ink-3); font-size: 11.5px; }
+.rail-update .later:hover { color: var(--ink-2); text-decoration: underline; }
 .rail-foot { flex: none; padding: 8px 10px 12px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 11.5px; }
 .rail-foot .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { color: var(--ink-3); font-size: 12px; padding: 6px 8px; }

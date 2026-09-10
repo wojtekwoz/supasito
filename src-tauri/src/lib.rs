@@ -6,6 +6,7 @@ mod sites;
 mod smoke;
 mod state;
 mod toolchain;
+mod updates;
 
 use serde_json::{json, Value};
 use state::AppState;
@@ -25,6 +26,7 @@ fn settings_get(state: State<'_, AppState>) -> Value {
         "effort": p.effort,
         "fastMode": p.fast_mode,
         "hidden": p.hidden,
+        "updatesEnabled": p.updates_enabled,
     })
 }
 
@@ -37,6 +39,7 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
         if let Some(v) = patch.get("permissionMode") { p.permission_mode = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("effort") { p.effort = v.as_str().map(|s| s.to_string()).filter(|s| agent::claude::EFFORTS.contains(&s.as_str())); }
         if let Some(v) = patch.get("fastMode") { p.fast_mode = v.as_bool().unwrap_or(false); }
+        if let Some(v) = patch.get("updatesEnabled") { p.updates_enabled = v.as_bool().unwrap_or(true); }
         if let Some(v) = patch.get("hidden") { p.hidden = v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(); }
     }
     state.save()
@@ -489,9 +492,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = AppState::load(app.handle())?;
             app.manage(state);
+            app.manage(updates::Pending::default());
+            updates::watch(app.handle().clone());
             #[cfg(debug_assertions)]
             if let Ok(prompt) = std::env::var("SUPASITO_SMOKE_PROMPT") {
                 let handle = app.handle().clone();
@@ -513,6 +519,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings_get, settings_set, toolchain_check,
+            updates::update_check, updates::update_install, updates::update_dismiss, updates::app_version,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,

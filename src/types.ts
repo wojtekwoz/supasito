@@ -74,8 +74,12 @@ export type ClaudeStatus = Tool & { loggedIn?: boolean | null; authMethod?: stri
  *  `hasBrew` decides whether the checklist offers `brew install …`; `gitIdentity` is false when
  *  `git config user.email` is unset, which would otherwise only surface as a failed Publish. */
 export type Toolchain = { claude: ClaudeStatus; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null; hasBrew?: boolean; gitIdentity?: boolean };
-/** `hidden` lists the interface elements switched off in Settings → Interface (keys in src/app/ui.ts). */
-export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null };
+/** `hidden` lists the interface elements switched off in Settings → Interface (keys in src/app/ui.ts).
+ *  `updatesEnabled` is the once-a-day check for a newer Supasito, on unless Settings → Updates turns it off. */
+export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null; updatesEnabled?: boolean | null };
+
+/** A newer Supasito, as a check found it. `notes` is the release body; `date` its publish date. */
+export type UpdateInfo = { version: string; current: string; notes?: string | null; date?: string | null };
 /** Per-session choices Supasito passes when it starts or restarts the claude process; unset = the Settings default. */
 export type SessionOverrides = { model?: string | null; effort?: string | null; fastMode?: boolean | null };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
@@ -92,4 +96,6 @@ export type EventName =
   | "dev://status"
   | "dev://log"
   | "publish://log"
-  | "install://log";
+  | "install://log"
+  | "update://available"
+  | "update://progress";

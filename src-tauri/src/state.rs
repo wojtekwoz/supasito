@@ -21,6 +21,13 @@ pub struct Persisted {
     /// an explicit `[]` is the user's "Show everything" and stays empty.
     #[serde(default = "default_hidden")]
     pub hidden: Vec<String>,
+    /// Settings → Updates: whether the app asks once a day whether a newer version exists.
+    /// Missing from the file (a fresh install, or a state file from before updates) means on.
+    pub updates_enabled: bool,
+    /// When it last asked, ms since the epoch, so it asks once a day and not once a launch.
+    pub update_checked_at: i64,
+    /// A version the user answered "Not now" to; the banner stays away until a later one appears.
+    pub update_skipped: Option<String>,
 }
 
 /// What a fresh install hides: the chips under the composer, the picker button in the composer, the keyboard hint,
@@ -39,6 +46,9 @@ impl Default for Persisted {
             effort: None,
             fast_mode: false,
             hidden: default_hidden(),
+            updates_enabled: true,
+            update_checked_at: 0,
+            update_skipped: None,
         }
     }
 }
@@ -158,6 +168,24 @@ mod tests {
         let back: Persisted = serde_json::from_str(&s).unwrap();
         assert_eq!(back.hidden, p.hidden);
         assert!(back.fast_mode);
+    }
+
+    /// A state file from before the updater loads with the daily check on: it is a fresh install's default,
+    /// and `#[serde(default)]` must not turn the missing bool into `false`. Switching it off survives a round trip.
+    #[test]
+    fn updates_default_on_and_round_trip() {
+        let old: Persisted = serde_json::from_str(r#"{"sites":[],"model":"opus"}"#).unwrap();
+        assert!(old.updates_enabled);
+        assert_eq!(old.update_checked_at, 0);
+        assert_eq!(old.update_skipped, None);
+        let mut p = old.clone();
+        p.updates_enabled = false;
+        p.update_checked_at = 1_700_000_000_000;
+        p.update_skipped = Some("0.2.0".into());
+        let back: Persisted = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert!(!back.updates_enabled);
+        assert_eq!(back.update_checked_at, 1_700_000_000_000);
+        assert_eq!(back.update_skipped.as_deref(), Some("0.2.0"));
     }
 
     /// A site saved before favourites loads unstarred with `last_opened` 0; a starred one survives the round trip.

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain } from "../types";
+import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
 import { routeForFile } from "../routes";
 
@@ -94,6 +94,14 @@ export type Store = {
   toast: string | null;
   /** Plan usage is per account, not per session: the last rate_limit_event any session received, for Settings and new sessions. */
   planUsage: { windows: PlanWindow[]; at: number } | null;
+  /** This build's version, for Settings → Updates. */
+  version: string;
+  /** A newer version the daily check or "Check now" found, until it is installed or dismissed. */
+  update: UpdateInfo | null;
+  /** Set while a check or an install is running, so the buttons can say which. */
+  updateBusy: "checking" | "installing" | null;
+  /** Download progress, 0…1, while installing; null when the size is unknown. */
+  updateProgress: number | null;
 
   init: () => Promise<void>;
   selectSite: (id: string) => Promise<void>;
@@ -170,6 +178,12 @@ export type Store = {
   /** Settings → Interface: the elements to hide (keys from ui.ts). Applies at once and is saved with the other settings. */
   setHidden: (keys: string[]) => Promise<void>;
   showToast: (t: string | null) => void;
+  /** Ask now. `manual` also says so when there is nothing to install, which the daily check stays quiet about. */
+  checkUpdate: (manual: boolean) => Promise<void>;
+  /** Download, verify and restart into the version the last check found. */
+  installUpdate: () => Promise<void>;
+  /** "Not now": hide the banner until a later version appears. */
+  dismissUpdate: () => Promise<void>;
 };
 
 let api: Backend;
@@ -289,6 +303,10 @@ export const useStore = create<Store>((set, get) => ({
   removing: null,
   siteMenuOpen: false,
   toast: null,
+  version: "",
+  update: null,
+  updateBusy: null,
+  updateProgress: null,
   planUsage: null,
 
   async init() {
@@ -302,6 +320,13 @@ export const useStore = create<Store>((set, get) => ({
       const [settings, sites, running] = await Promise.all([api.settingsGet(), api.sitesList(), api.agentRunning()]);
       set({ settings, sites, running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
       void toolsP;
+      void api.appVersion().then((version) => set({ version })).catch(() => {});
+
+      // The daily check runs in the backend and announces what it found; the UI never polls.
+      await api.on("update://available", (found: UpdateInfo) => set({ update: found }));
+      await api.on("update://progress", ({ got, total }: { got: number; total: number | null }) => {
+        set({ updateProgress: total ? Math.min(1, got / total) : null });
+      });
 
       await api.on("agent://message", ({ sessionId, message }) => {
         const st = get();
@@ -869,6 +894,36 @@ export const useStore = create<Store>((set, get) => ({
     try { await api.settingsSet({ hidden: keys }); } catch (e) { get().showToast(String(e)); }
   },
   showToast(t) { set({ toast: t }); if (t) setTimeout(() => { if (get().toast === t) set({ toast: null }); }, 5000); },
+  async checkUpdate(manual) {
+    if (get().updateBusy) return;
+    set({ updateBusy: "checking" });
+    try {
+      const found = await api.updateCheck();
+      set({ update: found });
+      if (manual && !found) get().showToast(`Supasito ${get().version || "is"} is the newest version.`);
+    } catch (e) {
+      if (manual) get().showToast(`Could not check for updates: ${e}`);
+    } finally {
+      set({ updateBusy: null });
+    }
+  },
+  async installUpdate() {
+    if (get().updateBusy) return;
+    set({ updateBusy: "installing", updateProgress: 0 });
+    try {
+      // On success the app restarts into the new version and this never resolves.
+      await api.updateInstall();
+      set({ updateBusy: null, updateProgress: null });
+    } catch (e) {
+      set({ updateBusy: null, updateProgress: null });
+      get().showToast(`Could not install the update: ${e}`);
+    }
+  },
+  async dismissUpdate() {
+    const v = get().update?.version;
+    set({ update: null });
+    if (v) await api.updateDismiss(v).catch(() => {});
+  },
 }));
 
 const NO_SESSIONS: SessionInfo[] = [];

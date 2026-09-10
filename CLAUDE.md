@@ -16,7 +16,8 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   Mock switches: `?tools=missing|nologin|nonode|oldnode|nogit|nogitpath|nogitid|nopnpm` (`&brew=no` hides the
   `brew install` lines), `?sites=none|two|many`, `?dev=taken[:unknown|:site]` (port held by
   another program / something unnamed / the second site), `?dev=none` (no dev command until a turn ran), `?devDelay=<ms>` and
-  `?stopDelay=<ms>` (dev-server start/kill timing; `window.__mock.devs` is the registry), `?context=full`, `?fast=on`.
+  `?stopDelay=<ms>` (dev-server start/kill timing; `window.__mock.devs` is the registry), `?context=full`, `?fast=on`,
+  `?update=found|error` (a newer version announced / the check failing).
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).
@@ -41,6 +42,14 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   Keep protocol details here; the UI only sees `agent://message|permission|exit` events.
 - `src-tauri/src/toolchain.rs` — first-run checks (Node, pnpm/npm, git, Claude Code + `claude auth status`).
   The UI's `Checklist.tsx` renders it; the mock simulates each failure with `?tools=…` (list under `pnpm dev` above).
+- `src-tauri/src/updates.rs` — the only request the app makes on its own: once a day it asks
+  `supasito.com/updates/latest.json` (GitHub Releases is the fallback when the site 404s or is down) whether
+  a newer version exists, and Settings → Updates turns it off. It carries version, target and arch in the URL
+  and no identifier, so counting that route is also how many installs ran that day (WEBSITE.md §4.6). Debug
+  builds never check on their own, so development does not inflate the count; "Check now" still works there.
+  `pnpm release` signs `Supasito.app.tar.gz` with the key in `.env.release` and writes `release/latest.json`;
+  `cargo test -- --ignored updater_package` checks that key against the pubkey shipped in tauri.conf.json,
+  which is the one mismatch that would silently break every future update.
 - `src-tauri/src/devserver.rs` — dev-server supervisor. A port counts as free only if it binds *and* refuses a
   connection (a wildcard listener passes a loopback bind on macOS), and as ready only when the listener is in our own
   process group. Readiness must stay dual-stack

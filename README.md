@@ -131,7 +131,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 
 ## What Supasito does on your Mac
 
-- **It runs your own `claude`.** Your plan, settings, skills, MCP servers, memory and `CLAUDE.md` all apply. Usage is billed to your Claude plan or API key. Supasito has no account and sends nothing anywhere itself.
+- **It runs your own `claude`.** Your plan, settings, skills, MCP servers, memory and `CLAUDE.md` all apply. Usage is billed to your Claude plan or API key. Supasito has no account of its own, and the only request it makes on its own is a once-a-day check for a newer version — it carries the version, macOS and the chip, no identifier, and Settings → Updates turns it off.
 - **It finds Claude Code** on your PATH, then at `~/.claude/local/claude` and `~/.local/bin/claude`. Settings has a field for a different path.
 - **Opening a folder marks it trusted** in `~/.claude.json`, the same as running `claude` there, so the folder's `.claude/settings.json` rules apply. Its dev and publish commands run as written.
 - **Transcripts** stay in `~/.claude/projects`. The sessions listed under a site are the ones `claude --resume` sees, and they can be resumed from either side.

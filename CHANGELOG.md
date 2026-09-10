@@ -265,6 +265,7 @@ that did nothing when clicked.
 - **The copy assumes no technical background.** "Dependencies aren't installed" → "This site needs a few pieces first", explained as parts made by other people that aren't on the Mac yet, with the actual command relegated to a small line at the bottom for whoever wants it. The Node.js notes and the dev-server card were reworded the same way.
 - **A repair asked for from the preview pane starts its own session** rather than appending to whatever conversation was open, since it is a different task from the one the user was in the middle of. An untouched draft is reused.
 - Verified in the mock, driven from the browser: all three states (needs setup, install failed, dev server failed) render, and "Ask Claude to fix it" opened a fresh session carrying the failing output. `tsc`, `pnpm test` (28 Rust tests) clean. Signed, notarized and installed to /Applications the same session.
+
 ### Session 29 (2026-09-08) — Supasito stops inventing a port flag
 The same site as session 28, one wall further on: the dev script serves with `python3 -m http.server 4173`,
 and Supasito ran it as `npm run dev -- --port 4322`. Python takes its port as a positional argument and
@@ -275,3 +276,53 @@ exits on the flag. Supasito had made up a flag for a command it did not recognis
 - **A conflict Supasito cannot pin down no longer blames the wrong port.** `resolve_conflict` fell back to the port it had offered, so a server that died on *its own* port would have put a stranger's name on the port-conflict card. It returns `None` now, and the failure lands on the plain error card — which since session 28 has "Ask Claude to fix it" on it.
 - The two Claude prompts no longer tell it that Supasito appends `--port <n>`, because for the scripts those prompts are about, it doesn't.
 - Verified for real, not just in unit tests: `SUPASITO_SMOKE_SCENARIO=ports` run against the debug binary under a throwaway `HOME` (so the installed app's state and its running servers were untouched). A new case D builds the shape that started this — a package.json whose `dev` hardcodes a free port — and asserts the detected command is bare `npm run dev`, that the site reaches `ready` **on the port python chose**, and that the preview URL serves the file. All nine checks pass, the three pre-existing port-conflict cases included. Plus unit tests: `group_listen_port` against a real listener in this process's own group, and the detection rule.
+
+### Session 30 (2026-09-08) — Supasito can update itself, and that is also the install count
+There was no updater at all: someone who downloaded 0.1.0 would never learn 0.2.0 existed. Fixing that
+also answers "how many users are there", because the honest way to count installs is a request the user
+actually wants — a version check — rather than telemetry bolted on beside it.
+
+- **`tauri-plugin-updater`, wired end to end.** `src-tauri/src/updates.rs` owns it: `update_check`,
+  `update_install`, `update_dismiss` and `app_version` are the app's own commands, so nothing about the
+  updater is reachable from the webview and the CSP is untouched. `Pending` holds what the last check
+  found so Install does not ask twice.
+- **Two endpoints, in order.** `supasito.com/updates/latest.json?v={{current_version}}&t={{target}}&a={{arch}}`
+  first, `github.com/wojtekwoz/supasito/releases/latest/download/latest.json` second. Read from the plugin
+  source (2.11.0): a non-2xx from the first endpoint is skipped silently and the loop moves on, so the site
+  404ing today falls through to GitHub cleanly. A *200 with a non-JSON body* would abort the whole check
+  instead — so `/updates/latest.json` must 404 or serve JSON, never a catch-all HTML page.
+- **The count falls out of the check.** One check per install per day, so requests to that route per day are
+  installs that ran that day, and `v` splits them by version. No identifier, no cookie, no event. Debug builds
+  never check on their own (`#[cfg(not(debug_assertions))]`), so development cannot inflate the number;
+  "Check now" still works in dev. WEBSITE.md §4.6 now describes downloads and installs as separate numbers.
+- **The promise on the page had to change first.** README and WEBSITE.md §3 said the app "sends nothing
+  anywhere". They now say what it sends and why, before launch, rather than being corrected after someone
+  notices the traffic. Settings → Updates carries the same paragraph next to the switch that turns it off.
+- **One surface, one line.** A row above the rail's foot when a newer version exists — "Supasito 0.2.0 is out",
+  Update and restart, Not now — and a Settings tab with the version, Check now, the toggle and the disclosure.
+  "Not now" is remembered per version, so a dismissed update does not come back until a later one does.
+- **`pnpm release` signs the update and writes the manifest.** It refuses to start without the updater key
+  (the build would otherwise fail late, or hang on a password prompt with no terminal), copies
+  `Supasito.app.tar.gz` + `.sig` into `release/` and writes `release/latest.json` with only the arch it built
+  for — an arm64 build must never be offered to an Intel Mac. Notes come from `release/notes-<version>.md`.
+  The bundler wants the key in `TAURI_SIGNING_PRIVATE_KEY` (not `…_PATH`, which is the signer subcommand's)
+  and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` set even when empty; both cost a failed build to find out.
+- **The silent failure has a test.** If the key `pnpm release` signs with ever stops matching the pubkey in
+  tauri.conf.json, every shipped copy refuses every future update, and nothing says so until it happens on
+  someone else's Mac. `cargo test -- --ignored updater_package_verifies_against_the_shipped_pubkey` runs the
+  same minisign check the app will run, against the artifacts the release just built.
+- Verified: all three UI states driven in the browser against the mock (`?update=found`, `?update=error`,
+  and nothing newer — banner, progress at 33%, both toasts), no console errors. `tsc` clean, `pnpm test`
+  29 Rust tests. A full `pnpm release --zip` signed, notarized and stapled the app, produced a signed
+  updater package, and the signature verifies against the shipped pubkey.
+- **v0.1.0 is published**: <https://github.com/wojtekwoz/supasito/releases/tag/v0.1.0>, carrying the zip, the
+  signed `Supasito.app.tar.gz` and its `.sig`, and `latest.json`. Every pinned asset URL answers 200, including
+  the `download_url` inside the manifest that an updating copy will fetch.
+- **The fallback endpoint is dead, and the release flag is why.** The release went out marked as a *prerelease*,
+  and GitHub's `releases/latest` ignores prereleases: the repo has no "latest" release at all, so
+  `releases/latest/download/latest.json` — the second endpoint every shipped copy tries — returns 404. Nothing
+  about the build is wrong; one flag decides it. `gh release edit v0.1.0 --prerelease=false --latest` fixes it,
+  and until then the app has no working endpoint at all, because the first one does not exist yet either.
+- Still to do, and blocking the count rather than the updater: `supasito.com/updates/latest.json`. Until that
+  file is served, every check falls through to GitHub, so the number that gets counted is nobody's — the
+  fallback is there to keep updates working, not to measure them.

@@ -74,7 +74,12 @@ let mockRules = "# This site\n\n## Brand\n- Voice: plain, confident, short sente
 // `?fast=on` starts on Opus with fast mode on; the session-header knobs and Settings change these like the real backend would.
 let mockFast = new URLSearchParams(location.search).get("fast") === "on";
 let mockModel = mockFast ? "claude-opus-5" : "claude-sonnet-5";
-const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast, hidden: [...DEFAULT_HIDDEN] };
+const mockSettings: Settings = { claudePath: null, model: null, permissionMode: "acceptEdits", effort: null, fastMode: mockFast, hidden: [...DEFAULT_HIDDEN], updatesEnabled: true };
+// `?update=found` announces 0.2.0 a moment after load, like the daily check would; `?update=error` makes the
+// check fail the way an offline Mac does. Without it this build is the newest, which is the usual case.
+const mockUpdate = query.get("update");
+const MOCK_VERSION = "0.1.0";
+const MOCK_NEWER = { version: "0.2.0", current: MOCK_VERSION, notes: "Undo now restores files Claude created.\nThe dev server survives a laptop sleeping.", date: new Date().toISOString() };
 const THINKING = "The user wants a different headline. The hero lives in components/hero.tsx; I'll read it, replace the h1 text and keep the classes as they are.";
 (window as any).__openMockDoc = demoHtml;
 
@@ -130,6 +135,7 @@ async function fakeTurn(sessionId: string, text: string) {
 }
 
 export function mockBackend(): Backend {
+  if (mockUpdate === "found") setTimeout(() => emit("update://available", { ...MOCK_NEWER }), 2500);
   return {
     settingsGet: async () => ({ ...mockSettings }),
     settingsSet: async (patch) => { Object.assign(mockSettings, patch); },
@@ -265,6 +271,20 @@ export function mockBackend(): Backend {
       { type: "user", message: { role: "user", content: (sessions[siteId] ?? []).find((s) => s.id === sessionId)?.title ?? "Hello" } },
       { type: "assistant", message: { id: "old1", role: "assistant", content: [{ type: "text", text: "Home is done. Pricing next — its plan tiers extend the same Card base, so they inherit the new style." }], usage: { input_tokens: 12, cache_creation_input_tokens: 1200, cache_read_input_tokens: 61000, output_tokens: 60 } } },
     ],
+    updateCheck: async () => {
+      await wait(500);
+      if (mockUpdate === "error") throw new Error("Could not reach supasito.com.");
+      return mockUpdate === "found" ? { ...MOCK_NEWER } : null;
+    },
+    updateInstall: async () => {
+      const total = 24_000_000;
+      for (let got = 0; got < total; got += total / 12) { emit("update://progress", { got, total }); await wait(180); }
+      emit("update://progress", { got: total, total });
+      await wait(400);
+      console.debug("[update] the real backend restarts into the new version here");
+    },
+    updateDismiss: async (version) => { console.debug("[update] dismissed", version); },
+    appVersion: async () => MOCK_VERSION,
     openExternal: async (url) => { window.open(url, "_blank"); },
     revealPath: async (path) => { console.debug("[reveal]", path); },
     on: async (event, handler) => {

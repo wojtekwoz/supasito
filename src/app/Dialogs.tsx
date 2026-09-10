@@ -242,7 +242,13 @@ export function SettingsDialog() {
   const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
   const hidden = useStore((s) => s.settings.hidden) ?? NO_HIDDEN;
   const setHidden = useStore((s) => s.setHidden);
-  const [tab, setTab] = useState<"claude" | "interface" | "feedback">("claude");
+  const [tab, setTab] = useState<"claude" | "interface" | "updates" | "feedback">("claude");
+  const version = useStore((s) => s.version);
+  const update = useStore((s) => s.update);
+  const updateBusy = useStore((s) => s.updateBusy);
+  const updateProgress = useStore((s) => s.updateProgress);
+  const checkUpdate = useStore((s) => s.checkUpdate);
+  const installUpdate = useStore((s) => s.installUpdate);
   const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits", effort: "", fastMode: false });
   const [customModel, setCustomModel] = useState(false);
   useEffect(() => {
@@ -267,6 +273,7 @@ export function SettingsDialog() {
         <div className="tabs" role="tablist">
           <button role="tab" aria-selected={tab === "claude"} className={cx(tab === "claude" && "on")} onClick={() => setTab("claude")}>Claude</button>
           <button role="tab" aria-selected={tab === "interface"} className={cx(tab === "interface" && "on")} onClick={() => setTab("interface")}>Interface</button>
+          <button role="tab" aria-selected={tab === "updates"} className={cx(tab === "updates" && "on")} onClick={() => setTab("updates")}>Updates{update ? " ·" : ""}</button>
           <button role="tab" aria-selected={tab === "feedback"} className={cx(tab === "feedback" && "on")} onClick={() => setTab("feedback")}>Got feedback?</button>
         </div>
         {tab === "feedback" && (
@@ -275,6 +282,38 @@ export function SettingsDialog() {
             <div className="foot" style={{ justifyContent: "flex-start" }}>
               <button className="btn primary" onClick={() => void openExternal(FEEDBACK_MAILTO)}>Send feedback</button>
             </div>
+          </>
+        )}
+        {tab === "updates" && (
+          <>
+            <div className="row2"><label>This copy</label><div style={{ fontSize: 13 }}>Supasito {version || "—"}</div></div>
+            <div className="row2"><label>Newer version</label>
+              <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+                {update ? (
+                  <>
+                    <div style={{ fontSize: 13 }}>Supasito {update.version} is out.</div>
+                    {update.notes && <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 12.5, whiteSpace: "pre-wrap" }}>{update.notes}</p>}
+                    <button className="btn primary" disabled={!!updateBusy} onClick={() => void installUpdate()}>
+                      {updateBusy === "installing" ? (updateProgress === null ? "Downloading…" : `Downloading ${Math.round(updateProgress * 100)}%`) : `Update to ${update.version} and restart`}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, color: "var(--ink-2)" }}>Nothing newer found.</div>
+                    <button className="btn" disabled={!!updateBusy} onClick={() => void checkUpdate(true)}>{updateBusy === "checking" ? "Checking…" : "Check now"}</button>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="row2"><label>Automatically</label>
+              <div style={{ display: "grid", gap: 4 }}>
+                <label className="opt-row"><input type="checkbox" checked={settings.updatesEnabled !== false} onChange={(e) => void save({ updatesEnabled: e.target.checked })} /> Check for a new version once a day</label>
+                <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>
+                  That request is the only thing Supasito sends anywhere on its own. It asks supasito.com, and GitHub if that is unreachable, whether a version newer than this one exists; it carries the version, macOS and the chip this app was built for, and nothing else — no account, no identifier, no record of what you build. Your requests to Claude go from your own Claude Code, as they always did.
+                </p>
+              </div>
+            </div>
+            <div className="foot"><button className="btn primary" onClick={() => setOpen(false)}>Done</button></div>
           </>
         )}
         {tab === "interface" && (

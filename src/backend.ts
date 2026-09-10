@@ -1,5 +1,5 @@
 import type {
-  Attachment, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain,
+  Attachment, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -51,6 +51,13 @@ export interface Backend {
   agentInterrupt(sessionId: string): Promise<void>;
   agentStop(sessionId: string): Promise<void>;
   agentRunning(): Promise<{ sessionId: string; siteId: string }[]>;
+  /** Ask the endpoints whether a newer Supasito exists; null means this is the newest. */
+  updateCheck(): Promise<UpdateInfo | null>;
+  /** Download what the last check found, verify it and restart into it. Never returns on success. */
+  updateInstall(): Promise<void>;
+  /** "Not now" for this version: no banner until a later one appears. */
+  updateDismiss(version: string): Promise<void>;
+  appVersion(): Promise<string>;
   sessionsList(siteId: string): Promise<SessionInfo[]>;
   sessionTranscript(siteId: string, sessionId: string): Promise<unknown[]>;
   openExternal(url: string): Promise<void>;
@@ -109,6 +116,10 @@ async function tauriBackend(): Promise<Backend> {
     agentInterrupt: (sessionId) => invoke("agent_interrupt", { sessionId }),
     agentStop: (sessionId) => invoke("agent_stop", { sessionId }),
     agentRunning: () => invoke("agent_running"),
+    updateCheck: () => invoke("update_check"),
+    updateInstall: () => invoke("update_install"),
+    updateDismiss: (version) => invoke("update_dismiss", { version }),
+    appVersion: () => invoke("app_version"),
     sessionsList: (siteId) => invoke("sessions_list", { siteId }),
     sessionTranscript: (siteId, sessionId) => invoke("session_transcript", { siteId, sessionId }),
     openExternal: (url) => openUrl(url),

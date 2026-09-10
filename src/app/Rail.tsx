@@ -112,12 +112,38 @@ export function Rail() {
           </div>
         )}
       </div>
+      <UpdateRow />
       <div className="rail-foot">
         <span className={cx("status-dot", claude?.ok ? "live" : "")} />
         <span className="t">{claude?.ok ? `Claude Code ${claude.version ?? ""}` : "Claude Code not found"}</span>
         <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}><Gear /></button>
       </div>
     </aside>
+  );
+}
+
+/** One line above the rail's foot when a newer Supasito exists, and only then: what the version is, one button to
+ *  take it, one to say not now. The check that finds it is in src-tauri/src/updates.rs; Settings → Updates turns it off. */
+function UpdateRow() {
+  const update = useStore((s) => s.update);
+  const busy = useStore((s) => s.updateBusy);
+  const progress = useStore((s) => s.updateProgress);
+  const install = useStore((s) => s.installUpdate);
+  const dismiss = useStore((s) => s.dismissUpdate);
+  if (!update) return null;
+  const installing = busy === "installing";
+  return (
+    <div className="rail-update">
+      <span className="t" title={update.notes ?? undefined}>Supasito {update.version} is out</span>
+      {installing ? (
+        <span className="p">{progress === null ? "Downloading…" : `Downloading ${Math.round(progress * 100)}%`}</span>
+      ) : (
+        <span className="acts">
+          <button className="btn sm primary" onClick={() => void install()}>Update and restart</button>
+          <button className="later" title="Ask again when a later version appears" onClick={() => void dismiss()}>Not now</button>
+        </span>
+      )}
+    </div>
   );
 }
 

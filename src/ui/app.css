@@ -65,6 +65,8 @@ a { color: var(--accent); }
 .row:hover { background: var(--elev); color: var(--ink); }
 .row.on { background: var(--elev-2); color: var(--ink); }
 .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* which agent a session runs on, when it is not the default one */
+.row .backend { flex: none; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; line-height: 16px; }
 .row .meta { font-size: 11px; color: var(--ink-3); flex: none; }
 .row .glyph { width: 16px; height: 16px; flex: none; color: var(--ink-3); }
 /* Hover-only buttons take no width until the row is hovered, so names get the whole row; a set star always shows. */

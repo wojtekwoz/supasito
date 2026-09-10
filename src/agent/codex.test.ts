@@ -33,7 +33,7 @@ const session = () => { const s = emptySession(); applyCodexMessage(s, { method:
   check("fixture: Undo knows the file and that it was created", result?.kind === "result" && result.files.join() === "/Users/me/site/probe.txt" && result.created.join() === "/Users/me/site/probe.txt", result?.kind === "result" ? [result.files, result.created] : null);
   check("fixture: not busy after the turn", s.busy === false);
   check("fixture: context from the last call's input tokens", !!s.context && s.context.used > 10_000 && s.context.window > s.context.used, s.context);
-  check("fixture: plan window from account/rateLimits", s.plan.length === 1 && s.plan[0].name === "seven_day" && s.plan[0].utilization === 11, s.plan);
+  check("fixture: plan window from account/rateLimits", s.plan.length === 1 && s.plan[0].name === "seven_day" && s.plan[0].utilization === 0.11, s.plan);
   check("fixture: turn counted", s.cost.turns === 1 && s.cost.session === 0);
   check("fixture: follow-the-page saw the write", s.lastWrite?.file === "/Users/me/site/probe.txt");
 }
@@ -115,7 +115,7 @@ const session = () => { const s = emptySession(); applyCodexMessage(s, { method:
   applyCodexMessage(s, { method: "item/completed", params: { item: { type: "somethingNew", id: "z1", status: "completed" } } });
   check("unknown item: a generic done row", s.items.length === 1 && s.items[0].kind === "tool" && s.items[0].name === "somethingNew" && s.items[0].status === "done", s.items);
   check("windowName", [windowName(300), windowName(10080), windowName(60), windowName(null)].join() === "five_hour,seven_day,1h,window");
-  check("parseCodexRateLimits: both windows", parseCodexRateLimits({ rateLimits: { primary: { usedPercent: 3, windowDurationMins: 300, resetsAt: 1 }, secondary: { usedPercent: 11, windowDurationMins: 10080, resetsAt: 2 } } }).map((w) => `${w.name}=${w.utilization}`).join() === "five_hour=3,seven_day=11");
+  check("parseCodexRateLimits: both windows", parseCodexRateLimits({ rateLimits: { primary: { usedPercent: 3, windowDurationMins: 300, resetsAt: 1 }, secondary: { usedPercent: 11, windowDurationMins: 10080, resetsAt: 2 } } }).map((w) => `${w.name}=${w.utilization}`).join() === "five_hour=0.03,seven_day=0.11");
   check("backendOf", backendOf("codex:abc") === "codex" && backendOf("abc") === "claude" && backendOf(null) === "claude");
   check("model/rerouted: notice and new model", (() => { const r = session(); applyCodexMessage(r, { method: "model/rerouted", params: { fromModel: "a", toModel: "b", reason: "capacity" } }); return r.model === "b" && r.items[0].kind === "notice"; })());
 }

@@ -11,7 +11,7 @@
 //!                         folder, set CODEX_HOME=~/.codex so Codex stays signed in and SUPASITO_PATH=$PATH.
 //! - SUPASITO_SMOKE_EFFORT     --effort for the run (low, medium, high, xhigh, max)
 //! - SUPASITO_SMOKE_FAST       1 = start with fast mode on (Opus only)
-//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools | ports
+//! - SUPASITO_SMOKE_SCENARIO   prompt (default) | queue | interrupt | pointing | mode | model | fast | undo | tools | ports | history
 //!                         (model: set_model sonnet between two turns, start with SUPASITO_SMOKE_MODEL=haiku;
 //!                         fast: apply_flag_settings fastMode between two turns, start with SUPASITO_SMOKE_MODEL=opus)
 //!                         (undo: one turn that edits a tracked file and creates a new one, then the same
@@ -481,6 +481,22 @@ pub async fn run(app: AppHandle, prompt: String) {
                     Some(why) => eprintln!("[smoke] UNDO FAILED: {why}"),
                 }
             }
+        }
+        "history" => {
+            // One turn, then what the rail and a resumed session ask for: the thread list for this site and the
+            // thread's replay (thread/list, thread/read). Codex only.
+            eprintln!("[smoke] scenario history: one turn, then list and replay it");
+            let _ = send(&prompt, None).await;
+            let r = wait_result(&mut rx, 240).await;
+            let codex_path = agent::codex::locate(None, &state.path_env).await.unwrap_or_default();
+            let list = state.codex.list(&app, &site.id, &site.path, &codex_path, &state.path_env).await;
+            let mine = list.as_ref().ok().and_then(|l| l.iter().find(|s| s.id == session_id).cloned());
+            eprintln!("[smoke] thread list: {} entries, ours = {:?}", list.as_ref().map(|l| l.len()).unwrap_or(0), mine.as_ref().map(|s| (&s.title, s.last_modified, &s.git_branch)));
+            let lines = state.codex.transcript(&app, &site.id, &site.path, agent::codex::thread_id(&session_id), &codex_path, &state.path_env).await;
+            let kinds: Vec<String> = lines.as_ref().map(|l| l.iter().filter(|m| m["method"] == "item/completed").map(|m| m["params"]["item"]["type"].as_str().unwrap_or("?").to_string()).collect()).unwrap_or_default();
+            eprintln!("[smoke] replay: {} lines, items {:?}", lines.as_ref().map(|l| l.len()).unwrap_or(0), kinds);
+            let ok = r.is_some() && mine.as_ref().map(|s| s.title.starts_with(&prompt.chars().take(20).collect::<String>())).unwrap_or(false) && kinds.iter().any(|k| k == "agentMessage") && kinds.iter().any(|k| k == "userMessage");
+            eprintln!("[smoke] HISTORY {}", if ok { "OK: the thread is listed under its first message and replays its items" } else { "FAILED" });
         }
         "pointing" => {
             eprintln!("[smoke] scenario pointing: message with an attached selection (the starter's hero h1)");

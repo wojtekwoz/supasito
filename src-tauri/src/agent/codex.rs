@@ -233,6 +233,18 @@ impl Thread {
     }
 }
 
+/// Codex reads AGENTS.md, not the CLAUDE.md the site rules dialog writes. Until the rules move to AGENTS.md
+/// (CODEX.md §6), a site with CLAUDE.md and no AGENTS.md gets its rules appended to the developer instructions.
+pub fn with_site_rules(instructions: String, site_path: &str) -> String {
+    let dir = std::path::Path::new(site_path);
+    if dir.join("AGENTS.md").exists() { return instructions; }
+    let Ok(rules) = std::fs::read_to_string(dir.join("CLAUDE.md")) else { return instructions };
+    let rules = rules.trim();
+    if rules.is_empty() { return instructions; }
+    let rules: String = rules.chars().take(20_000).collect();
+    format!("{instructions}\n\nRules for this site, from its CLAUDE.md (follow them as you would AGENTS.md):\n{rules}")
+}
+
 /// Claude-shaped content blocks → Codex `UserInput`s. Images travel as data URLs (unverified on 0.149.0: the
 /// schema accepts any `url`; `localImage{path}` is the fallback if it turns out to want a file).
 fn user_input(content: &Value) -> Value {
@@ -330,18 +342,7 @@ impl Registry {
         if let Some(id) = opts.resume.as_deref() {
             if let Some(existing) = self.get(&format!("{PREFIX}{id}")).await { return Ok(existing.session_id.clone()); }
         }
-        // The guard must not live across the spawn (a match scrutinee's temporary would): bind it first.
-        let existing = self.servers.lock().await.get(&opts.site_id).cloned();
-        let server = match existing {
-            Some(s) => s,
-            None => {
-                let s = self.spawn(app.clone(), &opts).await?;
-                self.servers.lock().await.insert(opts.site_id.clone(), s.clone());
-                self.persist().await;
-                s
-            }
-        };
-        debug_log(&format!("app-server ready for site {}", opts.site_id));
+        let server = self.server_for(&app, &opts.site_id, &opts.cwd, &opts.codex_path, &opts.path_env).await?;
         let (approval, sandbox_mode) = match opts.permission_mode.as_deref().unwrap_or("acceptEdits") {
             "default" | "plan" => ("untrusted", if opts.permission_mode.as_deref() == Some("plan") { "read-only" } else { "workspace-write" }),
             "bypassPermissions" => ("never", "danger-full-access"),
@@ -378,12 +379,69 @@ impl Registry {
         Ok(thread.session_id.clone())
     }
 
-    async fn spawn(&self, app: AppHandle, opts: &StartOpts) -> Result<Arc<Server>, String> {
-        let mut cmd = Command::new(&opts.codex_path);
-        cmd.current_dir(&opts.cwd)
-            .env("PATH", &opts.path_env)
+    /// The site's app-server, spawned on first use.
+    async fn server_for(&self, app: &AppHandle, site_id: &str, cwd: &str, codex_path: &str, path_env: &str) -> Result<Arc<Server>, String> {
+        // The guard must not live across the spawn (a match scrutinee's temporary would): bind it first.
+        let existing = self.servers.lock().await.get(site_id).cloned();
+        if let Some(s) = existing { return Ok(s); }
+        let s = self.spawn(app.clone(), site_id, cwd, codex_path, path_env).await?;
+        self.servers.lock().await.insert(site_id.to_string(), s.clone());
+        self.persist().await;
+        debug_log(&format!("app-server ready for site {site_id}"));
+        Ok(s)
+    }
+
+    /// Drop a server that has no thread on it (one spawned only to list or replay history).
+    async fn release_if_idle(&self, server: Arc<Server>) {
+        if !server.threads.lock().await.is_empty() { return; }
+        self.servers.lock().await.remove(&server.site_id);
+        self.persist().await;
+        shutdown(server).await;
+    }
+
+    /// Codex's threads for a site folder, newest first, shaped like Claude's session list. Read over the
+    /// protocol (`thread/list` filters by cwd); `~/.codex` itself is mid-migration and is never parsed.
+    pub async fn list(&self, app: &AppHandle, site_id: &str, cwd: &str, codex_path: &str, path_env: &str) -> Result<Vec<super::sessions::SessionInfo>, String> {
+        let server = self.server_for(app, site_id, cwd, codex_path, path_env).await?;
+        let r = server.request("thread/list", json!({ "cwd": cwd, "limit": 200, "sortDirection": "desc" })).await;
+        self.release_if_idle(server).await;
+        let r = r?;
+        let mut out = Vec::new();
+        for t in r.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default() {
+            if t.get("parentThreadId").map(|p| !p.is_null()).unwrap_or(false) || t.get("ephemeral").and_then(|e| e.as_bool()).unwrap_or(false) { continue; }
+            let Some(id) = t.get("id").and_then(|i| i.as_str()) else { continue };
+            let preview = t.get("preview").and_then(|p| p.as_str()).map(super::sessions::squash).unwrap_or_default();
+            let title = t.get("name").and_then(|n| n.as_str()).map(String::from).filter(|n| !n.trim().is_empty()).unwrap_or(preview);
+            if title.trim().is_empty() { continue; }
+            let secs = |k: &str| t.get(k).and_then(|v| v.as_u64()).map(|v| v * 1000);
+            out.push(super::sessions::SessionInfo {
+                id: format!("{PREFIX}{id}"),
+                title,
+                last_modified: secs("updatedAt").or(secs("createdAt")).unwrap_or(0),
+                created_at: secs("createdAt"),
+                git_branch: t.pointer("/gitInfo/branch").and_then(|b| b.as_str()).map(String::from),
+                message_count: 0,
+            });
+        }
+        Ok(out)
+    }
+
+    /// A thread's history as the notification lines the reducer already understands: every item as an
+    /// `item/started` + `item/completed` pair, every turn closed by `turn/completed`.
+    pub async fn transcript(&self, app: &AppHandle, site_id: &str, cwd: &str, thread_id: &str, codex_path: &str, path_env: &str) -> Result<Vec<Value>, String> {
+        let server = self.server_for(app, site_id, cwd, codex_path, path_env).await?;
+        let r = server.request("thread/read", json!({ "threadId": thread_id, "includeTurns": true })).await;
+        self.release_if_idle(server).await;
+        let r = r?;
+        Ok(replay_lines(&r["thread"]))
+    }
+
+    async fn spawn(&self, app: AppHandle, site_id: &str, cwd: &str, codex_path: &str, path_env: &str) -> Result<Arc<Server>, String> {
+        let mut cmd = Command::new(codex_path);
+        cmd.current_dir(cwd)
+            .env("PATH", path_env)
             .env("NO_COLOR", "1")
-            .args(["-c", &format!("supasito.site=\"{}\"", opts.site_id), "app-server"])
+            .args(["-c", &format!("supasito.site=\"{site_id}\""), "app-server"])
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .kill_on_drop(false);
         cmd.process_group(0);
@@ -394,7 +452,7 @@ impl Registry {
         let stderr = child.stderr.take().ok_or("no stderr")?;
         let (tx, rx) = mpsc::channel::<String>(256);
         let server = Arc::new(Server {
-            site_id: opts.site_id.clone(),
+            site_id: site_id.to_string(),
             pid,
             tx: Mutex::new(Some(tx)),
             next_id: AtomicU64::new(1),
@@ -462,17 +520,19 @@ impl Registry {
     }
 
     /// Stop one thread; the app-server goes with it when it was the site's last.
-    pub async fn stop(&self, session_id: &str) -> Result<(), String> {
+    pub async fn stop(&self, app: &AppHandle, session_id: &str) -> Result<(), String> {
         let Some(t) = self.threads.lock().await.remove(session_id) else { return Ok(()) };
         t.decline_pending().await;
         let _ = t.interrupt().await;
         t.server.threads.lock().await.remove(&t.thread_id);
-        let app_exit = t.server.threads.lock().await.is_empty();
-        if app_exit {
+        let last = t.server.threads.lock().await.is_empty();
+        if last {
             self.servers.lock().await.remove(&t.site_id);
             self.persist().await;
             shutdown(t.server.clone()).await;
+            // the exit watcher reports nothing for a thread already removed, so say it here
         }
+        let _ = app.emit("agent://exit", json!({ "sessionId": t.session_id, "code": 0 }));
         Ok(())
     }
 
@@ -572,6 +632,25 @@ async fn handle_line(app: &AppHandle, s: &Arc<Server>, v: Value) {
     }
 }
 
+/// `thread/read` → the lines `applyCodexMessage` replays (verified 0.149.0: `turns[].items[]` carry the
+/// same shapes as live `item/*` notifications; reasoning items arrive with their summary filled in).
+pub fn replay_lines(thread: &Value) -> Vec<Value> {
+    let tid = thread.get("id").cloned().unwrap_or(Value::Null);
+    let mut out = Vec::new();
+    for turn in thread.get("turns").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
+        let turn_id = turn.get("id").cloned().unwrap_or(Value::Null);
+        for item in turn.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default() {
+            out.push(json!({ "method": "item/started", "params": { "threadId": tid, "turnId": turn_id, "item": item } }));
+            out.push(json!({ "method": "item/completed", "params": { "threadId": tid, "turnId": turn_id, "item": item } }));
+        }
+        let mut closed = turn.clone();
+        closed["items"] = json!([]);
+        if closed.get("status").and_then(|s| s.as_str()) == Some("inProgress") { closed["status"] = json!("completed"); }
+        out.push(json!({ "method": "turn/completed", "params": { "threadId": tid, "turn": closed } }));
+    }
+    out
+}
+
 async fn writer(mut stdin: ChildStdin, mut rx: mpsc::Receiver<String>) {
     while let Some(line) = rx.recv().await {
         if stdin.write_all(line.as_bytes()).await.is_err() { break; }
@@ -650,6 +729,20 @@ mod tests {
         assert_eq!(v[0]["url"], "data:image/png;base64,AAAA");
         assert_eq!(v[1]["text"], "make it blue");
         assert_eq!(v.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_read_thread_replays_as_item_pairs_and_closed_turns() {
+        let thread = json!({ "id": "t1", "turns": [
+            { "id": "u1", "status": "completed", "durationMs": 5, "items": [ { "type": "userMessage", "id": "i1", "content": [{ "type": "text", "text": "hi" }] }, { "type": "agentMessage", "id": "i2", "text": "hello" } ] },
+            { "id": "u2", "status": "inProgress", "items": [] }
+        ] });
+        let lines = replay_lines(&thread);
+        let methods: Vec<&str> = lines.iter().map(|l| l["method"].as_str().unwrap()).collect();
+        assert_eq!(methods, ["item/started", "item/completed", "item/started", "item/completed", "turn/completed", "turn/completed"]);
+        assert_eq!(lines[4]["params"]["turn"]["durationMs"], 5);
+        assert_eq!(lines[5]["params"]["turn"]["status"], "completed"); // a turn cut off mid-way is not still running
+        assert_eq!(lines[0]["params"]["threadId"], "t1");
     }
 
     #[test]

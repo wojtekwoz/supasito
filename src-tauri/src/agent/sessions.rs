@@ -118,7 +118,7 @@ pub fn transcript(cwd: &str, session_id: &str) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-fn squash(s: &str) -> String {
+pub fn squash(s: &str) -> String {
     let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if one.chars().count() > 90 { format!("{}…", one.chars().take(90).collect::<String>()) } else { one }
 }

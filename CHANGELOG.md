@@ -309,9 +309,21 @@ codex-cli 0.149.0 with `SUPASITO_SMOKE_MODEL=gpt-5.6-luna`.
   row on the checklist that never blocks.
 - **Found the hard way:** a `match self.servers.lock().await.get(..)` scrutinee keeps its guard alive across
   the arm, and the arm locked the same mutex — a deadlock that showed as "start_agent never returns".
-- **Not yet (CODEX.md §8, milestones 4–7):** the Codex model list fetched live, Codex threads in the
-  session list and replayed from `thread/read` (a resumed thread starts at its next turn), `?agent=codex` in
-  the mock, AGENTS.md for site rules, the deny reason as a steer verified live, images as data URLs verified.
+- **History (milestone 5).** `sessions_list` merges Codex's `thread/list` (filtered by the site's cwd, titled
+  by the thread's first message, branch from `gitInfo`) with Claude's JSONL list; `session_transcript` replays
+  a thread from `thread/read` as `item/started`/`item/completed` pairs plus a `turn/completed` per turn, so
+  live and resumed use one reducer. A server spawned only for listing is shut down again when the site has no
+  thread on it (270 MB is too much to keep for a list). Smoke `history` proves both through the app. The rail
+  badges Codex sessions "GPT"; the footer names Codex and its version while one is on screen.
+- **Site rules reach Codex.** It reads AGENTS.md, not CLAUDE.md, so a site with CLAUDE.md and no AGENTS.md
+  gets its rules appended to the developer instructions (`with_site_rules`). Moving the dialog to AGENTS.md
+  with `@AGENTS.md` in CLAUDE.md remains the long-term fix (CODEX.md §6).
+- **Mock:** `pnpm dev` with `?agent=codex` replays the recorded fixture for a new session, pausing at both
+  approvals until the card is answered; `?tools=nocodex|codexlogin` for the checklist. Caught one thing the
+  reducer tests had not: Codex's `usedPercent` is 0–100 where Claude's utilization is 0–1 — the ring read
+  "plan 1100%" until it was scaled.
+- **Not yet (CODEX.md §8):** the Codex model list fetched live from `model/list` (three ids are hardcoded
+  for now), AGENTS.md as the rules file, the deny reason as a steer and images as data URLs verified live.
 
 ### Session 30 (2026-09-08) — Supasito can update itself, and that is also the install count
 There was no updater at all: someone who downloaded 0.1.0 would never learn 0.2.0 existed. Fixing that

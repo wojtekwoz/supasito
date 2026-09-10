@@ -32,6 +32,7 @@ export function Rail() {
   const running = useStore((s) => s.running);
   const transcripts = useStore((s) => s.transcripts);
   const claude = useStore((s) => s.claude);
+  const codex = useStore((s) => s.tools?.codex ?? null);
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
   const showSiteTools = useShown("siteTools");
   // Starred sites, plus the current one if it is not starred; with nothing starred, every site as before.
@@ -101,6 +102,7 @@ export function Rail() {
                   <button key={s.id} className={cx("row", s.id === currentSessionId && "on")} onClick={() => void openSession(s.id)} title={s.title}>
                     <span className={cx("status-dot", busy && "busy", !busy && live && "live")} />
                     <span className="t">{s.title}</span>
+                    {s.id.startsWith("codex:") && <span className="backend" title="This conversation runs on Codex">GPT</span>}
                     <span className="meta">{ago(s.lastModified)}</span>
                   </button>
                 );
@@ -114,8 +116,18 @@ export function Rail() {
       </div>
       <UpdateRow />
       <div className="rail-foot">
-        <span className={cx("status-dot", claude?.ok ? "live" : "")} />
-        <span className="t">{claude?.ok ? `Claude Code ${claude.version ?? ""}` : "Claude Code not found"}</span>
+        {/* the CLI behind the conversation on screen: Codex for a codex: session, Claude Code otherwise */}
+        {currentSessionId?.startsWith("codex:") ? (
+          <>
+            <span className={cx("status-dot", codex?.ok ? "live" : "")} />
+            <span className="t">{codex?.ok ? `Codex ${codex.version ?? ""}` : "Codex not found"}</span>
+          </>
+        ) : (
+          <>
+            <span className={cx("status-dot", claude?.ok ? "live" : "")} />
+            <span className="t">{claude?.ok ? `Claude Code ${claude.version ?? ""}` : "Claude Code not found"}</span>
+          </>
+        )}
         <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}><Gear /></button>
       </div>
     </aside>

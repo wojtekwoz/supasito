@@ -2,6 +2,7 @@
 import type { Backend } from "./backend";
 import type { DevInfo, DevProblem, EventName, SessionInfo, Settings, Site } from "./types";
 import pickerSource from "../src-tauri/src/picker.js?raw";
+import codexTrace from "./agent/fixtures/codex-0.149.0-write-turn.jsonl?raw";
 import { DEFAULT_HIDDEN } from "./app/ui";
 
 type Handler = (payload: any) => void;
@@ -83,6 +84,35 @@ const MOCK_NEWER = { version: "0.2.0", current: MOCK_VERSION, notes: "Undo now r
 const THINKING = "The user wants a different headline. The hero lives in components/hero.tsx; I'll read it, replace the h1 text and keep the classes as they are.";
 (window as any).__openMockDoc = demoHtml;
 
+// `?agent=codex`: sessions run on the recorded Codex turn (src/agent/fixtures) instead of the Claude fake.
+// The two approval requests in the trace pause the replay until agentRespond, like the real app-server does.
+const mockAgent = query.get("agent");
+const isCodexId = (id: string) => id.startsWith("codex:");
+let codexResume: (() => void) | null = null;
+async function fakeCodexTurn(sessionId: string, text: string) {
+  const path = siteOf(running.get(sessionId) ?? site.id).path;
+  const lines = codexTrace.split("\n").filter(Boolean).map((l) => JSON.parse(l.split("/Users/me/site").join(path)));
+  emit("agent://message", { sessionId, message: { method: "supasito/session", params: { model: mockModel, mode: "acceptEdits" } } });
+  await wait(300);
+  for (const m of lines) {
+    if (typeof m.method !== "string") continue; // responses to the probe's own requests
+    if (m.method.endsWith("requestApproval")) {
+      const fc = m.method.includes("fileChange");
+      const request = fc
+        ? { subtype: "can_use_tool", tool_name: "Write", input: { file_path: path + "/probe.txt", files: [path + "/probe.txt"], diff: "ok\n", itemId: m.params.itemId } }
+        : { subtype: "can_use_tool", tool_name: "Bash", input: { command: m.params.command, cwd: path, itemId: m.params.itemId } };
+      emit("agent://permission", { sessionId, requestId: String(m.id), request });
+      await new Promise<void>((resolve) => { codexResume = resolve; });
+      continue;
+    }
+    if (m.method === "item/started" && m.params?.item?.type === "userMessage") { m.params.item.content = [{ type: "text", text }]; }
+    if (m.method === "item/completed" && m.params?.item?.type === "userMessage") { m.params.item.content = [{ type: "text", text }]; }
+    emit("agent://message", { sessionId, message: m });
+    if (m.method === "item/agentMessage/delta") await wait(20);
+    else if (m.method === "item/completed") await wait(250);
+  }
+}
+
 async function fakeTurn(sessionId: string, text: string) {
   const msgId = "msg_" + Math.random().toString(36).slice(2);
   const say = async (s: string, thinking?: string) => {
@@ -148,7 +178,9 @@ export function mockBackend(): Backend {
       const node = sim === "missing" || sim === "nonode" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/node", version: sim === "oldnode" ? "18.20.4" : "24.4.0" };
       const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : sim === "nogitpath" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
       const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
-      return { claude, node, git, packageManager, hasBrew: q.get("brew") !== "no", gitIdentity: git.ok && sim !== "nogitid" };
+      // `?tools=nocodex` hides the optional second agent; `?tools=codexlogin` has it installed but signed out
+      const codex = sim === "missing" || sim === "nocodex" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/codex", version: "0.149.0", loggedIn: sim !== "codexlogin" };
+      return { claude, codex, node, git, packageManager, hasBrew: q.get("brew") !== "no", gitIdentity: git.ok && sim !== "nogitid" };
     },
     sitesList: async () => [...mockSites],
     sitePickFolder: async () => "/Users/you/Sites/another",
@@ -243,16 +275,18 @@ export function mockBackend(): Backend {
     },
     publishCancel: async () => { mockPublishCancelled = true; },
     agentStart: async (siteId, resume, overrides) => {
-      const id = resume ?? "sess-" + Math.random().toString(36).slice(2);
+      // like the Rust side: the session's own choice, else the saved default; an OpenAI id (or ?agent=codex) means a Codex thread
+      mockModel = overrides?.model || mockSettings.model || (mockAgent === "codex" ? "gpt-5.6-luna" : mockModel);
+      const codex = resume ? isCodexId(resume) : /^gpt-|^o[34]|codex/i.test(mockModel);
+      const id = resume ?? (codex ? "codex:" : "sess-") + Math.random().toString(36).slice(2);
       running.set(id, siteId);
-      // like the Rust side: the session's own choice, else the saved default
-      mockModel = overrides?.model || mockSettings.model || mockModel;
       mockFast = overrides?.fastMode ?? !!mockSettings.fastMode;
       return id;
     },
-    agentSend: async (sessionId, text) => { void fakeTurn(sessionId, text); },
+    agentSend: async (sessionId, text) => { void (isCodexId(sessionId) ? fakeCodexTurn(sessionId, text) : fakeTurn(sessionId, text)); },
     siteSetPublish: async (siteId, command, key) => ({ ...siteOf(siteId), [key]: command || null }),
     agentRespond: async (sessionId, _requestId, response: any) => {
+      if (isCodexId(sessionId)) { const r = codexResume; codexResume = null; r?.(); return; }
       await wait(200);
       const denied = response?.behavior === "deny";
       emit("agent://message", { sessionId, message: { type: "assistant", message: { id: "m4", role: "assistant", content: [{ type: "tool_use", id: "toolu_3", name: "Bash", input: { command: "pnpm exec tsc --noEmit", description: "Type-check the project" } }] }, parent_tool_use_id: null } });

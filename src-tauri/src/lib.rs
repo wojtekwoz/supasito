@@ -412,6 +412,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     if codex {
         let codex_path = agent::codex::locate(None, &state.path_env).await.ok_or("Codex was not found. Install it (`npm install -g @openai/codex` or `brew install codex`) and run `codex login`, or pick a Claude model.")?;
         let model = model.filter(|m| agent::codex::is_codex_model(m)).unwrap_or_else(|| "gpt-5.6-luna".to_string());
+        let system = agent::codex::with_site_rules(system, &site.path);
         let opts = agent::codex::StartOpts {
             resume: resume.as_deref().map(|id| agent::codex::thread_id(id).to_string()),
             site_id: site_id.to_string(),
@@ -488,8 +489,8 @@ async fn agent_interrupt(state: State<'_, AppState>, session_id: String) -> Resu
 }
 
 #[tauri::command]
-async fn agent_stop(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    if agent::codex::is_codex_session(&session_id) { state.codex.stop(&session_id).await } else { state.agents.stop(&session_id).await }
+async fn agent_stop(app: AppHandle, state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    if agent::codex::is_codex_session(&session_id) { state.codex.stop(&app, &session_id).await } else { state.agents.stop(&session_id).await }
 }
 
 #[tauri::command]
@@ -499,17 +500,32 @@ async fn agent_running(state: State<'_, AppState>) -> Result<Vec<Value>, String>
     Ok(all)
 }
 
+/// Both backends' sessions for a site, newest first. Codex's come over its protocol, so a Mac without
+/// codex (or with codex failing to answer) still gets Claude's list.
 #[tauri::command]
-async fn sessions_list(state: State<'_, AppState>, site_id: String) -> Result<Vec<agent::sessions::SessionInfo>, String> {
+async fn sessions_list(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<Vec<agent::sessions::SessionInfo>, String> {
     let site = state.site(&site_id)?;
-    tauri::async_runtime::spawn_blocking(move || agent::sessions::list(&site.path)).await.map_err(|e| e.to_string())
+    let path = site.path.clone();
+    let claude = tauri::async_runtime::spawn_blocking(move || agent::sessions::list(&path));
+    let mut all = Vec::new();
+    if let Some(codex_path) = agent::codex::locate(None, &state.path_env).await {
+        match state.codex.list(&app, &site.id, &site.path, &codex_path, &state.path_env).await {
+            Ok(list) => all.extend(list),
+            Err(e) => eprintln!("codex thread list failed: {e}"),
+        }
+    }
+    all.extend(claude.await.map_err(|e| e.to_string())?);
+    all.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    Ok(all)
 }
 
 #[tauri::command]
-async fn session_transcript(state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
+async fn session_transcript(app: AppHandle, state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
     let site = state.site(&site_id)?;
-    // Codex threads replay through thread/read (CODEX.md §8, milestone 5); until then a resumed one starts from its next turn.
-    if agent::codex::is_codex_session(&session_id) { return Ok(Vec::new()); }
+    if agent::codex::is_codex_session(&session_id) {
+        let codex_path = agent::codex::locate(None, &state.path_env).await.ok_or("Codex was not found")?;
+        return state.codex.transcript(&app, &site.id, &site.path, agent::codex::thread_id(&session_id), &codex_path, &state.path_env).await;
+    }
     tauri::async_runtime::spawn_blocking(move || agent::sessions::transcript(&site.path, &session_id)).await.map_err(|e| e.to_string())?
 }
 

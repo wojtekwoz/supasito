@@ -1,6 +1,7 @@
 # Codex as a second agent backend — plan
 
-Status: not built. This is the design for the one line in PLAN.md §9a ("second agent backend behind
+Status: **milestones 1–3 and 5 built on the `codex-backend` branch** (CHANGELOG session 31); 4, 6 and 7
+partly. This is the design for the one line in PLAN.md §9a ("second agent backend behind
 the same `agent://` events"). Everything below marked *verified* was recorded against **codex-cli
 0.149.0 on 2026-09-10** with the probe in §3.4; everything else is marked as an open question.
 

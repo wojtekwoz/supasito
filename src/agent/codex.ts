@@ -32,7 +32,8 @@ export function parseCodexRateLimits(params: any): PlanWindow[] {
   const out: PlanWindow[] = [];
   for (const w of [rl.primary, rl.secondary]) {
     if (!w || typeof w.usedPercent !== "number") continue;
-    out.push({ name: windowName(w.windowDurationMins), utilization: w.usedPercent, resetsAt: typeof w.resetsAt === "number" ? w.resetsAt : null });
+    // usedPercent is 0–100; the plan rows and the ring expect Claude's 0–1 utilization.
+    out.push({ name: windowName(w.windowDurationMins), utilization: w.usedPercent / 100, resetsAt: typeof w.resetsAt === "number" ? w.resetsAt : null });
   }
   return out;
 }

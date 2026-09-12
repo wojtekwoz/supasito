@@ -25,9 +25,12 @@ const mockSites: Site[] = query.get("sites") === "none" ? [] : query.get("sites"
     ? [site, ...MANY.map((name, i) => ({ ...site, id: `site-${i + 2}`, path: `/Users/you/Sites/${name.toLowerCase().replace(/\s+/g, "-")}`, name, lastSessionId: null, favorite: i === 1 || i === 6 || i === 10, lastOpened: Date.now() - (i + 1) * 86400e3 }))]
     : [site];
 const siteOf = (id: string) => mockSites.find((s) => s.id === id) ?? site;
+// The third row is a conversation that moved from Claude to Codex (PLAN §8d.2): one row, the tail's id, the head's
+// title, both segments replayed under a divider; `?chain=broken` makes the head's transcript unreadable.
 const sessions: Record<string, SessionInfo[]> = {
   [site.id]: [
     { id: "sess-1", title: "Roll out the new elevated Card style", lastModified: Date.now() - 3600e3, messageCount: 6 },
+    { id: "codex:chain-tail", title: "Rework the pricing page", lastModified: Date.now() - 5400e3, createdAt: Date.now() - 7200e3, messageCount: 5, chain: [{ id: "sess-head" }, { id: "codex:chain-tail", model: "gpt-6-astra" }] },
     { id: "sess-2", title: "Update pricing FAQ for the Enterprise tier", lastModified: Date.now() - 86400e3 * 2, messageCount: 4 },
   ],
   "site-2": [{ id: "sess-second-1", title: "Draft the About page", lastModified: Date.now() - 7200e3, messageCount: 2 }],
@@ -92,7 +95,7 @@ const mockModels = query.get("models");
 const mockCatalogue = (): Catalogue => {
   if (mockModels !== "fresh") return { codex: [], codexAt: 0, served: [], servedAt: 0 };
   const codex: CatalogueModel[] = (codexModelList as { data: any[] }).data.map((m) => ({
-    id: m.id, label: String(m.displayName ?? m.id).replace(/^(GPT-[\d.]+)-/, "$1 ").replace(/-/g, " "), hint: m.description ?? "", backend: "codex", isDefault: !!m.isDefault,
+    id: m.id, label: String(m.displayName ?? m.id).replace(/^(GPT-[\d.]+)-(.*)$/, (_: string, f: string, r: string) => `${f} ${r.replace(/-/g, " ")}`), hint: m.description ?? "", backend: "codex", isDefault: !!m.isDefault,
     efforts: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort), defaultEffort: m.defaultReasoningEffort ?? null,
     fast: (m.serviceTiers ?? []).some((t: any) => t.id === "priority"), hidden: !!m.hidden,
   }));
@@ -300,6 +303,8 @@ export function mockBackend(): Backend {
       const codex = resume ? isCodexId(resume) : /^gpt-|^o[34]|codex/i.test(mockModel);
       const id = resume ?? (codex ? "codex:" : "sess-") + Math.random().toString(36).slice(2);
       running.set(id, siteId);
+      // like the Rust side: the continued session's idle process is stopped once the new one is up
+      if (overrides?.continues && running.has(overrides.continues)) { const from = overrides.continues; running.delete(from); setTimeout(() => emit("agent://exit", { sessionId: from, code: 0 }), 50); }
       mockFast = overrides?.fastMode ?? !!mockSettings.fastMode;
       return id;
     },
@@ -321,7 +326,14 @@ export function mockBackend(): Backend {
     agentStop: async (sessionId) => { running.delete(sessionId); emit("agent://exit", { sessionId, code: 0 }); },
     agentRunning: async () => [...running].map(([sessionId, siteId]) => ({ sessionId, siteId })),
     sessionsList: async (siteId) => sessions[siteId] ?? [],
-    sessionTranscript: async (siteId, sessionId) => [
+    sessionTranscript: async (siteId, sessionId) => sessionId === "sess-head" ? (query.get("chain") === "broken" ? Promise.reject(new Error("cannot read session: No such file or directory")) : [
+      { type: "user", message: { role: "user", content: "Rework the pricing page" } },
+      { type: "assistant", message: { id: "h1", model: "claude-sonnet-5", role: "assistant", content: [{ type: "text", text: "The three tiers now share the Card base; Enterprise gets the dark variant." }], usage: { input_tokens: 12, cache_creation_input_tokens: 1200, cache_read_input_tokens: 41000, output_tokens: 60 } } },
+    ]) : sessionId === "codex:chain-tail" ? [
+      { method: "item/started", params: { item: { type: "userMessage", id: "u1", content: [{ type: "text", text: "Make the Enterprise tier stand out more" }] } } },
+      { method: "item/completed", params: { item: { type: "agentMessage", id: "a1", text: "Done: the Enterprise card is elevated and its call to action is the accent button." } } },
+      { method: "turn/completed", params: { turn: { id: "t1", status: "completed", items: [] } } },
+    ] : [
       { type: "user", message: { role: "user", content: (sessions[siteId] ?? []).find((s) => s.id === sessionId)?.title ?? "Hello" } },
       { type: "assistant", message: { id: "old1", role: "assistant", content: [{ type: "text", text: "Home is done. Pricing next — its plan tiers extend the same Card base, so they inherit the new style." }], usage: { input_tokens: 12, cache_creation_input_tokens: 1200, cache_read_input_tokens: 61000, output_tokens: 60 } } },
     ],

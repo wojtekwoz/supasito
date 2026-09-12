@@ -6,7 +6,9 @@ use std::{io::{BufRead, BufReader}, path::PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-#[derive(Serialize, Clone, Debug)]
+use crate::sites::Continuation;
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub id: String,
@@ -15,6 +17,66 @@ pub struct SessionInfo {
     pub created_at: Option<u64>,
     pub git_branch: Option<String>,
     pub message_count: usize,
+    /// The backend sessions this row stands for, oldest first, when it is the tail of a conversation that
+    /// changed agent (PLAN §8d.2); empty for a plain session. The UI replays each in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<ChainStep>,
+}
+
+/// One session of a chain and the model it started on (None for the head, or when the link did not say).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainStep {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// One conversation, several backend sessions: a session that another one continues is hidden behind that
+/// successor, and the tail row carries the head's title and `created_at`, the tail's `last_modified`, the
+/// summed `message_count` and the whole chain. A session is hidden only when its successor is *in the list*
+/// (Codex uninstalled or its list failing must not make a conversation vanish); with two successors the
+/// newer one hides the head and the other stays a row of its own. Order is kept: the caller sorts.
+pub fn fold_chains(list: Vec<SessionInfo>, links: &[Continuation]) -> Vec<SessionInfo> {
+    use std::collections::{HashMap, HashSet};
+    if links.is_empty() { return list; }
+    let present: HashSet<&str> = list.iter().map(|s| s.id.as_str()).collect();
+    // successor per session: the newest link whose `id` is present
+    let mut successor: HashMap<&str, &Continuation> = HashMap::new();
+    for l in links.iter().filter(|l| present.contains(l.id.as_str()) && l.id != l.continues) {
+        let newer = successor.get(l.continues.as_str()).map(|s| l.at >= s.at).unwrap_or(true);
+        if newer { successor.insert(l.continues.as_str(), l); }
+    }
+    let continues: HashMap<&str, &Continuation> = links.iter().map(|l| (l.id.as_str(), l)).collect();
+    let by_id: HashMap<&str, &SessionInfo> = list.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut out = Vec::with_capacity(list.len());
+    for s in &list {
+        if successor.get(s.id.as_str()).map(|l| l.id != s.id).unwrap_or(false) { continue; } // hidden behind its successor
+        if !continues.contains_key(s.id.as_str()) { out.push(s.clone()); continue; }
+        // walk back to the head (a link may name a session no longer on disk: it stays in the chain and the UI says so)
+        let mut chain: Vec<ChainStep> = Vec::new();
+        let mut cur = s.id.as_str();
+        loop {
+            let link = continues.get(cur).copied();
+            chain.push(ChainStep { id: cur.to_string(), model: link.and_then(|l| l.model.clone()) });
+            let Some(prev) = link.map(|l| l.continues.as_str()) else { break };
+            if chain.len() > 50 || chain.iter().any(|c| c.id == prev) { break; }
+            cur = prev;
+        }
+        chain.reverse();
+        let members: Vec<&SessionInfo> = chain.iter().filter_map(|c| by_id.get(c.id.as_str()).copied()).collect();
+        let head = members.first().copied().unwrap_or(s);
+        out.push(SessionInfo {
+            id: s.id.clone(),
+            title: head.title.clone(),
+            last_modified: s.last_modified,
+            created_at: head.created_at.or(s.created_at),
+            git_branch: s.git_branch.clone().or_else(|| head.git_branch.clone()),
+            message_count: members.iter().map(|m| m.message_count).sum(),
+            chain,
+        });
+    }
+    out
 }
 
 fn encode(cwd: &str) -> String {
@@ -84,7 +146,7 @@ pub fn list(cwd: &str) -> Vec<SessionInfo> {
             }
         }
         let Some(t) = custom_title.or(title) else { continue };
-        out.push(SessionInfo { id, title: t, last_modified, created_at, git_branch, message_count });
+        out.push(SessionInfo { id, title: t, last_modified, created_at, git_branch, message_count, chain: Vec::new() });
     }
     out.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     out
@@ -145,6 +207,65 @@ fn parse_ts(s: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn s(id: &str, title: &str, t: u64, n: usize) -> SessionInfo {
+        SessionInfo { id: id.into(), title: title.into(), last_modified: t, created_at: Some(t.saturating_sub(100)), git_branch: None, message_count: n, chain: Vec::new() }
+    }
+    fn link(id: &str, continues: &str, at: u64) -> Continuation { Continuation { id: id.into(), continues: continues.into(), at, model: Some(format!("m-{id}")) } }
+    fn ids(c: &[ChainStep]) -> Vec<&str> { c.iter().map(|s| s.id.as_str()).collect() }
+
+    #[test]
+    fn a_chain_is_one_row_with_the_heads_title() {
+        let list = vec![s("codex:tail", "Handed over", 300, 2), s("mid", "Continuing…", 200, 4), s("head", "Roll out the Card style", 100, 6), s("other", "Pricing FAQ", 50, 1)];
+        let links = [link("mid", "head", 150), link("codex:tail", "mid", 250)];
+        let out = fold_chains(list, &links);
+        assert_eq!(out.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["codex:tail", "other"]);
+        let tail = &out[0];
+        assert_eq!(tail.title, "Roll out the Card style");
+        assert_eq!(tail.created_at, Some(0));
+        assert_eq!(tail.last_modified, 300);
+        assert_eq!(tail.message_count, 12);
+        assert_eq!(ids(&tail.chain), ["head", "mid", "codex:tail"]);
+        assert_eq!(tail.chain.iter().map(|c| c.model.as_deref()).collect::<Vec<_>>(), [None, Some("m-mid"), Some("m-codex:tail")]);
+        assert!(out[1].chain.is_empty());
+    }
+
+    #[test]
+    fn the_head_stays_when_its_successor_is_missing_from_the_list() {
+        // Codex uninstalled: the tail is not listed, so the Claude head must still show
+        let out = fold_chains(vec![s("head", "Head", 100, 3)], &[link("codex:tail", "head", 150)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "head");
+        assert!(out[0].chain.is_empty());
+    }
+
+    #[test]
+    fn a_missing_head_is_still_in_the_chain() {
+        // Claude Code cleaned up the head's JSONL: the tail is a row, titled as itself, and the chain names the head so the UI can say so
+        let out = fold_chains(vec![s("codex:tail", "Handed over", 300, 2)], &[link("codex:tail", "head", 250)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title, "Handed over");
+        assert_eq!(ids(&out[0].chain), ["head", "codex:tail"]);
+        assert_eq!(out[0].message_count, 2);
+    }
+
+    #[test]
+    fn two_successors_keep_the_newer_and_leave_the_other_visible() {
+        let list = vec![s("b", "B", 300, 1), s("a", "A", 200, 1), s("head", "Head", 100, 1)];
+        let links = [link("a", "head", 150), link("b", "head", 250)];
+        let out = fold_chains(list, &links);
+        assert_eq!(out.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+        assert_eq!(out[0].title, "Head");
+        assert_eq!(ids(&out[1].chain), ["head", "a"]);
+    }
+
+    #[test]
+    fn no_links_no_change() {
+        let list = vec![s("x", "X", 1, 1)];
+        assert_eq!(fold_chains(list.clone(), &[]), list);
+    }
+
     #[test]
     fn encodes_cwd_like_claude_code() {
         assert_eq!(super::encode("/Users/you/site/.claude/worktrees/x"), "-Users-you-site--claude-worktrees-x");

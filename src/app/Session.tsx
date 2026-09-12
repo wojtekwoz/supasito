@@ -310,6 +310,8 @@ const Entry = memo(function Entry({ item, sessionId }: { item: Item; sessionId: 
       return <TurnEnd item={item} sessionId={sessionId} />;
     case "notice":
       return <div className={cx("notice", item.tone === "error" && "error")}>{item.text}</div>;
+    case "handoff":
+      return <div className="handoff" title={`The conversation moved from ${item.from === "codex" ? "Codex" : "Claude Code"} to ${item.to === "codex" ? "Codex" : "Claude Code"} here; what was said before was handed over.`}><span>now on {item.model ? modelShort(item.model) : item.to === "codex" ? "Codex" : "Claude Code"}</span></div>;
     default:
       return null;
   }

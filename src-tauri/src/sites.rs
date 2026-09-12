@@ -4,6 +4,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
+/// One conversation continuing another on the other agent (PLAN §8d.2): `id` is the newer session, `continues`
+/// the one it took over from, `at` when (ms since the epoch). Written by `start_agent` as the new id is minted.
+/// The user's view of their history, so it lives in the app state next to `favorite`, never in `supasito.json`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Continuation {
+    pub id: String,
+    pub continues: String,
+    pub at: u64,
+    /// The model the new session started on, for the divider: a replayed Codex thread does not say.
+    pub model: Option<String>,
+}
+
+impl Default for Continuation {
+    fn default() -> Self { Self { id: String::new(), continues: String::new(), at: 0, model: None } }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Site {
@@ -28,11 +45,13 @@ pub struct Site {
     /// When the site was last selected (ms since the epoch); 0 for sites from before this field, which then keep
     /// their list order.
     pub last_opened: u64,
+    /// Sessions that continue another one on the other agent; `sessions::fold_chains` shows each chain as one row.
+    pub continuations: Vec<Continuation>,
 }
 
 impl Default for Site {
     fn default() -> Self {
-        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0 }
+        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0, continuations: Vec::new() }
     }
 }
 

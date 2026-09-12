@@ -426,6 +426,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     // The session's own choices win over the Settings defaults.
     let o = overrides.unwrap_or_default();
     let handoff = if resume.is_none() { o.handoff.filter(|h| !h.trim().is_empty()) } else { None };
+    let continues = if resume.is_none() { o.continues.filter(|c| !c.trim().is_empty()) } else { None };
     let model = o.model.filter(|m| !m.is_empty()).or(model);
     let effort = o.effort.filter(|e| !e.is_empty()).or(effort);
     let fast_mode = o.fast_mode.unwrap_or(fast_mode);
@@ -472,7 +473,10 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
             codex_path,
             path_env: state.path_env.clone(),
         };
-        return state.codex.start(app.clone(), opts).await;
+        let model = opts.model.clone();
+        let id = state.codex.start(app.clone(), opts).await?;
+        record_continuation(app, site_id, &id, continues, Some(model)).await;
+        return Ok(id);
     }
     // A Claude session (new while the default is a GPT model would have gone to Codex above; this is a resumed
     // or already-running one) must not be handed the Codex default: `--model gpt-…` makes Claude Code refuse the turn.
@@ -492,8 +496,28 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
         claude_path,
         path_env: state.path_env.clone(),
     };
+    let model = opts.model.clone();
     state.agents.start(app.clone(), opts).await?;
+    record_continuation(app, site_id, &session_id, continues, model).await;
     Ok(session_id)
+}
+
+/// The new session continues another one (PLAN §8d.2): write the link into the site, and stop the continued
+/// session's process, which sat idle — two live agents on one folder is a foot-gun. Best effort on the stop.
+async fn record_continuation(app: &AppHandle, site_id: &str, id: &str, continues: Option<String>, model: Option<String>) {
+    let Some(from) = continues else { return };
+    if from == id { return; }
+    let state = app.state::<AppState>();
+    {
+        let mut p = state.persisted.lock().unwrap();
+        if let Some(site) = p.sites.iter_mut().find(|s| s.id == site_id) {
+            site.continuations.retain(|c| c.id != id);
+            site.continuations.push(sites::Continuation { id: id.to_string(), continues: from.clone(), at: models::now_ms().max(0) as u64, model: model.filter(|m| !m.is_empty()) });
+        }
+    }
+    if let Err(e) = state.save() { eprintln!("could not record the continuation: {e}"); }
+    let stopped = if agent::codex::is_codex_session(&from) { state.codex.stop(app, &from).await } else { state.agents.stop(&from).await };
+    if let Err(e) = stopped { eprintln!("continued session {from} not stopped: {e}"); }
 }
 
 #[tauri::command]
@@ -566,7 +590,8 @@ async fn sessions_list(app: AppHandle, state: State<'_, AppState>, site_id: Stri
     }
     all.extend(claude.await.map_err(|e| e.to_string())?);
     all.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
-    Ok(all)
+    // A conversation that changed agent is one row: its tail, under the head's title (PLAN §8d.2).
+    Ok(agent::sessions::fold_chains(all, &site.continuations))
 }
 
 #[tauri::command]

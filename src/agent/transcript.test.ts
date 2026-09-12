@@ -1,6 +1,6 @@
 // Run with: node --experimental-strip-types src/agent/transcript.test.ts
 import { readFileSync } from "node:fs";
-import { addPermission, addUser, applyFs, applyMessage, emptySession, expirePermissions, filesTouchedInTurn, fmtTokens, handoffText, parseRateLimit, resetProcessCost, retryText, settlePermission, usageTokens, type Item } from "./transcript.ts";
+import { addPermission, addUser, applyFs, applyMessage, concatSegments, emptySession, expirePermissions, filesTouchedInTurn, fmtTokens, handoffText, parseRateLimit, resetProcessCost, retryText, settlePermission, usageTokens, type Item } from "./transcript.ts";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail?: unknown) => {
@@ -270,6 +270,29 @@ console.log(failures === 0 ? "transcript: all checks pass" : `transcript: ${fail
   const h = handoffText(items);
   check("handoff: user, agent and files, no tool rows", h === "User: Make the hero blue\nAgent: Done — hero.tsx now uses bg-blue-600.\n(files changed: /s/hero.tsx)", h);
   check("handoff: cut from the front", handoffText(items, 20).startsWith("…") && handoffText(items, 20).length === 21);
+}
+
+// Chains: one conversation from several backend sessions (PLAN §8d.2).
+{
+  const head = emptySession();
+  addUser(head, "Rework the pricing page", null, []);
+  head.items.push({ kind: "assistant", id: "a1", text: "Done.", thinking: "", streaming: false, parentToolUseId: null, model: "claude-sonnet-5" });
+  head.model = "claude-sonnet-5";
+  const tail = { ...emptySession(), backend: "codex" as const, model: "gpt-6-astra" };
+  addUser(tail, "Now the Enterprise tier", null, []);
+  const items = concatSegments([{ id: "sess-head", state: head }, { id: "codex:tail", state: tail }]);
+  check("chain: head items, a divider, tail items", items.length === 4 && items[2].kind === "handoff", items.map((i) => i.kind));
+  const div = items[2];
+  check("chain: the divider says where it moved and to what", div.kind === "handoff" && div.from === "claude" && div.to === "codex" && div.model === "gpt-6-astra", div);
+  check("chain: items are reused, not copied", items[0] === head.items[0] && items[3] === tail.items[0]);
+  const linkModel = concatSegments([{ id: "sess-head", state: head }, { id: "codex:tail", state: { ...tail, model: null }, model: "gpt-5.6-sol" }]);
+  check("chain: the link's model wins when the replay has none", linkModel[2].kind === "handoff" && linkModel[2].model === "gpt-5.6-sol");
+  const broken = concatSegments([{ id: "sess-head", state: null, error: "cannot read session" }, { id: "codex:tail", state: tail }]);
+  check("chain: a missing head is one notice, then the divider, then the tail", broken.length === 3 && broken[0].kind === "notice" && /earlier part.*Claude Code.*cannot read session/.test(broken[0].text) && broken[1].kind === "handoff" && broken[2] === tail.items[0], broken);
+  const three = concatSegments([{ id: "a", state: head }, { id: "codex:b", state: tail }, { id: "c", state: head }]);
+  check("chain: three segments, two dividers, back to Claude", three.filter((i) => i.kind === "handoff").length === 2 && three[three.length - 3].kind === "handoff" && (three[three.length - 3] as any).to === "claude");
+  check("chain: a single segment is its items", concatSegments([{ id: "x", state: head }]).length === 2);
+  check("chain: the handoff text skips dividers and notices", !/now on|no longer/.test(handoffText(broken)));
 }
 
 if (failures) throw new Error(`${failures} transcript check(s) failed`);

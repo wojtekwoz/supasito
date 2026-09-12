@@ -42,6 +42,9 @@ pub struct Overrides {
     /// The conversation so far when this session continues one from the other agent; goes into the
     /// system prompt of the first start only (a resumed session has its own history).
     pub handoff: Option<String>,
+    /// The session this new one continues (the other agent's); `start_agent` records the link in the site as it
+    /// mints the id, so the two cannot come apart, and stops the continued session's idle process.
+    pub continues: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

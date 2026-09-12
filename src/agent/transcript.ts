@@ -11,7 +11,9 @@ export type Item =
   | { kind: "permission"; id: string; request: PermissionRequest["request"]; status: "pending" | "allowed" | "denied" | "expired" }
   /** `models`: the ids in the result's modelUsage (several when subagents ran); `speed`: the API's `usage.speed`, "fast" when the last request ran in fast mode. */
   | { kind: "result"; id: string; isError: boolean; stopped: boolean; text: string; costUsd: number | null; durationMs: number | null; numTurns: number | null; files: string[]; created: string[]; undone: boolean; at: number; models: string[]; speed: string | null }
-  | { kind: "notice"; id: string; text: string; tone: "info" | "error" };
+  | { kind: "notice"; id: string; text: string; tone: "info" | "error" }
+  /** The conversation moved to the other agent here (PLAN §8d.2): a thin divider, "now on GPT-6 Astra". */
+  | { kind: "handoff"; id: string; from: Backend; to: Backend; model: string | null };
 
 export type SessionState = {
   items: Item[];
@@ -453,6 +455,29 @@ export function handoffText(items: Item[], max = 8000): string {
   }
   let out = lines.join("\n");
   if (out.length > max) out = "…" + out.slice(out.length - max);
+  return out;
+}
+
+export const handoffItem = (from: Backend, to: Backend, model: string | null, id = uid("h")): Item => ({ kind: "handoff", id, from, to, model });
+const agentLabel = (b: Backend) => (b === "codex" ? "Codex" : "Claude Code");
+
+/** One backend session of a conversation, replayed on its own (`state` null when its transcript could not be read). */
+export type Segment = { id: string; state: SessionState | null; error?: string | null; model?: string | null };
+
+/** One conversation from its backend sessions in order (PLAN §8d.2): a divider before every later segment, a notice
+ *  in place of one that could not be loaded (Claude Code deletes old transcripts; Codex may be unreachable). Items are
+ *  reused, not copied: rows are memoised on identity and items never change in place. */
+export function concatSegments(segments: Segment[]): Item[] {
+  const out: Item[] = [];
+  segments.forEach((seg, i) => {
+    if (i > 0) out.push(handoffItem(backendOf(segments[i - 1].id), backendOf(seg.id), seg.model ?? seg.state?.model ?? null, `h-${seg.id}`));
+    if (!seg.state) {
+      const which = i < segments.length - 1 ? "The earlier part of this conversation" : "The rest of this conversation";
+      out.push({ kind: "notice", id: `missing-${seg.id}`, text: `${which}, on ${agentLabel(backendOf(seg.id))}, is no longer available${seg.error ? ` (${seg.error})` : ""}.`, tone: "info" });
+    } else {
+      out.push(...seg.state.items);
+    }
+  });
   return out;
 }
 

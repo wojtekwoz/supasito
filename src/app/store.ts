@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
 import type { Attachment, Catalogue, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
-import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, emptySession, expirePermissions, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
+import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, concatSegments, emptySession, expirePermissions, handoffItem, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type Segment, type SessionState } from "../agent/transcript";
 import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
-import { BUILTIN_MODELS, isCodexModel, mergeModels, modelShort, setModels, type ModelOption } from "../models";
+import { BUILTIN_MODELS, isCodexModel, mergeModels, setModels, type ModelOption } from "../models";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
@@ -466,7 +466,9 @@ export const useStore = create<Store>((set, get) => ({
     set({ sessions: { ...get().sessions, [id]: sessions } });
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
     void get().refreshGit(id);
-    const last = site.lastSessionId && sessions.find((s) => s.id === site.lastSessionId) ? site.lastSessionId : sessions[0]?.id;
+    // the last session may be the hidden head of a chain now: its row is the tail
+    const lastId = site.lastSessionId;
+    const last = lastId ? (sessions.find((s) => s.id === lastId) ?? sessions.find((s) => s.chain?.some((c) => c.id === lastId)))?.id ?? sessions[0]?.id : sessions[0]?.id;
     if (last) await get().openSession(last, id); else get().newSession();
     if (selectGen !== gen || get().currentSiteId !== id) return;
     if (!devInfo || devInfo.status === "stopped" || devInfo.status === "error") {
@@ -558,12 +560,28 @@ export const useStore = create<Store>((set, get) => ({
     set({ currentSessionId: id, selection: null, picking: false });
     void api.siteSetLastSession(siteId, id);
     if (get().transcripts[id]?.loaded) return;
+    // A conversation that changed agent is a chain of backend sessions (PLAN §8d.2): every segment is replayed with
+    // its own reducer and the items are joined under dividers; the tail's state is the live one.
+    const info = (get().sessions[siteId] ?? []).find((s) => s.id === id);
+    const chain = info?.chain?.length ? info.chain : [{ id }];
     try {
-      const lines = await api.sessionTranscript(siteId, id);
+      const results = await Promise.allSettled(chain.map((c) => api.sessionTranscript(siteId, c.id)));
       if (get().currentSiteId !== siteId) return;
       const st = get().transcripts[id] ?? emptySession();
-      const apply = backendOf(id) === "codex" ? applyCodexMessage : applyMessage;
-      if (st.items.length === 0) { for (const l of lines) apply(st, l); st.resumed = st.items.length > 0; }
+      const tail = results[results.length - 1];
+      if (chain.length === 1 && tail.status === "rejected") throw tail.reason;
+      const segments: Segment[] = chain.map((c, i) => {
+        const r = results[i];
+        if (r.status === "rejected") return { id: c.id, state: null, error: r.reason instanceof Error ? r.reason.message : String(r.reason), model: c.model ?? null };
+        const s = i === chain.length - 1 ? st : { ...emptySession(), backend: backendOf(c.id) };
+        const apply = backendOf(c.id) === "codex" ? applyCodexMessage : applyMessage;
+        if (s.items.length === 0) for (const l of r.value) apply(s, l);
+        return { id: c.id, state: s, model: c.model ?? null };
+      });
+      if (chain.length > 1) st.items = concatSegments(segments);
+      // a replayed Codex thread does not say which model it ran on; the link does
+      if (!st.model && chain[chain.length - 1]?.model) st.model = chain[chain.length - 1].model ?? null;
+      st.resumed = st.items.length > 0;
       st.backend = backendOf(id);
       st.loaded = true;
       st.busy = st.busy && !!get().running[id];
@@ -589,11 +607,16 @@ export const useStore = create<Store>((set, get) => ({
       if (sessionId === DRAFT) {
         const draft = st.transcripts[DRAFT] ?? emptySession();
         const id = await api.agentStart(siteId, null, draft.overrides);
-        const { handoff: _sent, ...kept } = draft.overrides;
+        const { handoff: _sent, continues, ...kept } = draft.overrides;
         const transcripts = { ...st.transcripts, [id]: { ...draft, loaded: true, overrides: kept, backend: backendOf(id) } };
         delete transcripts[DRAFT];
-        const info: SessionInfo = { id, title: text.trim().slice(0, 90), lastModified: now(), createdAt: now(), messageCount: 1 };
-        set({ transcripts, currentSessionId: id, sessions: { ...st.sessions, [siteId]: [info, ...(st.sessions[siteId] ?? [])] }, running: { ...st.running, [id]: true } });
+        const list = st.sessions[siteId] ?? [];
+        // Continuing a session on the other agent: the new one takes over its row (the backend hides the continued one).
+        const head = continues ? list.find((s) => s.id === continues) : null;
+        const info: SessionInfo = continues
+          ? { ...(head ?? { title: text.trim().slice(0, 90), createdAt: now() }), id, lastModified: now(), messageCount: (head?.messageCount ?? 0) + 1, chain: [...(head?.chain?.length ? head.chain : [{ id: continues }]), { id, model: kept.model ?? null }] }
+          : { id, title: text.trim().slice(0, 90), lastModified: now(), createdAt: now(), messageCount: 1 };
+        set({ transcripts, currentSessionId: id, sessions: { ...st.sessions, [siteId]: [info, ...list.filter((s) => s.id !== continues)] }, running: { ...st.running, [id]: true } });
         void api.siteSetLastSession(siteId, id);
         sessionId = id;
       } else if (!st.running[sessionId]) {
@@ -794,23 +817,45 @@ export const useStore = create<Store>((set, get) => ({
     } catch (e) { get().showToast(String(e)); }
   },
   async setSessionModel(model) {
-    // A model on the other agent cannot take over the running process (the history lives in the other CLI's
-    // store), so the conversation continues in a new session on that agent, with what was said so far handed over.
+    // A model on the other agent cannot take over the running process (the history lives in the other CLI's store),
+    // so the conversation continues in a new session on that agent, with what was said so far handed over. The
+    // transcript stays where it is: the draft inherits the items under a divider, and the first send starts the new
+    // tail, which the backend links to this one (PLAN §8d.2).
     const id = get().currentSessionId;
     const cur = id ? get().transcripts[id] : null;
-    if (id && id !== DRAFT && cur && model && (isCodexModel(model) ? "codex" : "claude") !== backendOf(id)) {
+    const target = model ? backendOf(isCodexModel(model) ? "codex:" : "") : null;
+    const continues = id === DRAFT ? cur?.overrides.continues : null;
+    if (id === DRAFT && cur && continues) {
+      if (!target || target === backendOf(continues)) {
+        // back to the agent the conversation was on: the continuation is off, and the model is a plain change there
+        const transcripts = { ...get().transcripts };
+        delete transcripts[DRAFT];
+        set({ transcripts, currentSessionId: continues });
+        const siteId = get().currentSiteId;
+        if (siteId) void api.siteSetLastSession(siteId, continues);
+        await changeKnob(get, set, { model: model || null }, model ? (sid) => api.agentSetModel(sid, model) : null);
+        return;
+      }
+      // still the other agent, another of its models: the divider follows
+      cur.overrides = { ...cur.overrides, model };
+      cur.model = model;
+      cur.items = cur.items.map((it) => (it.kind === "handoff" && it.id === "h-draft" ? { ...it, model } : it));
+      set({ transcripts: bump(get().transcripts, DRAFT) });
+      return;
+    }
+    if (id && id !== DRAFT && cur && model && target && target !== backendOf(id)) {
       if (cur.busy) { get().showToast(`Wait for ${agentName(id)} to finish this turn, then change it.`); return; }
-      const from = agentName(id);
       const handoff = handoffText(cur.items);
       get().newSession();
       const draft = get().transcripts[DRAFT] ?? emptySession();
-      draft.overrides = { ...cur.overrides, model, handoff: handoff || null };
+      draft.overrides = { ...cur.overrides, model, handoff: handoff || null, continues: id };
       draft.model = model;
-      addNotice(draft, `Continuing with ${modelShort(model)}. ${from} is not part of this session; the conversation so far was handed over, and the site's files are as you left them.`);
+      draft.backend = target;
+      draft.items = [...cur.items, handoffItem(backendOf(id), target, model, "h-draft")];
       set({ transcripts: { ...get().transcripts, [DRAFT]: draft } });
       return;
     }
-    await changeKnob(get, set, { model: model || null }, model ? (id) => api.agentSetModel(id, model) : null);
+    await changeKnob(get, set, { model: model || null }, model ? (sid) => api.agentSetModel(sid, model) : null);
   },
   async setSessionEffort(effort) {
     await changeKnob(get, set, { effort: effort || null }, effort ? (id) => api.agentApplySettings(id, { effortLevel: effort }) : null);

@@ -24,7 +24,11 @@ export type SessionInfo = {
   createdAt?: number | null;
   gitBranch?: string | null;
   messageCount: number;
+  /** The backend sessions behind this row, oldest first, when the conversation changed agent (PLAN §8d.2): each with
+   *  the model it started on. Absent or empty for a plain session. */
+  chain?: ChainStep[];
 };
+export type ChainStep = { id: string; model?: string | null };
 
 export type DevStatus = "starting" | "ready" | "error" | "stopped";
 /** The process listening on a port, as `lsof`/`ps` see it; `siteId` when it is another site's dev server. */
@@ -90,7 +94,9 @@ export type UpdateInfo = { version: string; current: string; notes?: string | nu
 /** Per-session choices Supasito passes when it starts or restarts the claude process; unset = the Settings default. */
 export type SessionOverrides = { model?: string | null; effort?: string | null; fastMode?: boolean | null;
   /** The conversation so far, when this session continues one that ran on the other agent; sent once, with the first start. */
-  handoff?: string | null };
+  handoff?: string | null;
+  /** The session this one continues; the backend records the link in the site as it mints the new id. */
+  continues?: string | null };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
 
 export type RestoreReport = { restored: string[]; deleted: string[]; skipped: string[] };

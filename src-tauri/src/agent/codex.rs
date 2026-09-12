@@ -423,6 +423,7 @@ impl Registry {
                 created_at: secs("createdAt"),
                 git_branch: t.pointer("/gitInfo/branch").and_then(|b| b.as_str()).map(String::from),
                 message_count: 0,
+                chain: Vec::new(),
             });
         }
         Ok(out)

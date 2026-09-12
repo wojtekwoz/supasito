@@ -1,14 +1,14 @@
 # Supasito
 
-Supasito is a Mac app for changing a website by describing the change. You tell Claude Code what you want, watch the live site update in the same window, and publish when it looks right. The site stays an ordinary code folder on your Mac: no accounts, no cloud, no file format of its own.
+Supasito is a Mac app for changing a website by describing the change. You tell Claude Code or Codex what you want, watch the live site update in the same window, and publish when it looks right. The site stays an ordinary code folder on your Mac: no accounts, no cloud, no file format of its own.
 
-**Version 0.1. macOS only. Signed and notarized by Apple.** It has been used on one Mac so far. Read [What to expect](#what-to-expect) before you install.
+**Version 0.2. macOS only. Signed and notarized by Apple.** It has been used on one Mac so far. Read [What to expect](#what-to-expect) before you install.
 
 ## Is it for you?
 
 Supasito fits if:
 
-- You have a **Claude plan that includes Claude Code** (Pro, Max, Team or Enterprise) or an API key. The free plan does not include Claude Code.
+- You have a **Claude plan that includes Claude Code** (Pro, Max, Team or Enterprise) or an API key, **or a ChatGPT plan that includes Codex** (Plus, Pro, Business or Enterprise). Either one is enough; with both installed you pick per conversation from the model list.
 - Your site is a **code project**: Next.js, Astro, Vite, SvelteKit or Nuxt. Or you want a new one; Supasito ships a Next.js starter.
 - You can **run a few commands in Terminal** during setup.
 
@@ -19,10 +19,16 @@ It does not fit if your site lives in WordPress, Squarespace, Webflow or another
 Supasito checks all of these when it starts and shows one line per missing tool, with the fix.
 
 - **A Mac with Apple silicon (M1 or newer) on macOS 13 or later.** The ready-made zip is built on and for Apple silicon. The app itself allows macOS 12, but Claude Code needs 13.
-- **Claude Code, installed and signed in.** Install it, then run `claude` once and finish the sign-in in your browser:
+- **Claude Code or Codex, installed and signed in.** One is enough. Claude Code: install it, then run `claude` once and finish the sign-in in your browser:
 
   ```bash
   curl -fsSL https://claude.ai/install.sh | bash
+  ```
+
+  Codex: install it, then run `codex login`:
+
+  ```bash
+  npm install -g @openai/codex
   ```
 
 - **Node.js.** It runs your site's dev server. Get the LTS from [nodejs.org](https://nodejs.org) or run `brew install node`. npm comes with it.

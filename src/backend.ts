@@ -1,5 +1,5 @@
 import type {
-  Attachment, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
+  Attachment, Catalogue, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -8,6 +8,8 @@ export interface Backend {
   settingsGet(): Promise<Settings>;
   settingsSet(patch: Settings): Promise<void>;
   toolchainCheck(): Promise<Toolchain>;
+  /** The model catalogue from the app state; `refresh` also asks Codex for its list (through the site's app-server) when it is installed. */
+  modelsList(siteId: string | null, refresh: boolean): Promise<Catalogue>;
   sitesList(): Promise<Site[]>;
   sitePickFolder(): Promise<string | null>;
   siteAdd(path: string): Promise<Site>;
@@ -75,6 +77,7 @@ async function tauriBackend(): Promise<Backend> {
     settingsGet: () => invoke("settings_get"),
     settingsSet: (patch) => invoke("settings_set", { patch }),
     toolchainCheck: () => invoke("toolchain_check"),
+    modelsList: (siteId, refresh) => invoke("models_list", { siteId, refresh }),
     sitesList: () => invoke("sites_list"),
     sitePickFolder: () => invoke("site_pick_folder"),
     siteAdd: (path) => invoke("site_add", { path }),

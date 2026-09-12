@@ -1,6 +1,7 @@
 mod agent;
 mod capture;
 mod devserver;
+mod models;
 mod sites;
 #[cfg(debug_assertions)]
 mod smoke;
@@ -37,12 +38,44 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
         if let Some(v) = patch.get("claudePath") { p.claude_path = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("model") { p.model = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("permissionMode") { p.permission_mode = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
-        if let Some(v) = patch.get("effort") { p.effort = v.as_str().map(|s| s.to_string()).filter(|s| agent::claude::EFFORTS.contains(&s.as_str())); }
+        // Claude's five plus Codex's `ultra`; claude.rs drops an effort its CLI does not take (`ultra` on a Claude session)
+        if let Some(v) = patch.get("effort") { p.effort = v.as_str().map(|s| s.to_string()).filter(|s| agent::claude::EFFORTS.contains(&s.as_str()) || s == "ultra"); }
         if let Some(v) = patch.get("fastMode") { p.fast_mode = v.as_bool().unwrap_or(false); }
         if let Some(v) = patch.get("updatesEnabled") { p.updates_enabled = v.as_bool().unwrap_or(true); }
         if let Some(v) = patch.get("hidden") { p.hidden = v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(); }
     }
     state.save()
+}
+
+/// The model catalogue (models.rs). `refresh` asks Codex for its list when it is installed, through the given
+/// site's app-server (or a short-lived one when there is no site yet); the served half refreshes with the
+/// update check. Always answers with what the cache holds, so a failed fetch leaves the picker as it was.
+#[tauri::command]
+async fn models_list(app: AppHandle, state: State<'_, AppState>, site_id: Option<String>, refresh: bool) -> Result<models::Catalogue, String> {
+    if refresh {
+        if let Some(codex_path) = agent::codex::locate(None, &state.path_env).await {
+            let site = site_id.as_deref().and_then(|id| state.site(id).ok());
+            let (sid, cwd) = match site {
+                Some(s) => (s.id.clone(), s.path.clone()),
+                None => ("models".to_string(), dirs::home_dir().map(|h| h.to_string_lossy().to_string()).unwrap_or_else(|| "/".into())),
+            };
+            match state.codex.models(&app, &sid, &cwd, &codex_path, &state.path_env).await {
+                Ok(reply) => {
+                    let rows = models::from_codex_list(&reply);
+                    if !rows.is_empty() {
+                        {
+                            let mut p = state.persisted.lock().unwrap();
+                            p.models.codex = rows;
+                            p.models.codex_at = models::now_ms();
+                        }
+                        state.save()?;
+                    }
+                }
+                Err(e) => eprintln!("codex model/list failed: {e}"),
+            }
+        }
+    }
+    Ok(state.persisted.lock().unwrap().models.clone())
 }
 
 /// What this Mac has (Node, package manager, git, Claude Code and its login), for the checklist.
@@ -423,7 +456,9 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     if codex {
         let codex_path = codex_path.ok_or("Codex was not found. Install it (`npm install -g @openai/codex` or `brew install codex`) and run `codex login`, or pick a Claude model.")?;
         // `[1m]` is Claude Code's long-context suffix; Settings could still carry it from an earlier Claude choice.
-        let model = model.filter(|m| agent::codex::is_codex_model(m)).map(|m| m.trim_end_matches("[1m]").to_string()).unwrap_or_else(|| agent::codex::DEFAULT_MODEL.to_string());
+        // No model chosen: the one this Codex marks default (models.rs cache), else the constant from when the list was typed in.
+        let cached_default = models::codex_default(&state.persisted.lock().unwrap().models);
+        let model = model.filter(|m| agent::codex::is_codex_model(m)).map(|m| m.trim_end_matches("[1m]").to_string()).or(cached_default).unwrap_or_else(|| agent::codex::DEFAULT_MODEL.to_string());
         let system = agent::codex::with_site_rules(system, &site.path);
         let opts = agent::codex::StartOpts {
             resume: resume.as_deref().map(|id| agent::codex::thread_id(id).to_string()),
@@ -577,7 +612,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            settings_get, settings_set, toolchain_check,
+            settings_get, settings_set, toolchain_check, models_list,
             updates::update_check, updates::update_install, updates::update_dismiss, updates::app_version,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,

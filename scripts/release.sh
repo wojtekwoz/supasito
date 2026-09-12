@@ -122,13 +122,16 @@ if [[ -f "$TARBALL" && -f "$TARBALL.sig" ]]; then
     };
     fs.writeFileSync("release/latest.json", JSON.stringify(manifest, null, 2) + "\n");
   '
+  # The model catalogue the app fetches with the update check (src-tauri/src/models.rs), from the built-in list so the two
+  # cannot drift at release time; edit the copy on the site to add a model between releases.
+  node --experimental-strip-types --no-warnings scripts/models-json.mjs release/models.json
   echo "Update package: release/Supasito.app.tar.gz ($(du -sh "$TARBALL" | cut -f1)), signed"
   echo "Update manifest: release/latest.json ($ARCH, v$VERSION)"
   [[ -n "$NOTES_FILE" ]] || echo "  (no release/notes-$VERSION.md, so the notes are empty — write one before publishing)"
   cat <<MSG
-  To ship it: gh release create v$VERSION --latest release/Supasito-$VERSION-macos.zip release/Supasito.app.tar.gz release/Supasito.app.tar.gz.sig release/latest.json
+  To ship it: gh release create v$VERSION --latest release/Supasito-$VERSION-macos.zip release/Supasito.app.tar.gz release/Supasito.app.tar.gz.sig release/latest.json release/models.json
   (--latest matters: GitHub's releases/latest ignores a prerelease, and that path is the app's fallback endpoint.)
-  and put the same latest.json at https://supasito.com/updates/latest.json.
+  and put the same latest.json and models.json at https://supasito.com/updates/.
 MSG
 else
   echo "No updater package was produced (expected $TARBALL and its .sig)." >&2

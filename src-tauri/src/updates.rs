@@ -50,6 +50,10 @@ fn now_ms() -> i64 {
 async fn look(app: &AppHandle) -> Result<Option<Available>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let found = updater.check().await.map_err(|e| e.to_string())?;
+    // The model catalogue rides on the same check (models.rs); a failure there is logged, not reported.
+    if let Err(e) = crate::models::refresh_served(app).await {
+        eprintln!("models.json fetch failed: {e}");
+    }
     {
         // The guard must be dropped before `save`, which locks `persisted` again.
         let state = app.state::<AppState>();

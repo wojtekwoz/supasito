@@ -1,8 +1,9 @@
 // Browser-only stand-in for the Rust side, so the UI can be developed and checked outside Tauri.
 import type { Backend } from "./backend";
-import type { DevInfo, DevProblem, EventName, SessionInfo, Settings, Site } from "./types";
+import type { Catalogue, CatalogueModel, DevInfo, DevProblem, EventName, SessionInfo, Settings, Site } from "./types";
 import pickerSource from "../src-tauri/src/picker.js?raw";
 import codexTrace from "./agent/fixtures/codex-0.149.0-write-turn.jsonl?raw";
+import codexModelList from "./agent/fixtures/codex-0.154.0-model-list.json";
 import { DEFAULT_HIDDEN } from "./app/ui";
 
 type Handler = (payload: any) => void;
@@ -83,6 +84,20 @@ const MOCK_VERSION = "0.1.0";
 const MOCK_NEWER = { version: "0.2.0", current: MOCK_VERSION, notes: "Undo now restores files Claude created.\nThe dev server survives a laptop sleeping.", date: new Date().toISOString() };
 const THINKING = "The user wants a different headline. The hero lives in components/hero.tsx; I'll read it, replace the h1 text and keep the classes as they are.";
 (window as any).__openMockDoc = demoHtml;
+
+// `?models=fresh` answers `modelsList` with the list recorded from codex-cli 0.154.0 (Astra default, `ultra` efforts, no
+// Fast on Spark), shaped like models.rs shapes it; `?models=fail` makes the refresh throw; the default (`stale`) is a cache
+// that was never filled, so the picker shows the built-in list.
+const mockModels = query.get("models");
+const mockCatalogue = (): Catalogue => {
+  if (mockModels !== "fresh") return { codex: [], codexAt: 0, served: [], servedAt: 0 };
+  const codex: CatalogueModel[] = (codexModelList as { data: any[] }).data.map((m) => ({
+    id: m.id, label: String(m.displayName ?? m.id).replace(/^(GPT-[\d.]+)-/, "$1 ").replace(/-/g, " "), hint: m.description ?? "", backend: "codex", isDefault: !!m.isDefault,
+    efforts: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort), defaultEffort: m.defaultReasoningEffort ?? null,
+    fast: (m.serviceTiers ?? []).some((t: any) => t.id === "priority"), hidden: !!m.hidden,
+  }));
+  return { codex, codexAt: Date.now(), served: [], servedAt: 0 };
+};
 
 // `?agent=codex`: sessions run on the recorded Codex turn (src/agent/fixtures) instead of the Claude fake.
 // The two approval requests in the trace pause the replay until agentRespond, like the real app-server does.
@@ -180,8 +195,12 @@ export function mockBackend(): Backend {
       const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : sim === "nogitpath" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
       const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
       // `?tools=nocodex` hides the optional second agent; `?tools=codexlogin` has it installed but signed out
-      const codex = sim === "missing" || sim === "nocodex" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/codex", version: "0.149.0", loggedIn: sim !== "codexlogin" };
+      const codex = sim === "missing" || sim === "nocodex" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/codex", version: mockModels === "fresh" ? "0.154.0" : "0.149.0", loggedIn: sim !== "codexlogin" };
       return { claude, codex, node, git, packageManager, hasBrew: q.get("brew") !== "no", gitIdentity: git.ok && sim !== "nogitid" };
+    },
+    modelsList: async (_siteId, refresh) => {
+      if (refresh) { await wait(400); if (mockModels === "fail") throw new Error("codex did not answer model/list in time"); }
+      return mockCatalogue();
     },
     sitesList: async () => [...mockSites],
     sitePickFolder: async () => "/Users/you/Sites/another",

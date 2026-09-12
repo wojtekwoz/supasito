@@ -3553,6 +3553,7 @@ dependencies = [
  "minisign-verify",
  "objc2",
  "objc2-foundation",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",

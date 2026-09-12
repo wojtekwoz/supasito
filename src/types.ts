@@ -80,6 +80,11 @@ export type Toolchain = { claude: ClaudeStatus; codex?: CodexStatus | null; node
  *  `updatesEnabled` is the once-a-day check for a newer Supasito, on unless Settings → Updates turns it off. */
 export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null; updatesEnabled?: boolean | null };
 
+/** One fetched model (models.rs `Model`): `backend` says which CLI runs it; `efforts` empty = the backend's fixed list. */
+export type CatalogueModel = { id: string; label: string; hint?: string; backend?: "claude" | "codex" | string; isDefault?: boolean; efforts?: string[]; defaultEffort?: string | null; fast?: boolean; hidden?: boolean };
+/** What the backend fetched and when (ms since the epoch, 0 = never): Codex's list from `model/list`, the served models.json rows. */
+export type Catalogue = { codex: CatalogueModel[]; codexAt: number; served: CatalogueModel[]; servedAt: number };
+
 /** A newer Supasito, as a check found it. `notes` is the release body; `date` its publish date. */
 export type UpdateInfo = { version: string; current: string; notes?: string | null; date?: string | null };
 /** Per-session choices Supasito passes when it starts or restarts the claude process; unset = the Settings default. */

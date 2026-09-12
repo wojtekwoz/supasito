@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{agent, devserver, sites::Site};
+use crate::{agent, devserver, models::Catalogue, sites::Site};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
@@ -28,6 +28,8 @@ pub struct Persisted {
     pub update_checked_at: i64,
     /// A version the user answered "Not now" to; the banner stays away until a later one appears.
     pub update_skipped: Option<String>,
+    /// The model catalogue as last fetched (models.rs): Codex's from `model/list`, Claude's from the served file.
+    pub models: Catalogue,
 }
 
 /// What a fresh install hides: the chips under the composer, the picker button in the composer, the keyboard hint,
@@ -49,6 +51,7 @@ impl Default for Persisted {
             updates_enabled: true,
             update_checked_at: 0,
             update_skipped: None,
+            models: Catalogue::default(),
         }
     }
 }

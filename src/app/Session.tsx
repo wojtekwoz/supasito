@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { DRAFT, useSession, useSessionsOfCurrentSite, useSite, useStore } from "./store";
 import { retryText, type Item, type SessionState } from "../agent/transcript";
-import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, isCodexModel, isEffort, modelShort, supportsFast } from "../models";
+import { EFFORT_HINTS, baseModel, codexDefault, effortsFor, isCodexModel, isEffort, modelShort, supportsFast } from "../models";
 import { Markdown } from "../ui/Markdown";
 import { Bubble, Collapse, Crosshair, Doc, Globe, Minus, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
@@ -138,9 +138,10 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
   const settings = useStore((s) => s.settings);
   const tools = useStore((s) => s.tools);
   const defaults = useStore((s) => s.tools?.claude.defaults ?? null);
+  const models = useStore((s) => s.models);
   // Only the models whose agent is installed and signed in; with one agent the list is just its models.
-  const offered = MODELS.filter((m) => (isCodexModel(m.value) ? codexUsable(tools) : claudeUsable(tools)));
-  const claudeDefault = claudeUsable(tools) ? `your Claude Code default${defaults?.model ? ` (${defaults.model})` : ""}` : "Codex's default (GPT-5.6 Sol)";
+  const offered = models.filter((m) => (isCodexModel(m.value) ? codexUsable(tools) : claudeUsable(tools)));
+  const claudeDefault = claudeUsable(tools) ? `your Claude Code default${defaults?.model ? ` (${defaults.model})` : ""}` : `Codex's default (${modelShort(codexDefault())})`;
   const setModel = useStore((s) => s.setSessionModel);
   const setEffort = useStore((s) => s.setSessionEffort);
   const setFast = useStore((s) => s.setSessionFast);
@@ -167,9 +168,10 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
         {!model && <option value="">default</option>}
         {options.map((m) => <option key={m.value} value={m.value}>{m.value === model ? modelShort(m.value) : `${m.label} · ${m.value}`}</option>)}
       </Pick>
-      <Pick icon={<Signal className="glyph" />} label={effort ?? "default"} title={`Effort: how long Claude thinks before answering. ${isEffort(effort) ? EFFORT_HINTS[effort] : `Your Claude Code default${defaults?.effort ? ` (${defaults.effort})` : ""}.`}${wait}`} value={effort ?? ""} disabled={busy} onChange={(v) => void setEffort(v || null)}>
+      <Pick icon={<Signal className="glyph" />} label={effort ?? "default"} title={`Effort: how long the model thinks before answering. ${isEffort(effort) ? EFFORT_HINTS[effort] : codex ? "Codex's default for this model." : `Your Claude Code default${defaults?.effort ? ` (${defaults.effort})` : ""}.`}${wait}`} value={effort ?? ""} disabled={busy} onChange={(v) => void setEffort(v || null)}>
         <option value="">default</option>
-        {EFFORTS.map((l) => <option key={l} value={l}>{l}</option>)}
+        {effortsFor(model).map((l) => <option key={l} value={l}>{l}</option>)}
+        {effort && !effortsFor(model).includes(effort) && <option value={effort}>{effort}</option>}
       </Pick>
       {mode !== undefined && <ModeSelect mode={mode} />}
       {supportsFast(model) && (

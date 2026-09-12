@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
+import type { Attachment, Catalogue, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, emptySession, expirePermissions, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type SessionState } from "../agent/transcript";
 import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
-import { isCodexModel, modelShort } from "../models";
+import { BUILTIN_MODELS, isCodexModel, mergeModels, modelShort, setModels, type ModelOption } from "../models";
 import { routeForFile } from "../routes";
 
 export const DRAFT = "draft";
@@ -54,6 +54,10 @@ export type Store = {
   /** Shortcut for `tools.claude`; null until the first check completes. */
   claude: ClaudeStatus | null;
   tools: Toolchain | null;
+  /** What the backend fetched (models.rs); null until `init` read the cache. */
+  catalogue: Catalogue | null;
+  /** The picker's list: the catalogue merged over the built-in floor (`mergeModels`). */
+  models: ModelOption[];
   settings: Settings;
   settingsOpen: boolean;
   sites: Site[];
@@ -167,6 +171,8 @@ export type Store = {
   previewRect: { x: number; y: number; w: number; h: number } | null;
   setPreviewRect: (r: { x: number; y: number; w: number; h: number } | null) => void;
   recheckTools: () => Promise<void>;
+  /** Read the model catalogue; `refresh` also asks Codex for its list. Never throws: a failed fetch leaves the list as it was. */
+  refreshModels: (refresh: boolean) => Promise<void>;
   openInBrowser: () => Promise<void>;
   openPublish: () => void;
   runPublish: (target: PublishTarget, opts: { commit: boolean; message: string; push: boolean }) => Promise<void>;
@@ -274,6 +280,8 @@ export const useStore = create<Store>((set, get) => ({
   fatal: null,
   claude: null,
   tools: null,
+  catalogue: null,
+  models: BUILTIN_MODELS,
   settings: {},
   settingsOpen: false,
   sites: [],
@@ -323,7 +331,9 @@ export const useStore = create<Store>((set, get) => ({
       const toolsP = api.toolchainCheck().then((tools) => set({ tools, claude: tools.claude })).catch((e) => get().showToast(`Could not check the tools on this Mac: ${e}`));
       const [settings, sites, running] = await Promise.all([api.settingsGet(), api.sitesList(), api.agentRunning()]);
       set({ settings, sites, running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
-      void toolsP;
+      // The cached catalogue first (instant), then a live `model/list` once the tools are known — Codex answers in well under a second.
+      await get().refreshModels(false);
+      void toolsP.then(() => get().refreshModels(true));
       void api.appVersion().then((version) => set({ version })).catch(() => {});
 
       // The daily check runs in the backend and announces what it found; the UI never polls.
@@ -828,7 +838,16 @@ export const useStore = create<Store>((set, get) => ({
     try {
       const tools = await api.toolchainCheck();
       set({ tools, claude: tools.claude });
+      void get().refreshModels(true);
     } catch (e) { get().showToast(String(e)); }
+  },
+  async refreshModels(refresh) {
+    try {
+      const catalogue = await api.modelsList(get().currentSiteId, refresh);
+      const models = mergeModels(catalogue);
+      setModels(models);
+      set({ catalogue, models });
+    } catch (e) { console.warn("model catalogue:", e); }
   },
   async openInBrowser() {
     const st = get();

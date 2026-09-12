@@ -3,7 +3,7 @@ import { useStore } from "./store";
 import { Check } from "../ui/Icons";
 import { Checklist } from "./Checklist";
 import { PlanRows } from "./Usage";
-import { EFFORTS, EFFORT_HINTS, MODELS, baseModel, hasLongContext, isCodexModel } from "../models";
+import { EFFORT_HINTS, baseModel, effortsFor, hasLongContext, isCodexModel, isEffort } from "../models";
 import { UI_GROUPS } from "./ui";
 import { cx } from "../util";
 import { openExternal } from "../backend";
@@ -251,15 +251,17 @@ export function SettingsDialog() {
   const installUpdate = useStore((s) => s.installUpdate);
   const [form, setForm] = useState({ claudePath: "", model: "", permissionMode: "acceptEdits", effort: "", fastMode: false });
   const [customModel, setCustomModel] = useState(false);
+  const models = useStore((s) => s.models);
   useEffect(() => {
     if (!open) return;
     setForm({ claudePath: settings.claudePath ?? "", model: settings.model ?? "", permissionMode: settings.permissionMode ?? "acceptEdits", effort: settings.effort ?? "", fastMode: !!settings.fastMode });
-    setCustomModel(!!settings.model && !MODELS.some((m) => m.value === baseModel(settings.model ?? "")));
-  }, [open, settings]);
+    setCustomModel(!!settings.model && !models.some((m) => m.value === baseModel(settings.model ?? "")));
+  }, [open, settings, models]);
   if (!open) return null;
   const base = baseModel(form.model);
   const oneM = hasLongContext(form.model);
-  const known = MODELS.some((m) => m.value === base);
+  const known = models.some((m) => m.value === base);
+  const efforts = effortsFor(form.model || null);
   const custom = customModel || (form.model !== "" && !known);
   const pickModel = (v: string) => {
     if (v === "custom") { setCustomModel(true); if (known) setForm({ ...form, model: "" }); return; }
@@ -345,7 +347,7 @@ export function SettingsDialog() {
           <div style={{ display: "grid", gap: 6 }}>
             <select className="text-input" value={custom ? "custom" : known ? base : ""} onChange={(e) => pickModel(e.target.value)}>
               <option value="">Your Claude Code default{defaults?.model ? ` · ${defaults.model}` : ""}</option>
-              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.label} · {m.value} · {m.hint}</option>)}
+              {models.map((m) => <option key={m.value} value={m.value}>{m.label} · {m.value} · {m.hint}</option>)}
               <option value="custom">Custom model name or alias…</option>
             </select>
             {custom && <input className="text-input" placeholder="e.g. claude-sonnet-5, opus[1m], opusplan" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value.trim() })} />}
@@ -355,13 +357,14 @@ export function SettingsDialog() {
         <div className="row2"><label>Effort</label>
           <select className="text-input" value={form.effort} onChange={(e) => setForm({ ...form, effort: e.target.value })}>
             <option value="">Your Claude Code default{defaults?.effort ? ` · ${defaults.effort}` : ""}</option>
-            {EFFORTS.map((l) => <option key={l} value={l}>{l} · {EFFORT_HINTS[l]}</option>)}
+            {efforts.map((l) => <option key={l} value={l}>{l}{isEffort(l) ? ` · ${EFFORT_HINTS[l]}` : ""}</option>)}
+            {form.effort && !efforts.includes(form.effort) && <option value={form.effort}>{form.effort} · not offered by this model</option>}
           </select>
         </div>
         <div className="row2"><label>Fast mode</label>
           <div style={{ display: "grid", gap: 4 }}>
-            <label className="opt-row"><input type="checkbox" checked={form.fastMode} onChange={(e) => setForm({ ...form, fastMode: e.target.checked })} /> Faster output for Opus sessions</label>
-            <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Same model, up to 2.5× faster streaming, about twice the cost per token (on a subscription it uses up the plan's window faster). Opus 5 and 4.8 only; other models ignore it.</p>
+            <label className="opt-row"><input type="checkbox" checked={form.fastMode} onChange={(e) => setForm({ ...form, fastMode: e.target.checked })} /> Faster output where the model offers it</label>
+            <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>Same model, faster streaming, more of the plan's window per token: Claude's Opus 5 and 4.8 (up to 2.5×, about twice the cost) and the GPT models that list a fast tier (Codex calls it priority). Other models ignore it.</p>
           </div>
         </div>
         <div className="row2"><label>Permissions</label>

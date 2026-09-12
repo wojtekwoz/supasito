@@ -24,6 +24,8 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 libc = "0.2"
 base64 = "0.22"
+# For models.json (src/models.rs). Same crate and TLS the updater plugin already pulls in; no second HTTP stack.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 # For the ignored test that checks the key `pnpm release` signs with against the pubkey shipped in the

@@ -428,6 +428,15 @@ impl Registry {
         Ok(out)
     }
 
+    /// `model/list`: the models this Codex offers (models.rs parses the reply). A short-lived app-server when the
+    /// site has none running, like `list`; `site_id` may be a placeholder when no site exists yet.
+    pub async fn models(&self, app: &AppHandle, site_id: &str, cwd: &str, codex_path: &str, path_env: &str) -> Result<Value, String> {
+        let server = self.server_for(app, site_id, cwd, codex_path, path_env).await?;
+        let r = server.request("model/list", json!({})).await;
+        self.release_if_idle(server).await;
+        r
+    }
+
     /// A thread's history as the notification lines the reducer already understands: every item as an
     /// `item/started` + `item/completed` pair, every turn closed by `turn/completed`.
     pub async fn transcript(&self, app: &AppHandle, site_id: &str, cwd: &str, thread_id: &str, codex_path: &str, path_env: &str) -> Result<Vec<Value>, String> {

@@ -149,9 +149,13 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
   const o = session?.overrides ?? {};
   // A running session on one backend must not show the other backend's default (a Claude session while the
   // Settings default is a GPT model): the process ignores that model, so the chip says "default" instead.
-  const codex = session?.backend === "codex";
+  // A draft has no backend yet: it will start on Codex when its model (or the Settings default) is a GPT one, or when
+  // Claude Code is not usable — the same rule as start_agent and the rail.
+  const codex = session?.loaded ? session.backend === "codex" : isCodexModel(o.model ?? settings.model) || (!claudeUsable(tools) && codexUsable(tools));
   const settingsFits = !session?.loaded || !settings.model || isCodexModel(settings.model) === codex;
   const model = session?.model ?? o.model ?? (settingsFits ? settings.model : null) ?? (codex ? null : defaults?.model) ?? null;
+  // what the session runs on when no model is chosen, for the effort list and the Fast chip
+  const effective = model ?? (codex ? codexDefault() : defaults?.model ?? null);
   const effort = o.effort ?? settings.effort ?? null;
   const fastState = session?.fast?.state ?? null;
   const fastOn = fastState ? fastState !== "off" : !!(o.fastMode ?? settings.fastMode);
@@ -170,11 +174,11 @@ function Knobs({ session, mode }: { session: SessionState | null; mode?: string 
       </Pick>
       <Pick icon={<Signal className="glyph" />} label={effort ?? "default"} title={`Effort: how long the model thinks before answering. ${isEffort(effort) ? EFFORT_HINTS[effort] : codex ? "Codex's default for this model." : `Your Claude Code default${defaults?.effort ? ` (${defaults.effort})` : ""}.`}${wait}`} value={effort ?? ""} disabled={busy} onChange={(v) => void setEffort(v || null)}>
         <option value="">default</option>
-        {effortsFor(model).map((l) => <option key={l} value={l}>{l}</option>)}
-        {effort && !effortsFor(model).includes(effort) && <option value={effort}>{effort}</option>}
+        {effortsFor(effective).map((l) => <option key={l} value={l}>{l}</option>)}
+        {effort && !effortsFor(effective).includes(effort) && <option value={effort}>{effort}</option>}
       </Pick>
       {mode !== undefined && <ModeSelect mode={mode} />}
-      {supportsFast(model) && (
+      {supportsFast(effective) && (
         <button className={cx("chip toggle", fastOn && "ok")} disabled={busy} title={fastTitle} onClick={() => void setFast(!fastOn)}>
           Fast · {fastState === "cooldown" ? "cooling down" : fastOn ? "on" : "off"}
         </button>

@@ -34,24 +34,36 @@ pub struct ChainStep {
 
 /// One conversation, several backend sessions: a session that another one continues is hidden behind that
 /// successor, and the tail row carries the head's title and `created_at`, the tail's `last_modified`, the
-/// summed `message_count` and the whole chain. A session is hidden only when its successor is *in the list*
-/// (Codex uninstalled or its list failing must not make a conversation vanish); with two successors the
+/// summed `message_count` and the whole chain. A session is hidden only when a later member of its chain is
+/// *in the list* (Codex uninstalled or its list failing must not make a conversation vanish; a middle
+/// segment Claude Code cleaned up must not bring the head back as a second row); with two successors the
 /// newer one hides the head and the other stays a row of its own. Order is kept: the caller sorts.
 pub fn fold_chains(list: Vec<SessionInfo>, links: &[Continuation]) -> Vec<SessionInfo> {
     use std::collections::{HashMap, HashSet};
     if links.is_empty() { return list; }
     let present: HashSet<&str> = list.iter().map(|s| s.id.as_str()).collect();
-    // successor per session: the newest link whose `id` is present
+    // successor per session: the newest link away from it
     let mut successor: HashMap<&str, &Continuation> = HashMap::new();
-    for l in links.iter().filter(|l| present.contains(l.id.as_str()) && l.id != l.continues) {
+    for l in links.iter().filter(|l| l.id != l.continues) {
         let newer = successor.get(l.continues.as_str()).map(|s| l.at >= s.at).unwrap_or(true);
         if newer { successor.insert(l.continues.as_str(), l); }
     }
+    // hidden when walking the successors from it reaches a session that is in the list
+    let hidden = |id: &str| {
+        let mut cur = id;
+        for _ in 0..50 {
+            let Some(next) = successor.get(cur).map(|l| l.id.as_str()) else { return false };
+            if present.contains(next) { return true; }
+            if next == id { return false; }
+            cur = next;
+        }
+        false
+    };
     let continues: HashMap<&str, &Continuation> = links.iter().map(|l| (l.id.as_str(), l)).collect();
     let by_id: HashMap<&str, &SessionInfo> = list.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut out = Vec::with_capacity(list.len());
     for s in &list {
-        if successor.get(s.id.as_str()).map(|l| l.id != s.id).unwrap_or(false) { continue; } // hidden behind its successor
+        if hidden(&s.id) { continue; }
         if !continues.contains_key(s.id.as_str()) { out.push(s.clone()); continue; }
         // walk back to the head (a link may name a session no longer on disk: it stays in the chain and the UI says so)
         let mut chain: Vec<ChainStep> = Vec::new();
@@ -248,6 +260,19 @@ mod tests {
         assert_eq!(out[0].title, "Handed over");
         assert_eq!(ids(&out[0].chain), ["head", "codex:tail"]);
         assert_eq!(out[0].message_count, 2);
+    }
+
+    #[test]
+    fn a_missing_middle_segment_still_hides_the_head() {
+        // Claude Code cleaned up `mid`: the head must not come back as a second row next to the tail
+        let list = vec![s("codex:tail", "Handed over", 300, 2), s("head", "Head", 100, 6)];
+        let links = [link("mid", "head", 150), link("codex:tail", "mid", 250)];
+        let out = fold_chains(list, &links);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "codex:tail");
+        assert_eq!(out[0].title, "Head");
+        assert_eq!(ids(&out[0].chain), ["head", "mid", "codex:tail"]);
+        assert_eq!(out[0].message_count, 8);
     }
 
     #[test]

@@ -180,7 +180,7 @@ closes §8.1 on its own.
   had invented a flag for a command it did not recognise. Fixed in session 29 — it now runs an
   unrecognised script as written and asks the OS where the server went.
 
-## 8d. v0.2.1 — the model list comes from the agents, and one conversation spans both (plan, 2026-09-12)
+## 8d. v0.2.1 — the model list comes from the agents, and one conversation spans both (planned and built 2026-09-12; CHANGELOG session 32)
 
 Two items, one release. Both are seams between Supasito and the two CLIs that 0.2.0 exposed the moment
 it shipped; neither adds a surface. Order: the model list first (half a day, and it is what you hit
@@ -242,7 +242,7 @@ test on the recorded reply), `src-tauri/src/updates.rs` (`models.json` after `la
 efforts and fast), `src/app/store.ts` (`models` slice + fetch), `src/app/Session.tsx`, `Dialogs.tsx`,
 `src/mock.ts`, CODEX.md §5.2 (milestone 4 closes).
 
-**Proof.** `pnpm dev?models=fresh` shows Astra as the default with `ultra` in its effort list and no Fast
+**Proof.** *Mock and real CLI done (session 32); release-app steps open.* `pnpm dev?models=fresh` shows Astra as the default with `ultra` in its effort list and no Fast
 on Spark. In the release app: the picker shows the six 0.154.0 models on first launch after the update
 check, with `codex` removed from PATH it shows the cached six, and with the app-state file wiped it shows
 the built-in list. A Codex session started with no model chosen runs on `gpt-6-astra` (the thread's
@@ -302,9 +302,9 @@ and leaves the other visible rather than dropping it. Deleting the site forgets 
 the replay are workable without either CLI; `?chain=broken` drops the head's transcript to exercise the
 notice.
 
-**Tests.** `fold_chains` (Rust: hides continued rows, keeps the head when the tail is absent, title and
+**Tests.** *Built (session 32).* `fold_chains` (Rust: hides continued rows, keeps the head when the tail is absent, title and
 counts) and `concatSegments` (TS: divider placement, a failed segment's notice, items stay immutable) run
-in `pnpm test`. Proof in the release app: start on Claude, switch to a GPT model, one turn, switch back,
+in `pnpm test`; the mock walks the whole chain (`?chain=broken` for the notice). Proof in the release app, still open: start on Claude, switch to a GPT model, one turn, switch back,
 one turn; relaunch; the rail shows **one** row under the original title with no GPT badge, and reopening
 it replays three segments with two dividers. Undo of the Codex turn from that view restores the files.
 

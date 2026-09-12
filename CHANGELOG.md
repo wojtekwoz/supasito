@@ -388,3 +388,47 @@ actually wants — a version check — rather than telemetry bolted on beside it
 - Still to do, and blocking the count rather than the updater: `supasito.com/updates/latest.json`. Until that
   file is served, every check falls through to GitHub, so the number that gets counted is nobody's — the
   fallback is there to keep updates working, not to measure them.
+
+### Session 32 (2026-09-12) — the model list comes from the agents, and one conversation spans both (0.2.1)
+
+PLAN §8d, both halves, on the `v0.2.1` branch. The day after 0.2.0 shipped, codex-cli 0.154.0 was already
+defaulting to a model the picker could not show, and changing agent mid-conversation still split the
+conversation in two.
+
+- **`model/list` is the Codex half of the picker.** `src-tauri/src/models.rs` parses the reply (recorded from
+  0.154.0 into `src/agent/fixtures/codex-0.154.0-model-list.json`: six models, `gpt-6-astra` the default,
+  efforts per model — `ultra` on the 5.6 and 6 models — and Fast as the `priority` service tier, which Codex
+  Spark does not list). The `models_list` command asks through the current site's app-server, or a
+  short-lived one keyed `models` when no site exists yet, and caches the rows in the app state; the UI reads
+  the cache at start and refreshes once the toolchain check is in and on Recheck.
+- **Claude's list is served, not typed in.** Claude Code enumerates nothing (`--model` takes an alias or an
+  id), so `models.json` sits next to `latest.json` and is fetched right after it, same host, version in the
+  query, no identifier; GitHub's release assets are the fallback. `pnpm release` writes it from the built-in
+  list (`scripts/models-json.mjs`) so the two cannot drift at release time.
+- **`src/models.ts` is a reader over the cache.** `mergeModels` puts the live Codex rows (else the served
+  ones, else built-in) after the served Claude rows (else built-in), hidden rows out; `effortsFor` gives a
+  model its own efforts, `supportsFast` follows the catalogue for GPT ids, `codexDefault` is whatever this
+  Codex marks. `BUILTIN_MODELS` is the floor and now lists all six. Settings accepts `ultra`; claude.rs still
+  drops it for a Claude session. Mock: `?models=stale|fresh|fail`.
+- **A conversation is a chain of backend sessions.** `Site.continuations` (app state, next to `favorite`)
+  records `{ id, continues, at, model }`; `start_agent` writes it as it mints the new id from the draft's
+  `overrides.continues`, then stops the continued session's idle process. `sessions::fold_chains` hides a
+  session behind its successor only when the successor is in the list (Codex uninstalled must not make a
+  conversation vanish), gives the tail the head's title and `createdAt`, sums the counts, and carries the
+  `chain` with the model each step started on — a replayed Codex thread does not say.
+- **The transcript stays put.** Switching agent no longer empties the view into a notice: the draft inherits
+  the items under a `handoff` divider ("now on GPT-6 Astra"), the first send starts the tail, which takes
+  over the head's row. Reopening replays every segment with its own reducer and joins them with
+  `concatSegments`; a segment that will not load (Claude Code's `cleanupPeriodDays`, Codex unreachable) is
+  one notice. Picking a model back on the continued session's own agent from the draft cancels the
+  continuation and applies the model there. Sends, approvals, Undo and the knobs needed no routing change:
+  the current session already is the tail.
+- Verified: Rust 45 tests (the list parser on the recorded reply, `fold_chains` on a three-link chain, a
+  missing tail, a missing head, two successors), `concatSegments` and the catalogue reader in `pnpm test`.
+  In the mock: Astra default with `ultra` and the Fast chip, Spark with neither; the chained pair replays
+  under one row with the divider, `?chain=broken` shows the notice; a live Claude → Astra → Haiku chain
+  ends as one row under the original title, no GPT badge, two dividers, Undo offered on the Codex turn;
+  the cancel path returns to the tail. Real CLI: the debug binary with an empty `HOME` and Codex signed in
+  cached the six 0.154.0 models from `model/list` in under a second. Still open, for the release app:
+  the chain proof in §8d.2 end to end, and `models.json` on supasito.com (until it is served, Claude's list
+  is the built-in one).

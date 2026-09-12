@@ -46,6 +46,14 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   from `node scripts/codex-probe.mjs <scratch repo>`. The model picker is the backend picker (`is_codex_model`).
   CODEX.md is the plan and the edge cases. Smoke on Codex: `SUPASITO_SMOKE_MODEL=gpt-5.6-luna` with the debug
   binary, `HOME=<empty dir> CODEX_HOME=~/.codex SUPASITO_PATH=$PATH` (see smoke.rs).
+- `src-tauri/src/models.rs` — the model catalogue: Codex's from `model/list` (fixture from 0.154.0), Claude's from
+  `supasito.com/updates/models.json` fetched with the update check (`pnpm release` writes it via `scripts/models-json.mjs`);
+  both cached in the app state. `src/models.ts` reads that cache with `BUILTIN_MODELS` as the floor; never add a model
+  to the UI by hand elsewhere. Mock: `?models=stale|fresh|fail`.
+- `src-tauri/src/agent/sessions.rs` `fold_chains` — a conversation that changed agent is a chain of backend sessions
+  (`Site.continuations`, written by `start_agent`); the rail shows the tail under the head's title, the store replays
+  the segments under `handoff` dividers (`concatSegments` in transcript.ts). Mock: the "Rework the pricing page" row,
+  `?chain=broken`.
 - `src-tauri/src/toolchain.rs` — first-run checks (Node, pnpm/npm, git, Claude Code + `claude auth status`).
   The UI's `Checklist.tsx` renders it; the mock simulates each failure with `?tools=…` (list under `pnpm dev` above).
 - `src-tauri/src/updates.rs` — the only request the app makes on its own: once a day it asks

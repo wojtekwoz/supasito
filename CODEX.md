@@ -1,8 +1,8 @@
 # Codex as a second agent backend — plan
 
 Status: **merged and released as 0.2.0 (2026-09-12; CHANGELOG session 31).** Milestones 1–3, 5, 6 and 7
-are built; what remains of 4 — the Codex model list fetched from `model/list` instead of hardcoded — and
-the successor to "switching backend offers a new session" are planned as v0.2.1 in PLAN.md §8d. This is
+are built; the rest of 4 (the Codex model list from `model/list`) and the successor to "switching backend
+offers a new session" (one conversation across agents, §11) were built as v0.2.1, PLAN.md §8d. This is
 the design for the one line in PLAN.md §9a ("second agent backend behind the same `agent://` events").
 Everything below marked *verified* was recorded against **codex-cli 0.149.0 on 2026-09-10** with the
 probe in §3.4 unless a later date is given; everything else is marked as an open question.
@@ -320,5 +320,5 @@ Milestone 4's "switching backend offers a new session rather than silently dropp
 0.2.0 as a separate session with a handoff in the system prompt. It is correct and the seam is ugly: two
 rail rows, an emptied transcript, an idle process left behind. The successor — a conversation as a chain
 of backend sessions, one rail row, segments replayed in order under a divider, sends always to the tail —
-is planned in **PLAN.md §8d.2** with its edges, tests and file list. The rule from §1 still applies: it
+is built (0.2.1, CHANGELOG session 32) and described in **PLAN.md §8d.2** with its edges, tests and file list. The rule from §1 still applies: it
 adds no pane and no concept; the user keeps answering "which model does the work".

@@ -1,9 +1,11 @@
 # Codex as a second agent backend — plan
 
-Status: **milestones 1–3 and 5 built on the `codex-backend` branch** (CHANGELOG session 31); 4, 6 and 7
-partly. This is the design for the one line in PLAN.md §9a ("second agent backend behind
-the same `agent://` events"). Everything below marked *verified* was recorded against **codex-cli
-0.149.0 on 2026-09-10** with the probe in §3.4; everything else is marked as an open question.
+Status: **merged and released as 0.2.0 (2026-09-12; CHANGELOG session 31).** Milestones 1–3, 5, 6 and 7
+are built; what remains of 4 — the Codex model list fetched from `model/list` instead of hardcoded — and
+the successor to "switching backend offers a new session" are planned as v0.2.1 in PLAN.md §8d. This is
+the design for the one line in PLAN.md §9a ("second agent backend behind the same `agent://` events").
+Everything below marked *verified* was recorded against **codex-cli 0.149.0 on 2026-09-10** with the
+probe in §3.4 unless a later date is given; everything else is marked as an open question.
 
 ## 1. The decision, in one paragraph
 
@@ -179,6 +181,12 @@ maps to `serviceTier: "priority"` offered only by models that list it — the ex
 `supportsFast`. Mid-session switching is easier than Claude's: `model`, `effort`, `summary` and
 `serviceTier` are all per-turn parameters on `turn/start`, so no control request is needed.
 
+*Verified 2026-09-12 on codex-cli 0.154.0:* `model/list` returns six models — `gpt-6-astra` (**the new
+`isDefault`**, efforts low…max + `ultra`, Fast = `priority` "2x speed"), `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna` (no `ultra`), `gpt-5.5`, and `gpt-5.3-codex-spark` (efforts up to `xhigh`, **no service
+tiers, so no Fast**). Supasito's hardcoded list still names three of them and the wrong default, which
+is the fault PLAN §8d.1 fixes. Every entry also carries `hidden: false`; hidden ones are to be filtered.
+
 ### 5.3 Permission modes
 
 | Supasito | Codex |
@@ -305,3 +313,12 @@ Codex Cloud, `codex review`, plugins/marketplace, MCP management, the shared dae
 realtime/voice, multi-agent (`collabAgentToolCall` renders as a row and nothing more), and a
 per-backend settings screen. Each is a surface, and none of them shortens say → change → see →
 approve → publish.
+
+## 11. One conversation across agents
+
+Milestone 4's "switching backend offers a new session rather than silently dropping history" shipped in
+0.2.0 as a separate session with a handoff in the system prompt. It is correct and the seam is ugly: two
+rail rows, an emptied transcript, an idle process left behind. The successor — a conversation as a chain
+of backend sessions, one rail row, segments replayed in order under a divider, sends always to the tail —
+is planned in **PLAN.md §8d.2** with its edges, tests and file list. The rule from §1 still applies: it
+adds no pane and no concept; the user keeps answering "which model does the work".

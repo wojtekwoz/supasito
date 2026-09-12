@@ -180,6 +180,147 @@ closes §8.1 on its own.
   had invented a flag for a command it did not recognise. Fixed in session 29 — it now runs an
   unrecognised script as written and asks the OS where the server went.
 
+## 8d. v0.2.1 — the model list comes from the agents, and one conversation spans both (plan, 2026-09-12)
+
+Two items, one release. Both are seams between Supasito and the two CLIs that 0.2.0 exposed the moment
+it shipped; neither adds a surface. Order: the model list first (half a day, and it is what you hit
+today), the conversation chain second (about a day with the tests).
+
+### 8d.1 The model list is fetched, not typed in
+
+**The fault.** `src/models.ts` is a hardcoded list from codex-cli 0.149.0 and the Claude Code docs.
+Codex is at 0.154.0 now and its `model/list` (measured 2026-09-12, the probe in CODEX.md §3.4) returns
+six models with **`gpt-6-astra` as the default**, plus `gpt-5.5` and `gpt-5.3-codex-spark`; Supasito
+offers three GPT models and still calls `gpt-5.6-sol` the default. The user's own `~/.codex/config.toml`
+already says `gpt-6-astra`. Every model release will repeat this until the list comes from the CLI.
+
+**Decision.** The two agents are different cases and get different answers:
+
+- **Codex: live from `model/list`.** The app-server reports id, `displayName`, `description`,
+  `isDefault`, `supportedReasoningEfforts`, `defaultReasoningEffort`, `serviceTiers` and `hidden`.
+  That is the whole Codex half of `models.ts`, with two things the hardcoded list cannot know: the
+  efforts are **per model** (the 5.6 and 6 models offer `ultra`, which Supasito's fixed low…max list does
+  not have; `codex-spark` stops at `xhigh`), and Fast is the `priority` service tier, **offered by every
+  model except `gpt-5.3-codex-spark`** — so `supportsFast` stops guessing from the id.
+- **Claude: a served catalogue, with the built-in list as the floor.** Claude Code has no model
+  listing (`claude --help` on 2.1.257: `--model` takes an alias or a full id, nothing enumerates them; the
+  API's `/v1/models` needs an API key the subscription sign-in does not have, and Supasito does not touch
+  `~/.claude/.credentials.json`). So the list rides on the one request the app already makes:
+  `updates.rs` fetches `supasito.com/updates/models.json` right after `latest.json`, once a day and on
+  "Check now", same host, same no-identifier URL (WEBSITE.md §4.6 still holds). `pnpm release` writes
+  `release/models.json` from `src/models.ts` so the two cannot drift at release time; editing the file on
+  the site is how a new Claude model appears between releases. The built-in list is what the app shows
+  when it has never fetched.
+- **Rejected:** asking Claude Code with a deliberately wrong `--model` and parsing the error (unverified
+  that it lists anything, and it costs a process start); offering only aliases (`opus`, `sonnet`…) so the
+  list never ages (true for a tier, useless for a new family name like Fable was; the served catalogue may
+  still carry alias rows, `modelOption` already resolves them).
+
+**The cache is app state.** `Persisted.models: { codex: Vec<Model>, codex_at, claude: Vec<Model>, claude_at }`,
+written whenever a fetch succeeds, read at startup so the picker is right before any fetch returns and
+when offline. A `Model` is `{ id, label, hint, default, efforts, default_effort, fast, backend }` — one
+shape for both agents, which is what `models.ts` becomes a reader of. Fetch points: the toolchain check
+(app start, Recheck), and opening the picker when the cache is older than an hour. The Codex fetch
+reuses the current site's `server_for` (refcounted, released when idle, a few hundred ms); no new
+process model.
+
+**What moves.** `CODEX_DEFAULT` / `DEFAULT_MODEL` become "the entry marked `isDefault`, else the
+constant" — `lib.rs:426` reads it from the cache, the Session header's "Codex's default (GPT-5.6 Sol)" stops
+being a string literal. The effort picker shows the model's own efforts for Codex sessions (`isEffort`
+accepts `ultra` there) and the fixed five for Claude. `MODELS` in `Session.tsx` and `Dialogs.tsx` becomes a
+store selector (`useModels()`) merging cache + built-in by id, filtering `hidden`, keeping the installed
+agents' models only, as today. `modelShort` already renders `gpt-6-astra` as `GPT-6 Astra`; a `displayName`
+is kept as the label when present. `is_codex_model` needs no change (`gpt-`, `codex`).
+
+**Mock.** `?models=stale|fresh|fail`: the built-in list, a fetched list with astra default and a
+spark row without Fast, and a fetch that errors (the picker must look identical to `stale`).
+
+**Files.** `src-tauri/src/agent/codex.rs` (`models()` over `model/list`, and the `Model` parse with a unit
+test on the recorded reply), `src-tauri/src/updates.rs` (`models.json` after `latest.json`),
+`src-tauri/src/state.rs` (the cache), `src-tauri/src/lib.rs` (`models_list` command, the default),
+`scripts/release.sh` (write `release/models.json`), `src/models.ts` (reader over the cache, per-model
+efforts and fast), `src/app/store.ts` (`models` slice + fetch), `src/app/Session.tsx`, `Dialogs.tsx`,
+`src/mock.ts`, CODEX.md §5.2 (milestone 4 closes).
+
+**Proof.** `pnpm dev?models=fresh` shows Astra as the default with `ultra` in its effort list and no Fast
+on Spark. In the release app: the picker shows the six 0.154.0 models on first launch after the update
+check, with `codex` removed from PATH it shows the cached six, and with the app-state file wiped it shows
+the built-in list. A Codex session started with no model chosen runs on `gpt-6-astra` (the thread's
+`model` in `thread/read`).
+
+### 8d.2 One conversation, several engines underneath
+
+**The fault.** Switching a Claude chat to a GPT model (or back) starts a *separate* session with a
+handoff (0.2.0, session 31): correct, and ugly — the rail shows two rows, the transcript empties down to
+one notice, and the old process stays alive doing nothing. The constraint is real: each CLI keeps its
+own history (`~/.claude/projects`, `~/.codex`), so no single process can switch. The app does not have to
+expose that seam.
+
+**Decision.** A conversation is a **chain of backend sessions**. When a session continues another one, the
+link is recorded in app state; everything else is derived from it:
+
+- **The link.** `Site.continuations: Vec<{ id, continues, at }>` in app state next to `favorite` (a user's
+  view of their history, not the site's config, so not `supasito.json`). It is written by `start_agent`,
+  atomically with minting the new id, from a new `SessionOverrides.continues` field the draft carries —
+  not by a second call from the UI, which could lose the link between the two. The `handoff` text keeps
+  its job and its place (the system prompt; lib.rs:407), so replaying the tail shows only the user's real
+  messages.
+- **The rail shows one row: the tail.** `sessions_list` returns each `SessionInfo` with `continues` and
+  `continuedBy`; a pure `fold_chains(list, links)` in `sessions.rs` hides every session whose successor is
+  *in the list* (if the tail is missing because Codex is uninstalled or its list failed, the head stays
+  visible rather than the conversation vanishing), and gives the tail the head's title and `createdAt`,
+  the tail's `lastModified`, and the summed `messageCount`. The GPT badge follows the tail's id, as now.
+  `Site.lastSessionId` is always the tail; `siteSetLastSession` needs nothing new.
+- **The transcript is the segments in order.** `openSession(tail)` walks `continues` back to the head,
+  loads each segment with its own reducer (`applyMessage` or `applyCodexMessage`) into its own scratch
+  `SessionState`, and concatenates the items with a divider between segments: a new `Item` kind
+  `handoff` carrying `{ from, to, model }`, rendered as a thin line with "now on GPT-6 Astra". The tail's
+  state (backend, model, context, fast, mode, overrides) is the live one; the earlier segments contribute
+  items only. A segment that fails to load (Claude Code's `cleanupPeriodDays` deletes old JSONL; Codex
+  unreachable) becomes one notice row — "the earlier part of this conversation, on Claude, is no longer
+  available" — and the rest still renders.
+- **Switching is the same divider, live.** `setSessionModel` across agents no longer calls `newSession()`
+  into an empty draft with a notice. The draft *inherits the current items* plus the divider, carries
+  `overrides.continues = currentId` and the handoff, and the view does not move; the first send starts
+  the new tail as today and the draft's items become its transcript. The head's process is stopped
+  once the tail has started (`agent_stop`, best effort): it was idle, and two live agents on one folder
+  is a foot-gun. Switching back adds another segment the same way; a chain is any length.
+- **Sending goes to the tail.** `currentSessionId` already is the tail, so `send`, queue, interrupt,
+  approvals and the knobs need no routing change. Same-agent switches (Claude→Claude, GPT→GPT) stay live
+  and mid-conversation as they are.
+- **Unchanged on purpose.** Undo works on files and turn items, not sessions — an undo of a turn that ran
+  on Claude from a transcript whose tail is Codex is the same `git checkout`. Context fullness and cost are
+  the tail process's own, as they already are after any restart. `handoffText` stays the honest handover
+  (the new engine still needs to be told what was said; that part is invisible to the user).
+
+**Edges to write down.** Switching while busy is still refused (toast). A chain's head opened directly is
+impossible from the rail (hidden) and harmless from `lastSessionId` (the store resolves it to the tail
+before loading). Two successors of one head cannot happen through the UI; `fold_chains` takes the newer
+and leaves the other visible rather than dropping it. Deleting the site forgets the links with it.
+
+**Mock.** `?sites=two` gets a chained pair (a Claude head, a Codex tail) so the rail row, the divider and
+the replay are workable without either CLI; `?chain=broken` drops the head's transcript to exercise the
+notice.
+
+**Tests.** `fold_chains` (Rust: hides continued rows, keeps the head when the tail is absent, title and
+counts) and `concatSegments` (TS: divider placement, a failed segment's notice, items stay immutable) run
+in `pnpm test`. Proof in the release app: start on Claude, switch to a GPT model, one turn, switch back,
+one turn; relaunch; the rail shows **one** row under the original title with no GPT badge, and reopening
+it replays three segments with two dividers. Undo of the Codex turn from that view restores the files.
+
+**Files.** `src-tauri/src/sites.rs` (`continuations` on `Site`), `src-tauri/src/agent/sessions.rs`
+(`fold_chains`, `continues`/`continuedBy` on `SessionInfo`), `src-tauri/src/lib.rs` (`start_agent`
+records the link, stops the head; `sessions_list` folds), `src/types.ts` (`continues` on overrides and
+`SessionInfo`), `src/agent/transcript.ts` (`handoff` item, `concatSegments`), `src/app/store.ts`
+(`openSession` walks the chain, `setSessionModel` keeps the items), `src/app/Session.tsx` (the divider
+row), `src/app/Rail.tsx` (nothing: it already renders what `sessions_list` returns), `src/mock.ts`,
+CODEX.md (a §11 pointing here; "switching backend offers a new session" in milestone 4 is superseded).
+
+### 8d.3 Out of scope for 0.2.1
+
+Merging histories into one CLI store, a combined context ring across segments, editing the handoff,
+and per-backend settings. None of them shortens the loop.
+
 ## 9. Roadmap
 
 Each version is a claim you can make honestly when it ends, not a feature list. The thesis holds:
@@ -213,6 +354,13 @@ The honest claim stops there.
 
 The claim at the end: a person who is not you installs Supasito, follows only what the app tells them,
 and publishes a site without asking you anything.
+
+**v0.2.1 — two agents, one app.** 0.2.0 shipped Codex as a second agent (CODEX.md, session 31) and the
+seams showed within a day: the model list is a snapshot of one CLI version (codex 0.154.0 already
+defaults to a model Supasito cannot show), and changing agent mid-conversation splits the conversation
+in two. §8d has the plan: the list comes from `model/list` and a served catalogue, and a conversation is
+a chain of backend sessions shown as one. The claim: you pick any model either CLI offers today, and
+the rail never shows you the seam between them.
 
 **v0.3 — survives other people's projects.** Everything so far assumes projects shaped like yours.
 Known holes, all from §7: a monorepo with the site at the repository root, Nuxt with a custom srcDir,

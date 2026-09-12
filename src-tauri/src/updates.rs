@@ -48,16 +48,17 @@ fn now_ms() -> i64 {
 
 /// Ask the endpoints. `Ok(None)` means this is the newest version.
 async fn look(app: &AppHandle) -> Result<Option<Available>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let found = updater.check().await.map_err(|e| e.to_string())?;
-    // The model catalogue rides on the same check (models.rs), on its own task so a slow endpoint never holds
-    // the answer to "Check now"; a failure there is logged, not reported.
+    // The model catalogue rides on the same check (models.rs), on its own task so a slow endpoint never holds the
+    // answer to "Check now", and before the manifest so a missing latest.json does not cost the list; a failure
+    // there is logged, not reported. Settings → Updates switches both off together, and says so.
     let for_models = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(e) = crate::models::refresh_served(&for_models).await {
             eprintln!("models.json fetch failed: {e}");
         }
     });
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let found = updater.check().await.map_err(|e| e.to_string())?;
     {
         // The guard must be dropped before `save`, which locks `persisted` again.
         let state = app.state::<AppState>();

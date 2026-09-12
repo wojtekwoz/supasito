@@ -310,7 +310,7 @@ export function SettingsDialog() {
             </div>
             <div className="row2"><label>Automatically</label>
               <div style={{ display: "grid", gap: 4 }}>
-                <label className="opt-row"><input type="checkbox" checked={settings.updatesEnabled !== false} onChange={(e) => void save({ updatesEnabled: e.target.checked })} /> Check for a new version once a day</label>
+                <label className="opt-row"><input type="checkbox" checked={settings.updatesEnabled !== false} onChange={(e) => void save({ updatesEnabled: e.target.checked })} /> Check for a new version once a day (the same request also refreshes the Claude model list)</label>
                 <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 12 }}>
                   That request is the only thing Supasito sends anywhere on its own. It asks supasito.com, and GitHub if that is unreachable, whether a version newer than this one exists; it carries the version, macOS and the chip this app was built for, and nothing else — no account, no identifier, no record of what you build. Your requests to Claude go from your own Claude Code, as they always did.
                 </p>

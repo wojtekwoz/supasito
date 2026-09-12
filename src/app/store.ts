@@ -221,6 +221,8 @@ function publishFailure(cmd: string, code: number | null | undefined, log: strin
   if (/log ?in|credentials|not authenticated|unauthori[sz]ed|401|403|token/i.test(text) && tool) return `The ${tool} CLI isn't signed in. In Terminal, run \`${tool} login\` inside this site's folder, then try again.`;
   return `Publish exited with code ${code ?? "?"}. The output above says why; fix it and try again.`;
 }
+/** The live Codex list is asked for again when it is an hour old (or was never fetched): on selecting a site, opening Settings, Recheck. */
+const modelsStale = (c: Catalogue | null) => !c || Date.now() - c.codexAt > 3600e3;
 /** What to call the CLI behind a session in messages ("Codex" or "Claude Code"). */
 const agentName = (sessionId: string | null | undefined) => (backendOf(sessionId) === "codex" ? "Codex" : "Claude Code");
 const isAuthFailure = (text: unknown) => typeof text === "string" && /not logged in|authentication_failed|invalid api key|please run \/login/i.test(text);
@@ -331,9 +333,10 @@ export const useStore = create<Store>((set, get) => ({
       const toolsP = api.toolchainCheck().then((tools) => set({ tools, claude: tools.claude })).catch((e) => get().showToast(`Could not check the tools on this Mac: ${e}`));
       const [settings, sites, running] = await Promise.all([api.settingsGet(), api.sitesList(), api.agentRunning()]);
       set({ settings, sites, running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
-      // The cached catalogue first (instant), then a live `model/list` once the tools are known — Codex answers in well under a second.
+      // The cached catalogue now (instant); the live `model/list` comes with the first site (through its app-server, so
+      // no second Codex process just to list), on Recheck, and whenever the cache is an hour old.
       await get().refreshModels(false);
-      void toolsP.then(() => get().refreshModels(true));
+      void toolsP;
       void api.appVersion().then((version) => set({ version })).catch(() => {});
 
       // The daily check runs in the backend and announces what it found; the UI never polls.
@@ -464,6 +467,7 @@ export const useStore = create<Store>((set, get) => ({
     const [sessions, devInfo] = await Promise.all([api.sessionsList(id), stopping ? stopping.then(() => api.devStatus(id)) : api.devStatus(id)]);
     if (selectGen !== gen || get().currentSiteId !== id) return; // the user moved on while we were loading
     set({ sessions: { ...get().sessions, [id]: sessions } });
+    if (modelsStale(get().catalogue)) void get().refreshModels(true); // after the list, so the two never share the server at once
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
     void get().refreshGit(id);
     // the last session may be the hidden head of a chain now: its row is the tail
@@ -607,16 +611,18 @@ export const useStore = create<Store>((set, get) => ({
       if (sessionId === DRAFT) {
         const draft = st.transcripts[DRAFT] ?? emptySession();
         const id = await api.agentStart(siteId, null, draft.overrides);
+        // the backend may have stopped the continued session while we waited (its exit already landed): read again
+        const st2 = get();
         const { handoff: _sent, continues, ...kept } = draft.overrides;
-        const transcripts = { ...st.transcripts, [id]: { ...draft, loaded: true, overrides: kept, backend: backendOf(id) } };
+        const transcripts = { ...st2.transcripts, [id]: { ...draft, loaded: true, overrides: kept, backend: backendOf(id) } };
         delete transcripts[DRAFT];
-        const list = st.sessions[siteId] ?? [];
+        const list = st2.sessions[siteId] ?? [];
         // Continuing a session on the other agent: the new one takes over its row (the backend hides the continued one).
         const head = continues ? list.find((s) => s.id === continues) : null;
         const info: SessionInfo = continues
           ? { ...(head ?? { title: text.trim().slice(0, 90), createdAt: now() }), id, lastModified: now(), messageCount: (head?.messageCount ?? 0) + 1, chain: [...(head?.chain?.length ? head.chain : [{ id: continues }]), { id, model: kept.model ?? null }] }
           : { id, title: text.trim().slice(0, 90), lastModified: now(), createdAt: now(), messageCount: 1 };
-        set({ transcripts, currentSessionId: id, sessions: { ...st.sessions, [siteId]: [info, ...list.filter((s) => s.id !== continues)] }, running: { ...st.running, [id]: true } });
+        set({ transcripts, currentSessionId: id, sessions: { ...st2.sessions, [siteId]: [info, ...list.filter((s) => s.id !== continues)] }, running: { ...st2.running, [id]: true } });
         void api.siteSetLastSession(siteId, id);
         sessionId = id;
       } else if (!st.running[sessionId]) {
@@ -971,7 +977,10 @@ export const useStore = create<Store>((set, get) => ({
     void api?.setBadge(pending).catch(() => {});
   },
   setPublishOpen(open) { set({ publish: { ...get().publish, open } }); },
-  setSettingsOpen(open) { set({ settingsOpen: open }); },
+  setSettingsOpen(open) {
+    set({ settingsOpen: open });
+    if (open && modelsStale(get().catalogue)) void get().refreshModels(true);
+  },
   async saveSettings(patch) {
     await api.settingsSet(patch);
     const [settings, tools] = await Promise.all([api.settingsGet(), api.toolchainCheck()]);

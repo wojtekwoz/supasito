@@ -19,7 +19,10 @@ export function SessionPane() {
   const tools = useStore((s) => s.tools);
   const interrupt = useStore((s) => s.interrupt);
   const running = useStore((s) => (s.currentSessionId ? !!s.running[s.currentSessionId] : false));
-  const title = currentSessionId === DRAFT ? "New session" : sessions.find((s) => s.id === currentSessionId)?.title ?? "Session";
+  // a draft that continues a conversation on the other agent is still that conversation
+  const draftContinues = useStore((s) => (s.currentSessionId === DRAFT ? s.transcripts[DRAFT]?.overrides.continues ?? null : null));
+  const shownId = currentSessionId === DRAFT ? draftContinues : currentSessionId;
+  const title = shownId ? sessions.find((s) => s.id === shownId)?.title ?? (currentSessionId === DRAFT ? "New session" : "Session") : "New session";
   const full = useStore((s) => s.previewFull);
   const panelPos = useStore((s) => s.panelPos);
   const setPanelPos = useStore((s) => s.setPanelPos);

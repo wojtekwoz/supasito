@@ -23,8 +23,9 @@ use tokio::{
 
 /// Session ids of Codex threads carry this prefix everywhere outside this file.
 pub const PREFIX: &str = "codex:";
-/// What a Codex session runs on when no model was chosen: the one `model/list` marks `isDefault` (0.149.0).
-pub const DEFAULT_MODEL: &str = "gpt-5.6-sol";
+/// What a Codex session runs on when no model was chosen and `model/list` was never fetched (models.rs): the one
+/// codex-cli 0.154.0 marks `isDefault`. The fetched list's default wins whenever there is one.
+pub const DEFAULT_MODEL: &str = "gpt-6-astra";
 
 pub fn is_codex_session(session_id: &str) -> bool {
     session_id.starts_with(PREFIX)
@@ -92,6 +93,9 @@ struct Server {
     next_id: AtomicU64,
     /// Our own requests waiting for their response, by JSON-RPC id.
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
+    /// Requests written and not yet answered. `release_if_idle` must not shut a server down under one of them: the
+    /// session list and `model/list` overlap at launch and share the site's server.
+    inflight: std::sync::atomic::AtomicUsize,
     /// Approval requests the UI has not answered yet: JSON-RPC id → thread id.
     approvals: Mutex<HashMap<u64, String>>,
     /// `fileChange` items by id, kept because the approval request for one carries no diff (verified 0.149.0).
@@ -117,12 +121,18 @@ impl Server {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
-        self.write(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })).await?;
-        match tokio::time::timeout(Duration::from_secs(120), rx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_)) => Err("codex closed before answering".into()),
-            Err(_) => { self.pending.lock().await.remove(&id); Err(format!("codex did not answer {method} in time")) }
-        }
+        self.inflight.fetch_add(1, Ordering::SeqCst);
+        let written = self.write(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })).await;
+        let out = match written {
+            Err(e) => { self.pending.lock().await.remove(&id); Err(e) }
+            Ok(()) => match tokio::time::timeout(Duration::from_secs(120), rx).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(_)) => Err("codex closed before answering".into()),
+                Err(_) => { self.pending.lock().await.remove(&id); Err(format!("codex did not answer {method} in time")) }
+            },
+        };
+        self.inflight.fetch_sub(1, Ordering::SeqCst);
+        out
     }
 
     async fn reply(&self, id: u64, result: Value) {
@@ -396,6 +406,8 @@ impl Registry {
     /// Drop a server that has no thread on it (one spawned only to list or replay history).
     async fn release_if_idle(&self, server: Arc<Server>) {
         if !server.threads.lock().await.is_empty() { return; }
+        // another caller's request is still out (the list and model/list overlap at launch): the last one to finish releases
+        if server.inflight.load(Ordering::SeqCst) > 0 { return; }
         self.servers.lock().await.remove(&server.site_id);
         self.persist().await;
         shutdown(server).await;
@@ -472,6 +484,7 @@ impl Registry {
             approvals: Mutex::new(HashMap::new()),
             file_changes: Mutex::new(HashMap::new()),
             threads: Mutex::new(HashMap::new()),
+            inflight: std::sync::atomic::AtomicUsize::new(0),
         });
         tauri::async_runtime::spawn(writer(stdin, rx));
 
@@ -514,6 +527,8 @@ impl Registry {
                 let status = child.wait().await;
                 let code = status.ok().and_then(|st| st.code());
                 servers.lock().await.remove(&s.site_id);
+                // whoever is still waiting on this server hears now, not after the 120 s timeout
+                for (_, tx) in s.pending.lock().await.drain() { let _ = tx.send(Err("codex exited before answering".into())); }
                 let gone: Vec<Arc<Thread>> = s.threads.lock().await.drain().map(|(_, t)| t).collect();
                 for t in gone {
                     threads.lock().await.remove(&t.session_id);

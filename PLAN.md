@@ -219,8 +219,9 @@ already says `gpt-6-astra`. Every model release will repeat this until the list 
 **The cache is app state.** `Persisted.models: { codex: Vec<Model>, codex_at, claude: Vec<Model>, claude_at }`,
 written whenever a fetch succeeds, read at startup so the picker is right before any fetch returns and
 when offline. A `Model` is `{ id, label, hint, default, efforts, default_effort, fast, backend }` — one
-shape for both agents, which is what `models.ts` becomes a reader of. Fetch points: the toolchain check
-(app start, Recheck), and opening the picker when the cache is older than an hour. The Codex fetch
+shape for both agents, which is what `models.ts` becomes a reader of. Fetch points: selecting a site
+(through its app-server, after its session list so the two never share the server at once), Recheck, and
+opening Settings, the last two only when the cache is an hour old or was never filled. The Codex fetch
 reuses the current site's `server_for` (refcounted, released when idle, a few hundred ms); no new
 process model.
 

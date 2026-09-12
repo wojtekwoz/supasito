@@ -23,7 +23,7 @@ export const BUILTIN_MODELS: ModelOption[] = [
   { value: "claude-opus-5", label: "Opus 5", hint: "strong; the only one with fast mode", backend: "claude" },
   { value: "claude-sonnet-5", label: "Sonnet 5", hint: "fast and cheaper, good for most edits", backend: "claude" },
   { value: "claude-haiku-4-5", label: "Haiku 4.5", hint: "cheapest, for small copy changes", backend: "claude" },
-  { value: "gpt-6-astra", label: "GPT-6 Astra", hint: "Codex; most capable, for demanding work", backend: "codex", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], fast: true },
+  { value: "gpt-6-astra", label: "GPT-6 Astra", hint: "Codex; most capable, for demanding work", backend: "codex", isDefault: true, efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], fast: true },
   { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", hint: "Codex; the everyday workhorse", backend: "codex", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], fast: true },
   { value: "gpt-5.6-terra", label: "GPT-5.6 Terra", hint: "Codex; balanced coding model", backend: "codex", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], fast: true },
   { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", hint: "Codex; fast and affordable", backend: "codex", efforts: ["low", "medium", "high", "xhigh", "max"], fast: true },
@@ -33,7 +33,7 @@ export const BUILTIN_MODELS: ModelOption[] = [
 
 /** What a Codex session runs on when no model was chosen and the catalogue was never fetched (mirrors `DEFAULT_MODEL`
  *  in codex.rs). The fetched list's `isDefault` wins (`codexDefault`). */
-export const CODEX_DEFAULT = "gpt-5.6-sol";
+export const CODEX_DEFAULT = "gpt-6-astra";
 /** An OpenAI model id means the session runs on Codex, not Claude Code (mirrors `is_codex_model` in codex.rs). */
 export const isCodexModel = (id: string | null | undefined) => !!id && /^(gpt-|o3|o4)|codex/i.test(id.trim());
 const backendOfId = (id: string): Backend => (isCodexModel(id) ? "codex" : "claude");

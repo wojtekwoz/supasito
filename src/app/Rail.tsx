@@ -27,6 +27,8 @@ export function Rail() {
   const [showAll, setShowAll] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const sessions = useSessionsOfCurrentSite();
+  // a draft continuing a conversation on the other agent keeps that conversation's row lit, and adds no "New session" row
+  const draftContinues = useStore((s) => (s.currentSessionId === DRAFT ? s.transcripts[DRAFT]?.overrides.continues ?? null : null));
   const currentSessionId = useStore((s) => s.currentSessionId);
   const openSession = useStore((s) => s.openSession);
   const newSession = useStore((s) => s.newSession);
@@ -94,7 +96,7 @@ export function Rail() {
               </span>
             </div>
             <div className="list">
-              {currentSessionId === DRAFT && (
+              {currentSessionId === DRAFT && !draftContinues && (
                 <button className="row on"><Sparkle className="glyph" /><span className="t">New session</span></button>
               )}
               {sessions.length === 0 && currentSessionId !== DRAFT && <div className="empty">No sessions for this site yet.</div>}
@@ -102,7 +104,7 @@ export function Rail() {
                 const busy = transcripts[s.id]?.busy;
                 const live = !!running[s.id];
                 return (
-                  <button key={s.id} className={cx("row", s.id === currentSessionId && "on")} onClick={() => void openSession(s.id)} title={s.title}>
+                  <button key={s.id} className={cx("row", (s.id === currentSessionId || s.id === draftContinues) && "on")} onClick={() => void openSession(s.id)} title={s.title}>
                     <span className={cx("status-dot", busy && "busy", !busy && live && "live")} />
                     <span className="t">{s.title}</span>
                     {s.id.startsWith("codex:") && <span className="backend" title="This conversation runs on Codex">GPT</span>}

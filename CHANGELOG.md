@@ -432,3 +432,17 @@ conversation in two.
   cached the six 0.154.0 models from `model/list` in under a second. Still open, for the release app:
   the chain proof in §8d.2 end to end, and `models.json` on supasito.com (until it is served, Claude's list
   is the built-in one).
+- **Review pass (same day), own read plus an independent adversarial review of the diff.** Fixed: a middle segment
+  Claude Code had cleaned up brought the head back as a second row (`fold_chains` now walks successors);
+  `release_if_idle` could shut the site's app-server under a second caller's request — the session list and
+  `model/list` overlap at launch — leaving the rail or the picker waiting on the 120 s timeout (in-flight
+  requests now keep a server alive, and a server that exits fails its waiters at once); `send` wrote back a
+  snapshot taken before the backend stopped the head; the served fetch sat in front of "Check now" and
+  behind the manifest (now its own task, before it, and Settings says the toggle covers both); a draft's
+  knobs showed Claude's five efforts and no Fast on a Codex-only Mac (they follow the agent it will start on);
+  the built-in floor named no default while the fixture marks Astra (both constants are Astra now); the
+  first live `model/list` spawned a second Codex process in `$HOME` (it now rides the first site's server,
+  after its list); a continuing draft read "New session" with no row lit. Known and left: the flaky
+  `finds_the_port_our_own_process_group_listens_on` devserver test under parallel `cargo test` (untouched by
+  the branch, passes alone); Undo from a continuing draft marks the draft's copy of the item, which becomes
+  the tail's on send.

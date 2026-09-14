@@ -87,6 +87,9 @@ if [[ $ZIP -eq 1 ]]; then
   ZIPFILE="release/Supasito-$VERSION-macos.zip"
   rm -f "$ZIPFILE"
   ditto -c -k --keepParent "$APP" "$ZIPFILE"
+  # The same zip under a name that never changes: supasito.com links to releases/latest/download/Supasito-macos.zip, so
+  # the site offers the newest version without an edit per release (it pointed at 0.1.0, which cannot update, until 0.2.2).
+  cp "$ZIPFILE" release/Supasito-macos.zip
   echo "Zip: $ZIPFILE ($(du -sh "$ZIPFILE" | cut -f1))"
   if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
     cat <<'MSG'
@@ -129,7 +132,7 @@ if [[ -f "$TARBALL" && -f "$TARBALL.sig" ]]; then
   echo "Update manifest: release/latest.json ($ARCH, v$VERSION)"
   [[ -n "$NOTES_FILE" ]] || echo "  (no release/notes-$VERSION.md, so the notes are empty — write one before publishing)"
   cat <<MSG
-  To ship it: gh release create v$VERSION --latest release/Supasito-$VERSION-macos.zip release/Supasito.app.tar.gz release/Supasito.app.tar.gz.sig release/latest.json release/models.json
+  To ship it: gh release create v$VERSION --latest release/Supasito-$VERSION-macos.zip release/Supasito-macos.zip release/Supasito.app.tar.gz release/Supasito.app.tar.gz.sig release/latest.json release/models.json
   (--latest matters: GitHub's releases/latest ignores a prerelease, and that path is the app's fallback endpoint.)
   and put the same latest.json and models.json at https://supasito.com/updates/.
 MSG

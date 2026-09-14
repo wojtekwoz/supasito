@@ -557,3 +557,19 @@ Verified: `cargo test` (61 passed, including the file-read lookup finding a rail
 sites folder, and the `-2` destination), `tsc`, `test:ui`. In the mock with GitHub slowed to 3 s (`?infoDelay=3000`): card at
 34 ms, Add site enabled at 46 ms with "Asking GitHub for details…", details at 3 s, the same link pasted again filled from
 the cache immediately, and the ClarityOps link still answers "You already have this one". Not measured in the app itself.
+
+### Release 0.2.2 (2026-09-14) — Sites from GitHub
+Ships 0.2.1's work (never released on its own), paste a GitHub link, continuing a site from GitHub, and sessions 35–36.
+- Built with `pnpm release --zip`. Apple's notarization service answered 503 on the first attempt; the second was accepted
+  and stapled. A copy of the zip, extracted with the quarantine flag set, is accepted by Gatekeeper as "Notarized Developer
+  ID" at version 0.2.2. `cargo test -- --ignored updater_package` passed against the shipped pubkey.
+- main fast-forwarded to the version bump, tag `v0.2.2`, GitHub release marked latest with the versioned zip,
+  `Supasito-macos.zip`, the update package and its signature, `latest.json` and `models.json`.
+- Verified live: GitHub's `releases/latest/download/latest.json` says 0.2.2, and the package and signature it points to are
+  byte-identical to the verified build; supasito.com/updates/latest.json serves 0.2.2; the fixed-name zip link answers 200
+  with the notarized build.
+- Found while checking: every download link on supasito.com pointed at the 0.1.0 zip, which has no updater, so new
+  installs never updated. The site now links `releases/latest/download/Supasito-macos.zip`, and `scripts/release.sh` makes
+  that fixed-name copy so no release needs a site edit again. Copies installed from the old link stay on 0.1.0 until their
+  owners download again.
+- Not verified: an installed copy updating itself to 0.2.2 through Settings → Updates.

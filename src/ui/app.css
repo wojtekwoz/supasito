@@ -480,3 +480,16 @@ body.panel-drag::after { content: ""; position: fixed; inset: 0; z-index: 15; cu
 .welcome .tip { font-size: 12px; color: var(--ink-3); }
 @media (prefers-reduced-motion: reduce) { .add-bar.busy i { animation-duration: 4s; } .add-bar i, .details-btn .glyph { transition: none; } }
 kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--ink-2); }
+
+/* ---------- continuing a site that lives on GitHub (PLAN §8e.11) ---------- */
+.sync-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: rgba(245, 193, 94, 0.10); font-size: 12.5px; color: var(--ink); }
+.sync-bar span { flex: 1; min-width: 0; }
+.env-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--pane); border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+.env-bar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.env-bar b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: 11.5px; }
+.env-lead { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+.env-keys { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
+.env-key { display: grid; gap: 3px; }
+.modal .env-key .env-name { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.env-hint { font-size: 12px; color: var(--ink-3); }
+.env-key .text-input { font-family: var(--mono); font-size: 12px; }

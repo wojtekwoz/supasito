@@ -46,6 +46,9 @@ export function Preview() {
   const navigateRequest = useStore((s) => s.navigateRequest);
   const setPreviewRect = useStore((s) => s.setPreviewRect);
   const capturePreview = useStore((s) => s.capturePreview);
+  const openEnv = useStore((s) => s.openEnv);
+  const dismissEnv = useStore((s) => s.dismissEnv);
+  const envDismissed = useStore((s) => (s.currentSiteId ? !!s.envDismissed[s.currentSiteId] : false));
   // Toolbar buttons the user switched off in Settings → Interface.
   const shown: Record<Extract<UiKey, "fullWidth" | "devices" | "previewPick" | "reload" | "openBrowser" | "screenshot" | "devLog" | "devStatus">, boolean> = {
     fullWidth: useShown("fullWidth"), devices: useShown("devices"), previewPick: useShown("previewPick"), reload: useShown("reload"),
@@ -148,6 +151,14 @@ export function Preview() {
           Publish{git && git.changed > 0 && <span className="n">{git.changed}</span>}
         </button>
       </div>
+      {/* An example env file lists secrets this Mac doesn't have (PLAN §8e.11). */}
+      {!!site.envMissing?.length && !envDismissed && (
+        <div className="env-bar">
+          <span title={site.envMissing.join(", ")}>This site expects {site.envMissing.length === 1 ? "a private setting that isn't" : `${site.envMissing.length} private settings that aren't`} on this Mac: <b>{site.envMissing.slice(0, 3).join(", ")}{site.envMissing.length > 3 ? "…" : ""}</b></span>
+          <button className="btn sm primary" onClick={() => void openEnv(site.id)}>Add them</button>
+          <button className="btn sm ghost" onClick={() => dismissEnv(site.id)}>Not now</button>
+        </div>
+      )}
       <div className={cx("stage", device !== "desktop" && "device", picking && "picking")}>
         {ready && (
           <iframe

@@ -127,8 +127,12 @@ export function AddSiteDialog() {
       primary = { label: "Add site", run: () => void cloneSite(), disabled: noGit || !a.folder };
       break;
     case "exists":
-      body = <div className="add-found"><Check className="glyph" /><div><b>You already have this one.</b><span>{existing ? <>{existing.name}, in <span className="mono">{tilde(existing.path)}</span></> : <>In <span className="mono">{tilde(a.lookup?.existingPath)}</span></>}</span></div></div>;
+      {
+        const conv = a.lookup?.existingConversations ?? 0;
+        body = <div className="add-found"><Check className="glyph" /><div><b>You already have this one.</b><span>{existing ? <>{existing.name}, in <span className="mono">{tilde(existing.path)}</span></> : <>In <span className="mono">{tilde(a.lookup?.existingPath)}</span></>}{conv ? `, with ${conv} earlier conversation${conv === 1 ? "" : "s"}` : ""}. Opening it keeps its history.</span></div></div>;
+      }
       primary = { label: "Open it", run: () => void openExisting() };
+      secondary = { label: "Download another copy", run: () => void cloneSite(undefined, true) };
       break;
     case "error": {
       const e = a.error!;
@@ -244,8 +248,13 @@ const PRESETS: { label: string; production: string; preview: string }[] = [
   { label: "Vercel", production: "vercel deploy --prod --yes", preview: "vercel deploy --yes" },
   { label: "Cloudflare", production: "wrangler deploy", preview: "wrangler versions upload" },
   { label: "Netlify", production: "netlify deploy --prod", preview: "netlify deploy" },
-  { label: "Git push", production: "git push origin HEAD:main", preview: "git push origin HEAD:staging" },
+  // the branch is the site's own default (`presetsFor`); a preview branch of Supasito's own is safe to force-push
+  { label: "Git push", production: "git push origin HEAD:main", preview: "git push --force origin HEAD:supasito-preview" },
 ];
+
+const presetsFor = (site: { defaultBranch?: string | null } | null) =>
+  PRESETS.map((x) => (x.label === "Git push" ? { ...x, production: `git push origin HEAD:${site?.defaultBranch || "main"}` } : x));
+const isPush = (cmd: string | null | undefined) => /^\s*git\s+push\b/.test(cmd ?? "");
 
 export function PublishDialog() {
   const p = useStore((s) => s.publish);
@@ -256,6 +265,7 @@ export function PublishDialog() {
   const setPublishCommand = useStore((s) => s.setPublishCommand);
   const runPublish = useStore((s) => s.runPublish);
   const cancelPublish = useStore((s) => s.cancelPublish);
+  const mergeFromRemote = useStore((s) => s.mergeFromRemote);
   const [editing, setEditing] = useState(false);
   const [prod, setProd] = useState("");
   const [prev, setPrev] = useState("");
@@ -282,8 +292,9 @@ export function PublishDialog() {
     setEditing(false);
   };
   const go = () => void runPublish(target, { commit: canCommit && commit, message, push: canPush && push && (commit || changed === 0) });
-  const phase = p.running ? "running" : editing ? "editing" : p.cancelled ? "cancelled" : p.url ? "done" : p.error ? "failed" : "ready";
-  const title = { running: p.step === "commit" ? "Committing…" : p.step === "push" ? "Pushing to origin…" : p.target === "preview" ? "Publishing a preview…" : "Publishing to production…", editing: "How should this site be published?", cancelled: "Publish cancelled", done: p.target === "preview" ? "Preview is up" : "Published", failed: "Publish failed", ready: `Publish ${site?.name ?? ""}` }[phase];
+  const phase = p.running ? "running" : editing ? "editing" : p.cancelled ? "cancelled" : p.url || p.done ? "done" : p.error ? "failed" : "ready";
+  const pushed = isPush(p.target === "preview" ? site?.preview : site?.publish);
+  const title = { running: p.step === "commit" ? "Committing…" : p.step === "push" ? "Pushing to origin…" : p.target === "preview" ? "Publishing a preview…" : "Publishing to production…", editing: "How should this site be published?", cancelled: "Publish cancelled", done: pushed ? "Pushed to GitHub" : p.target === "preview" ? "Preview is up" : "Published", failed: "Publish failed", ready: `Publish ${site?.name ?? ""}` }[phase];
   const cmdFor = (t: "preview" | "production") => (t === "preview" ? site?.preview : site?.publish);
   return (
     <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !p.running) setPublishOpen(false); }}>
@@ -292,7 +303,7 @@ export function PublishDialog() {
         {phase === "editing" && (
           <>
             <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito runs one command from the site folder for each target and shows you the result. Both are saved in <code>supasito.json</code>.</p>
-            <div className="presets">{PRESETS.map((x) => <button key={x.label} className={"btn sm" + (prod === x.production ? " primary" : "")} onClick={() => { setProd(x.production); setPrev(x.preview); }}>{x.label}</button>)}</div>
+            <div className="presets">{presetsFor(site).map((x) => <button key={x.label} className={"btn sm" + (prod === x.production ? " primary" : "")} onClick={() => { setProd(x.production); setPrev(x.preview); }}>{x.label}</button>)}</div>
             <div className="row2"><label>Production</label><input className="text-input" autoFocus placeholder="e.g. vercel deploy --prod --yes" value={prod} onChange={(e) => setProd(e.target.value)} /></div>
             <div className="row2"><label>Preview</label><input className="text-input" placeholder="optional, e.g. vercel deploy --yes" value={prev} onChange={(e) => setPrev(e.target.value)} /></div>
             <div className="foot">
@@ -316,7 +327,7 @@ export function PublishDialog() {
               <div className="opts">
                 <label className={canCommit ? "" : "muted"}><input type="checkbox" disabled={!canCommit} checked={canCommit && commit} onChange={(e) => setCommit(e.target.checked)} /> {canCommit ? `Commit ${changed} changed file${changed === 1 ? "" : "s"} first` : "Nothing to commit"}</label>
                 {canCommit && commit && <input className="text-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Commit message" />}
-                <label className={canPush && (commit || !canCommit) ? "" : "muted"} title={!canPush ? "No origin remote configured" : canCommit && !commit ? "Tick commit first: only committed changes can be pushed" : git.remote ?? ""}><input type="checkbox" disabled={!canPush || (canCommit && !commit)} checked={canPush && push && (commit || !canCommit)} onChange={(e) => setPush(e.target.checked)} /> {canPush ? `Push to origin (${git.remote?.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")})${canCommit && !commit ? " · needs the commit" : ""}` : "Push to origin (no remote yet)"}</label>
+                {isPush(cmdFor(target)) ? <label className="muted">Publishing is a push to GitHub{git.remote ? ` (${git.remote.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")})` : ""}</label> : <label className={canPush && (commit || !canCommit) ? "" : "muted"} title={!canPush ? "No origin remote configured" : canCommit && !commit ? "Tick commit first: only committed changes can be pushed" : git.remote ?? ""}><input type="checkbox" disabled={!canPush || (canCommit && !commit)} checked={canPush && push && (commit || !canCommit)} onChange={(e) => setPush(e.target.checked)} /> {canPush ? `Push to origin (${git.remote?.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")})${canCommit && !commit ? " · needs the commit" : ""}` : "Push to origin (no remote yet)"}</label>}
               </div>
             )}
             <div className="foot">
@@ -339,15 +350,58 @@ export function PublishDialog() {
           <>
             {p.log.length > 0 && <div className="log">{p.log.join("\n")}</div>}
             {p.url && <div className="url"><Check style={{ width: 14, height: 14, color: "var(--ok)", verticalAlign: -2 }} /> <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a></div>}
+            {phase === "done" && !p.url && <p style={{ margin: 0, color: "var(--ink-2)" }}>{pushed ? (p.target === "preview" ? "Pushed to the supasito-preview branch. If your host builds from GitHub, it makes a preview link from it in a minute or two; the link shows up on GitHub and in your host's dashboard." : "If your host builds from GitHub, the live site updates in a minute or two.") : "The command finished without printing a link."}</p>}
             {p.error && <div className="err">{p.error}</div>}
             {phase === "cancelled" && <p style={{ margin: 0, color: "var(--ink-2)" }}>The publish command was stopped. Nothing was confirmed as live; check your hosting dashboard if it had already started uploading.</p>}
             <div className="foot">
               <button className="btn ghost" onClick={() => setEditing(true)} style={{ marginRight: "auto" }}>Change commands</button>
               <button className="btn" onClick={() => setPublishOpen(false)}>Close</button>
-              {phase !== "done" && <button className="btn primary" onClick={go}>Try again</button>}
+              {phase !== "done" && (p.behind && site
+                ? <button className="btn primary" onClick={() => void mergeFromRemote(site.id)}>Ask Claude to bring them in</button>
+                : <button className="btn primary" onClick={go}>Try again</button>)}
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** The private settings a site expects from env files git never stores (PLAN §8e.11). Values go straight from these
+ *  fields to the file through the backend, never into a conversation. */
+export function EnvDialog() {
+  const e = useStore((s) => s.env);
+  const openEnv = useStore((s) => s.openEnv);
+  const saveEnv = useStore((s) => s.saveEnv);
+  const [values, setValues] = useState<Record<string, string>>({});
+  useEffect(() => { setValues(Object.fromEntries((e.needs?.keys ?? []).map((k) => [k.name, k.value ?? ""]))); }, [e.needs]);
+  if (!e.open) return null;
+  const close = () => { if (!e.saving) void openEnv(null); };
+  const filled = (e.needs?.keys ?? []).filter((k) => (values[k.name] ?? "").trim()).length;
+  const save = () => { if (filled && !e.saving) void saveEnv(Object.entries(values)); };
+  return (
+    <div className="backdrop" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) close(); }}>
+      <div className="modal env-modal" role="dialog" aria-modal="true" aria-label="Private settings">
+        <h2>Private settings for this site</h2>
+        {!e.needs && !e.error && <div className="add-line muted"><span className="spinner" /><span>Reading the example file…</span></div>}
+        {e.needs && <>
+          <p className="env-lead">The site's <code>{e.needs.example}</code> lists these. They're saved on this Mac in <code>{e.needs.file}</code>, which isn't uploaded to GitHub, and they don't go into the conversation. Leave any you don't have empty.</p>
+          <div className="env-keys">
+            {e.needs.keys.map((k, i) => (
+              <label key={k.name} className="env-key" htmlFor={`env-${k.name}`}>
+                <span className="env-name">{k.name}</span>
+                {k.hint && <span className="env-hint">{k.hint}</span>}
+                <input id={`env-${k.name}`} className="text-input" autoFocus={i === 0} autoComplete="off" spellCheck={false} value={values[k.name] ?? ""}
+                  onChange={(ev) => setValues({ ...values, [k.name]: ev.target.value })} onKeyDown={(ev) => { if (ev.key === "Enter") save(); }} />
+              </label>
+            ))}
+          </div>
+        </>}
+        {e.error && <div className="err">{e.error}</div>}
+        <div className="foot">
+          <button className="btn ghost" disabled={e.saving} onClick={close}>Cancel</button>
+          <button className="btn primary" disabled={!e.needs || e.saving || filled === 0} onClick={save}>{e.saving ? "Saving…" : "Save"}</button>
+        </div>
       </div>
     </div>
   );

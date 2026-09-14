@@ -15,6 +15,12 @@ export type Site = {
   favorite?: boolean;
   /** Last selected, ms since the epoch; 0 or missing for sites from before the switcher. */
   lastOpened?: number;
+  /** The repository this site was downloaded from (PLAN §8e.11); only such a site gets git push as its default Publish. */
+  clonedFrom?: string | null;
+  /** The remote's default branch, for Publish's git push. */
+  defaultBranch?: string | null;
+  /** Keys an example env file lists that no real env file sets. */
+  envMissing?: string[];
 };
 
 export type SessionInfo = {
@@ -104,7 +110,12 @@ export type RepoRef = { host: string; owner: string; repo: string; cloneUrl: str
 /** GitHub's public card for a repository; absent for a private one, another host, or when the API did not answer. */
 export type RepoInfo = { description?: string | null; private?: boolean | null; sizeKb?: number | null; defaultBranch?: string | null; language?: string | null };
 /** What the dialog knows before anything downloads: the card, whether you already have it, and where a clone would go. */
-export type RepoLookup = { repo: RepoRef; info?: RepoInfo | null; existingSiteId?: string | null; existingPath?: string | null; dest?: string | null };
+export type RepoLookup = { repo: RepoRef; info?: RepoInfo | null; existingSiteId?: string | null; existingPath?: string | null; existingConversations?: number; dest?: string | null };
+/** Where a site stands against its remote (remote.rs `SyncStatus`). `behind` is how many commits came in for "updated". */
+export type SyncStatus = { state: "none" | "current" | "updated" | "behind" | "failed"; ahead: number; behind: number; branch?: string | null; files: string[]; depsChanged: boolean; detail?: string | null };
+/** A key an example env file lists and no real env file sets; `value` is the example's when it looks real. */
+export type EnvKey = { name: string; hint?: string | null; value?: string | null };
+export type EnvNeeds = { example: string; file: string; keys: EnvKey[] };
 export type CloneErrorKind = "private" | "missing" | "offline" | "ssh" | "branch" | "folder" | "disk" | "nogit" | "link" | "busy" | "cancelled" | "other";
 /** `detail` is git's own last line; `signIn` says this build can offer Sign in to GitHub. */
 export type CloneError = { kind: CloneErrorKind; detail?: string | null; signIn?: boolean };

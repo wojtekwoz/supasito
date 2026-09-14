@@ -47,11 +47,18 @@ pub struct Site {
     pub last_opened: u64,
     /// Sessions that continue another one on the other agent; `sessions::fold_chains` shows each chain as one row.
     pub continuations: Vec<Continuation>,
+    /// The repository this site was downloaded from by pasting a link (PLAN §8e.11); None for folders and New site.
+    /// Only such a site gets a git push as its default Publish: a push nobody chose would be a surprise.
+    pub cloned_from: Option<String>,
+    /// The remote's default branch (`origin/HEAD`), for Publish's git push. Re-detected, not the user's choice.
+    pub default_branch: Option<String>,
+    /// Keys an example env file lists that no real env file sets (remote.rs `env_needs`). Re-detected.
+    pub env_missing: Vec<String>,
 }
 
 impl Default for Site {
     fn default() -> Self {
-        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0, continuations: Vec::new() }
+        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0, continuations: Vec::new(), cloned_from: None, default_branch: None, env_missing: Vec::new() }
     }
 }
 
@@ -162,6 +169,16 @@ impl Site {
             Some("netlify") => Some("netlify deploy".into()),
             _ => None,
         });
+        self.default_branch = crate::remote::default_branch(root);
+        // A downloaded site with no host file publishes the way most sites on GitHub deploy: by pushing the default
+        // branch (production), or a branch of its own that Vercel, Netlify and Cloudflare build as a preview.
+        if self.cloned_from.is_some() {
+            if let Some(branch) = &self.default_branch {
+                if self.publish.is_none() { self.publish = Some(format!("git push origin HEAD:{branch}")); }
+                if self.preview.is_none() { self.preview = Some("git push --force origin HEAD:supasito-preview".into()); }
+            }
+        }
+        self.env_missing = crate::remote::env_needs(root, self.framework.as_deref()).map(|n| n.keys.into_iter().map(|k| k.name).collect()).unwrap_or_default();
         self.is_git = git_top.is_some();
         Ok(())
     }

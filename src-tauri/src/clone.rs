@@ -203,8 +203,11 @@ pub struct Lookup {
     pub info: Option<RepoInfo>,
     /// A site in the rail whose origin is this repository (and, for a `/tree/…` link, the same folder of it).
     pub existing_site_id: Option<String>,
-    /// A folder in the sites folder that already is this repository but is not in the rail.
+    /// A folder that already is this repository but is not in the rail: in the sites folder, or at the top of one of
+    /// the folders where code usually lives (remote.rs `CODE_FOLDERS`).
     pub existing_path: Option<String>,
+    /// Claude conversations for the site or folder you already have, so the dialog can say what opening it keeps.
+    pub existing_conversations: u32,
     /// Where a clone would go: `<parent>/<repo>`, or `-2`, `-3`… when that name is taken.
     pub dest: Option<String>,
 }
@@ -260,7 +263,15 @@ pub async fn lookup(input: &str, parent: Option<&Path>, sites: &[Site], path_env
         }
         dest = Some(free_dest(parent, &repo.repo).to_string_lossy().to_string());
     }
-    Some(Lookup { repo, info, existing_site_id, existing_path, dest })
+    if existing_site_id.is_none() && existing_path.is_none() {
+        if let Some(found) = crate::remote::find_local_copies(&key, &crate::remote::code_folders()).into_iter().next() {
+            let dir = match &repo.tree_path { Some(t) => existing_subdir(&found, t), None => found };
+            existing_path = Some(dir.to_string_lossy().to_string());
+        }
+    }
+    let existing_dir = existing_site_id.as_ref().and_then(|id| sites.iter().find(|s| &s.id == id)).map(|s| s.path.clone()).or_else(|| existing_path.clone());
+    let existing_conversations = existing_dir.map(|d| crate::remote::conversations(Path::new(&d))).unwrap_or(0);
+    Some(Lookup { repo, info, existing_site_id, existing_path, existing_conversations, dest })
 }
 
 // ---------- cloning ----------
@@ -388,7 +399,8 @@ async fn install(site: &Site, path_env: &str, slot: &SlotRef, on: OnProgress<'_>
 
 /// Link → a site on disk with its packages installed. Nothing is written until the remote has answered; a failure
 /// or Cancel after that removes the folder this call created, and never touches one that existed before.
-pub async fn clone_repo(input: &str, parent: &Path, path_env: &str, slot: SlotRef, on: impl Fn(Progress) + Send + Sync) -> Result<Site, CloneError> {
+/// `fresh` skips reusing a folder that already is this repository: "Download another copy" means a new `-2` folder.
+pub async fn clone_repo(input: &str, parent: &Path, path_env: &str, slot: SlotRef, fresh: bool, on: impl Fn(Progress) + Send + Sync) -> Result<Site, CloneError> {
     let on: OnProgress = &on;
     let repo = parse_repo_url(input).ok_or_else(|| CloneError::new("link", None))?;
     let git = match crate::toolchain::git(path_env).await { crate::toolchain::Tool { ok: true, path: Some(p), .. } => PathBuf::from(p), _ => return Err(CloneError::new("nogit", None)) };
@@ -417,7 +429,7 @@ pub async fn clone_repo(input: &str, parent: &Path, path_env: &str, slot: SlotRe
 
     std::fs::create_dir_all(parent).map_err(|e| CloneError::new("other", Some(e.to_string())))?;
     let named = parent.join(&repo.repo);
-    let same = named.join(".git").exists() && origin_key(&named, path_env).await.as_deref() == Some(repo.key().as_str());
+    let same = !fresh && named.join(".git").exists() && origin_key(&named, path_env).await.as_deref() == Some(repo.key().as_str());
     let dest = if same { named } else { free_dest(parent, &repo.repo) };
     let fail = |kind: &str, detail: Option<String>| { if !same { let _ = std::fs::remove_dir_all(&dest); } CloneError::new(kind, detail) };
     if !same {
@@ -657,15 +669,15 @@ mod tests {
         let env = crate::state::login_shell_path();
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let log = seen.clone();
-        let site = clone_repo("https://github.com/octocat/Hello-World", &parent, &env, SlotRef::default(), move |p| log.lock().unwrap().push(p.phase.to_string())).await.unwrap();
+        let site = clone_repo("https://github.com/octocat/Hello-World", &parent, &env, SlotRef::default(), false, move |p| log.lock().unwrap().push(p.phase.to_string())).await.unwrap();
         assert!(site.is_git && site.path.ends_with("Hello-World"), "{}", site.path);
         assert!(seen.lock().unwrap().iter().any(|p| p == "download"));
         // The same link again is the same folder, not Hello-World-2.
-        let again = clone_repo("github.com/octocat/Hello-World.git", &parent, &env, SlotRef::default(), |_| {}).await.unwrap();
+        let again = clone_repo("github.com/octocat/Hello-World.git", &parent, &env, SlotRef::default(), false, |_| {}).await.unwrap();
         assert_eq!(again.path, site.path);
         assert!(!parent.join("Hello-World-2").exists());
         // A repository that isn't there leaves nothing behind.
-        let err = clone_repo("https://github.com/octocat/does-not-exist-supasito", &parent, &env, SlotRef::default(), |_| {}).await.unwrap_err();
+        let err = clone_repo("https://github.com/octocat/does-not-exist-supasito", &parent, &env, SlotRef::default(), false, |_| {}).await.unwrap_err();
         assert!(matches!(err.kind.as_str(), "missing" | "private"), "{err:?}");
         assert!(!parent.join("does-not-exist-supasito").exists());
         let _ = std::fs::remove_dir_all(&parent);

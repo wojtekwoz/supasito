@@ -19,7 +19,8 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   `?stopDelay=<ms>` (dev-server start/kill timing; `window.__mock.devs` is the registry), `?context=full`, `?fast=on`,
   `?update=found|error` (a newer version announced / the check failing), `?clone=private|missing|offline|ssh|install|slow|exists`
   (how a pasted GitHub link fails or lands), `?sitesFolder=unset` (first run: the dialog says where sites live), `?signin=off`
-  (a build without a GitHub client id).
+  (a build without a GitHub client id), `?sync=updated|behind|failed` (what opening the first site finds against GitHub),
+  `?env=missing` (the first site lacks secrets its .env.example lists), `?copy=elsewhere` (a pasted link is already in ~/code).
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).
@@ -75,6 +76,11 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   (`.env.release`; debug builds also read it at run time) and without one the button is not offered. The UI is
   `AddSiteDialog` (Dialogs.tsx, one field for a name or a link); ⌘V with a link outside a text field opens it (App.tsx).
   Network test: `cargo test -- --ignored clone_public`.
+- `src-tauri/src/remote.rs` — continuing a site that lives on GitHub (PLAN §8e.11): `sync` (fetch, ahead/behind, fast-forward only
+  when nothing of the user's is in the way; tested against local bare repositories), `default_branch` from `origin/HEAD`
+  (a downloaded site, `Site.cloned_from`, publishes with `git push`), `env_needs`/`env_save` (secrets an example env file
+  lists, written straight to `.env.local` or `.env`, mode 600, gitignored), and `find_local_copies` over `CODE_FOLDERS`
+  (never `~/Documents`, `~/Desktop` or `~/Downloads`, which make macOS ask for permission).
 - `src-tauri/src/devserver.rs` — dev-server supervisor. A port counts as free only if it binds *and* refuses a
   connection (a wildcard listener passes a loopback bind on macOS), and as ready only when the listener is in our own
   process group. Readiness must stay dual-stack

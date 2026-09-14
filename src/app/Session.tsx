@@ -19,6 +19,8 @@ export function SessionPane() {
   const tools = useStore((s) => s.tools);
   const interrupt = useStore((s) => s.interrupt);
   const running = useStore((s) => (s.currentSessionId ? !!s.running[s.currentSessionId] : false));
+  const sync = useStore((s) => (s.currentSiteId ? s.sync[s.currentSiteId] : undefined));
+  const mergeFromRemote = useStore((s) => s.mergeFromRemote);
   // a draft that continues a conversation on the other agent is still that conversation
   const draftContinues = useStore((s) => (s.currentSessionId === DRAFT ? s.transcripts[DRAFT]?.overrides.continues ?? null : null));
   const shownId = currentSessionId === DRAFT ? draftContinues : currentSessionId;
@@ -81,6 +83,13 @@ export function SessionPane() {
           <Bubble />
           <span className={cx("status-dot", session?.busy && "busy")} style={session?.items.some((i) => i.kind === "permission" && i.status === "pending") ? { background: "var(--warn)" } : undefined} />
         </button>
+      )}
+      {/* GitHub has commits this copy can't fast-forward to (PLAN §8e.11): Claude merges them, the user approves. */}
+      {sync?.state === "behind" && !agentBlocked(tools) && !(full && panelMin) && (
+        <div className="sync-bar">
+          <span>GitHub has {sync.behind} change{sync.behind === 1 ? "" : "s"} this copy doesn't have{sync.ahead ? `, and this copy has ${sync.ahead} GitHub doesn't` : sync.detail === "local" ? ", and edits here are in the way" : ""}.</span>
+          <button className="btn sm" disabled={!!session?.busy} onClick={() => void mergeFromRemote(site.id)}>Bring them in</button>
+        </div>
       )}
       {agentBlocked(tools)
         ? <Setup />

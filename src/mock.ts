@@ -196,6 +196,17 @@ const MOCK_REPOS: Record<string, { description: string; sizeKb: number; language
 };
 let mockSignedIn = false, mockOfflineOnce = cloneSim === "offline", mockCloneCancelled = false, mockSignInCancelled = false;
 const mockCloneFail = (kind: string, detail: string | null = null) => ({ kind, detail, signIn: query.get("signin") !== "off" });
+// Continuing a site that lives on GitHub (PLAN §8e.11). `?sync=updated|behind|failed` is what opening the first site finds
+// (updated once, then current; behind until a Claude turn has run); `?env=missing` gives the first site an .env.example with
+// keys this Mac lacks; `?copy=elsewhere` makes a pasted link match a folder in ~/code that has conversations.
+const syncSim = query.get("sync");
+let mockSyncServed = false;
+const MOCK_ENV_KEYS = [
+  { name: "STRIPE_SECRET_KEY", hint: "Secret key from dashboard.stripe.com, Developers, API keys", value: null },
+  { name: "DATABASE_URL", hint: "Where the database lives", value: null },
+  { name: "NEXT_PUBLIC_SITE_URL", hint: null, value: "http://localhost:3000" },
+];
+if (query.get("env") === "missing" && mockSites[0]) mockSites[0].envMissing = MOCK_ENV_KEYS.map((k) => k.name);
 
 export function mockBackend(): Backend {
   if (mockUpdate === "found") setTimeout(() => emit("update://available", { ...MOCK_NEWER }), 2500);
@@ -229,9 +240,9 @@ export function mockBackend(): Backend {
       const key = `${repo.owner}/${repo.repo}`.toLowerCase();
       const card = MOCK_REPOS[key];
       const existing = cloneSim === "exists" || key === "you/clarityops" ? mockSites[0]?.id ?? null : null;
-      return { repo, info: card && cloneSim !== "private" ? { ...card, private: false, defaultBranch: "main" } : null, existingSiteId: existing, existingPath: null, dest: parent ? `${parent}/${repo.repo}` : null };
+      return { repo, info: card && cloneSim !== "private" ? { ...card, private: false, defaultBranch: "main" } : null, existingSiteId: existing, existingPath: !existing && query.get("copy") === "elsewhere" ? `/Users/you/code/${repo.repo}` : null, existingConversations: existing ? 6 : query.get("copy") === "elsewhere" ? 12 : 0, dest: parent ? `${parent}/${repo.repo}` : null };
     },
-    siteClone: async (input, parent) => {
+    siteClone: async (input, parent, fresh) => {
       const repo = parseRepoLink(input);
       if (!repo) throw mockCloneFail("link");
       mockCloneCancelled = false;
@@ -261,11 +272,32 @@ export function mockBackend(): Backend {
         await wait(500);
       }
       const sub = repo.treePath?.split("/").slice(1).join("/") ?? "";
-      const s: Site = { ...site, id: "site-" + Math.random().toString(36).slice(2), path: `${parent}/${repo.repo}${sub ? "/" + sub : ""}`, name: sub ? sub.split("/").pop()! : repo.repo, lastSessionId: null, favorite: false, needsInstall: cloneSim === "install", publish: null, preview: null };
+      const s: Site = { ...site, id: "site-" + Math.random().toString(36).slice(2), path: `${parent}/${repo.repo}${fresh ? "-2" : ""}${sub ? "/" + sub : ""}`, name: sub ? sub.split("/").pop()! : repo.repo, lastSessionId: null, favorite: false, needsInstall: cloneSim === "install", clonedFrom: repo.cloneUrl, defaultBranch: "main", publish: "git push origin HEAD:main", preview: "git push --force origin HEAD:supasito-preview", envMissing: [] };
       mockSites.push(s);
       return { ...s };
     },
     siteCloneCancel: async () => { mockCloneCancelled = true; },
+    siteSync: async (siteId, apply) => {
+      await wait(500);
+      const base = { ahead: 0, behind: 0, branch: "main", files: [] as string[], depsChanged: false, detail: null };
+      if (siteId !== mockSites[0]?.id || !syncSim) return { ...base, state: "current" as const };
+      if (syncSim === "failed") return { ...base, state: "failed" as const, detail: "offline" };
+      if (syncSim === "behind") return mockTurns > 0 ? { ...base, state: "current" as const } : { ...base, state: "behind" as const, ahead: 1, behind: 3 };
+      if (syncSim === "updated" && apply && !mockSyncServed) { mockSyncServed = true; return { ...base, state: "updated" as const, behind: 2, files: ["app/page.tsx", "package.json"], depsChanged: true }; }
+      return { ...base, state: "current" as const };
+    },
+    siteEnvNeeds: async (siteId) => {
+      const missing = siteOf(siteId).envMissing ?? [];
+      return missing.length ? { example: ".env.example", file: ".env.local", keys: MOCK_ENV_KEYS.filter((k) => missing.includes(k.name)) } : null;
+    },
+    siteEnvSave: async (siteId, _file, values) => {
+      await wait(300);
+      const s = siteOf(siteId);
+      const saved = new Set(values.filter(([, v]) => v.trim()).map(([k]) => k));
+      s.envMissing = (s.envMissing ?? []).filter((k) => !saved.has(k));
+      console.debug("[env save]", values.map(([k]) => k));
+      return { ...s };
+    },
     githubSignInStart: async () => {
       await wait(400);
       if (query.get("signin") === "off") throw "GitHub sign-in isn't available in this build.";

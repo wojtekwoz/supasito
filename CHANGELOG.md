@@ -477,7 +477,38 @@ the same link again reuses the folder, a missing repository leaves nothing), `pn
 event opens the dialog focused, progress reaches the bar, Cancel mid-download leaves no site, Escape does not close a
 running clone, Sign in → code → approve → the clone resumes.
 
-Not verified: anything in the Tauri window. ⌘V outside a text field in WKWebView, the clipboard fallback and its macOS
+Verified in the app the same day by the user: a public GitHub repository pasted into the dialog was cloned into the sites
+folder, opened, and its preview ran. Not verified in the app: ⌘V outside a text field in WKWebView, the clipboard fallback and its macOS
 Paste prompt, the dialog under the release CSP, and the device flow against GitHub (no OAuth App exists yet: create one
 with device flow enabled and put its client id in `.env.release`). A real private repository through the app, and an
 existing folder that is the repository but not in the rail (`existingPath`), are exercised only by code, not by hand.
+
+### Session 34 (2026-09-14) — continuing a site that lives on GitHub (PLAN §8e.11, branch `github-link`)
+The first real use of 8e was a user's own site, and the question was what happens after the download.
+- **remote.rs.** `sync` fetches with prompts off, counts ahead/behind against the upstream and fast-forwards only when
+  nothing of the user's is in the way (git itself refuses a fast-forward over uncommitted edits, which reads as "behind").
+  It runs in the background when a site is opened, never moves files under a running turn, and runs again as Publish's
+  first step. `default_branch` reads `origin/HEAD` from the file. `env_needs`/`env_save` compare an example env file with the
+  real ones and write values straight to `.env.local` or `.env`, replacing existing lines, mode 600, adding the file to
+  `.gitignore` when git would pick it up. `find_local_copies` reads `.git/config` in the top level of the usual code
+  folders; `conversations` counts Claude's transcripts for a folder.
+- **Sites.** `Site.cloned_from` is set when a link is cloned; only such a site defaults to `git push origin HEAD:<default>`
+  (production) and `git push --force origin HEAD:supasito-preview` (preview). Folders opened by hand keep asking.
+  `envMissing` and `defaultBranch` are re-detected with the rest.
+- **UI.** Opening a site that GitHub moved on: a toast, and when `package.json` or a lockfile changed, install and a dev-server
+  restart. When it cannot fast-forward, a bar above the conversation with "Bring them in", which starts a fresh
+  conversation asking Claude to commit local work, merge (never rebase), check the build and not push; the bar re-checks
+  when that turn ends. Publish checks GitHub first and stops with "Ask Claude to bring them in" rather than failing on a
+  rejected push; a `git push` command is the whole publish (no separate push step, no pull-request link shown as the site,
+  "Pushed to GitHub" with what happens next). The Git push preset uses the site's default branch. A bar over the preview
+  names missing private settings; its dialog shows each key with the example's comment, prefills real-looking values and
+  saves without the values touching a conversation. "You already have this one" names the folder, counts its
+  conversations and offers "Download another copy".
+
+Verified: `cargo test` (58 passed) including a sync test against two clones of a local bare repository (fast-forward with a
+dependency change, uncommitted edits left alone, ahead and behind, a branch with no upstream), env parsing and saving, and
+the folder scan; `tsc`, `test:ui`; in the mock, `?sync=behind` (bar, Publish stops, Claude hand-off, bar gone after the turn),
+`?sync=updated` (packages updated, preview restarted), `?env=missing` (bar, dialog, partial save leaves one key and the bar
+says so), `?copy=elsewhere` (folder and conversation count, another copy lands in `-2`, its Publish is a push).
+Not verified in the app: a real edit on github.com arriving on open, a real Vercel or Netlify build from the default push,
+and the secrets dialog against a real `.env.example`.

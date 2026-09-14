@@ -1,5 +1,5 @@
 import type {
-  Attachment, Catalogue, DeviceCode, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RepoLookup, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
+  Attachment, Catalogue, DeviceCode, DevInfo, EventName, GitStatus, EnvNeeds, PublishResult, PublishTarget, RepoLookup, RestoreReport, SyncStatus, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -15,7 +15,13 @@ export interface Backend {
   /** A pasted link (PLAN §8e): GitHub's card, whether you already have it, and where a clone would go in `parent`. Null when it is not a link. */
   siteRepoLookup(input: string, parent: string | null): Promise<RepoLookup | null>;
   /** Clone into `parent`, install packages and add the site; progress arrives as `clone://progress`. Rejects with a `CloneError`. */
-  siteClone(input: string, parent: string): Promise<Site>;
+  siteClone(input: string, parent: string, fresh?: boolean): Promise<Site>;
+  /** Fetch and compare with the upstream; `apply` fast-forwards when nothing of the user's is in the way (PLAN §8e.11). */
+  siteSync(siteId: string, apply: boolean): Promise<SyncStatus>;
+  /** The secrets an example env file lists that this Mac doesn't have; null when nothing is missing. */
+  siteEnvNeeds(siteId: string): Promise<EnvNeeds | null>;
+  /** Write values straight into the site's env file; resolves with the re-detected site. */
+  siteEnvSave(siteId: string, file: string, values: [string, string][]): Promise<Site>;
   siteCloneCancel(): Promise<void>;
   /** GitHub's device flow: a code to enter on github.com; `githubSignInWait` resolves with the account name once approved. */
   githubSignInStart(): Promise<DeviceCode>;
@@ -90,7 +96,10 @@ async function tauriBackend(): Promise<Backend> {
     sitesList: () => invoke("sites_list"),
     sitePickFolder: (title) => invoke("site_pick_folder", { title: title ?? null }),
     siteRepoLookup: (input, parent) => invoke("site_repo_lookup", { input, parent }),
-    siteClone: (input, parent) => invoke("site_clone", { input, parent }),
+    siteClone: (input, parent, fresh) => invoke("site_clone", { input, parent, fresh: fresh ?? false }),
+    siteSync: (siteId, apply) => invoke("site_sync", { siteId, apply }),
+    siteEnvNeeds: (siteId) => invoke("site_env_needs", { siteId }),
+    siteEnvSave: (siteId, file, values) => invoke("site_env_save", { siteId, file, values }),
     siteCloneCancel: () => invoke("site_clone_cancel"),
     githubSignInStart: () => invoke("github_sign_in_start"),
     githubSignInWait: () => invoke("github_sign_in_wait"),

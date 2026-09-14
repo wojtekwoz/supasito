@@ -3,6 +3,7 @@ mod capture;
 mod clone;
 mod devserver;
 mod models;
+mod remote;
 mod sites;
 #[cfg(debug_assertions)]
 mod smoke;
@@ -354,16 +355,19 @@ async fn site_repo_lookup(state: State<'_, AppState>, input: String, parent: Opt
 }
 
 #[tauri::command]
-async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, parent: String) -> Result<sites::Site, clone::CloneError> {
+async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, parent: String, fresh: Option<bool>) -> Result<sites::Site, clone::CloneError> {
     {
         let mut slot = state.clone_slot.lock().unwrap();
         if slot.running { return Err(clone::CloneError::new("busy", None)); }
         *slot = clone::Slot { running: true, ..Default::default() };
     }
     let emitter = app.clone();
-    let result = clone::clone_repo(&input, std::path::Path::new(&parent), &state.path_env, state.clone_slot.clone(), move |p| { let _ = emitter.emit("clone://progress", p); }).await;
+    let result = clone::clone_repo(&input, std::path::Path::new(&parent), &state.path_env, state.clone_slot.clone(), fresh.unwrap_or(false), move |p| { let _ = emitter.emit("clone://progress", p); }).await;
     state.clone_slot.lock().unwrap().running = false;
-    let site = result?;
+    let mut site = result?;
+    // Remembered so Publish can default to the push most GitHub-deployed sites expect (PLAN §8e.11).
+    site.cloned_from = clone::parse_repo_url(&input).map(|r| r.clone_url);
+    let _ = site.refresh();
     sites::mark_trusted(&site.path);
     let out = {
         let mut p = state.persisted.lock().unwrap();
@@ -373,6 +377,35 @@ async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, p
         }
     };
     state.save().map_err(|e| clone::CloneError::new("other", Some(e)))?;
+    Ok(out)
+}
+
+// ---------- continuing a site that lives on GitHub (PLAN §8e.11; remote.rs) ----------
+
+/// Fetch and compare with the upstream; `apply` fast-forwards when nothing of the user's is in the way.
+#[tauri::command]
+async fn site_sync(state: State<'_, AppState>, site_id: String, apply: bool) -> Result<remote::SyncStatus, String> {
+    let site = state.site(&site_id)?;
+    Ok(remote::sync(&site.path, &state.path_env, apply).await)
+}
+
+#[tauri::command]
+fn site_env_needs(state: State<'_, AppState>, site_id: String) -> Result<Option<remote::EnvNeeds>, String> {
+    let site = state.site(&site_id)?;
+    Ok(remote::env_needs(std::path::Path::new(&site.path), site.framework.as_deref()))
+}
+
+/// Values go from the dialog straight to the env file; they never pass through a conversation.
+#[tauri::command]
+async fn site_env_save(state: State<'_, AppState>, site_id: String, file: String, values: Vec<(String, String)>) -> Result<sites::Site, String> {
+    let site = state.site(&site_id)?;
+    remote::env_save(std::path::Path::new(&site.path), &file, &values, &state.path_env).await?;
+    let mut p = state.persisted.lock().unwrap();
+    let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+    s.refresh()?;
+    let out = s.clone();
+    drop(p);
+    state.save()?;
     Ok(out)
 }
 
@@ -708,7 +741,7 @@ pub fn run() {
             settings_get, settings_set, toolchain_check, models_list,
             updates::update_check, updates::update_install, updates::update_dismiss, updates::app_version,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
-            site_repo_lookup, site_clone, site_clone_cancel, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
+            site_repo_lookup, site_clone, site_clone_cancel, site_sync, site_env_needs, site_env_save, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,

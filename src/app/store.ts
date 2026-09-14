@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, Catalogue, ClaudeStatus, CloneError, CloneProgress, DeviceCode, DevInfo, GitStatus, PermissionRequest, PublishTarget, RepoLookup, RepoRef, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
+import type { Attachment, Catalogue, ClaudeStatus, CloneError, CloneProgress, DeviceCode, DevInfo, EnvNeeds, GitStatus, PermissionRequest, PublishTarget, RepoLookup, RepoRef, Selection, SessionInfo, SessionOverrides, Settings, Site, SyncStatus, Toolchain, UpdateInfo } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, concatSegments, emptySession, expirePermissions, handoffItem, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type Segment, type SessionState } from "../agent/transcript";
 import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
 import { BUILTIN_MODELS, isCodexModel, mergeModels, setModels, type ModelOption } from "../models";
@@ -16,6 +16,13 @@ export const SETUP_PREVIEW_PROMPT = `Supasito shows this site in a live preview 
 2. Give the project a "dev" script in package.json that serves the site locally with live reload. For plain HTML use Vite (npm install -D vite, script "dev": "vite"). Supasito runs the script and reads the address the server prints, so a script that picks its own port is fine; to let Supasito choose the port instead, write supasito.json with {"dev": "<command> {port}"} — {port} is replaced at start.
 3. Install the dependencies so node_modules exists, and add node_modules to .gitignore if this is a git repository.
 4. Reply with one line saying what you set up.`;
+
+/** Sent by "Bring them in" when the remote has commits this copy cannot fast-forward to (PLAN §8e.11). */
+export const MERGE_PROMPT = `This site's folder is a copy of a git repository, and its remote (GitHub) has changes this copy doesn't have yet. Bring them in without losing anything:
+1. Run git status and git fetch. If there are uncommitted changes, commit them first with a short message that says what they are.
+2. Run git pull --no-rebase (a merge, never a rebase). Resolve any conflict so both sides' intent survives; where that isn't possible, keep the remote's version and tell me what of mine was dropped.
+3. If the project has a build or type-check script, run it and fix what the merge broke.
+4. Don't push. Reply with one line saying what came in and whether anything conflicted.`;
 
 /** Sent when the preview exists on paper but does not work: the install failed, or the dev command errors out. */
 export const fixPreviewPrompt = (problem: string, log: string) => `Supasito shows this site in a live preview by running its dev server, and that is not working right now: ${problem}
@@ -44,7 +51,10 @@ function startFreshSession(get: () => Store) {
 
 export type Device = "desktop" | "tablet" | "phone";
 
-type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy" };
+/** `done`: the command succeeded (a git push has no URL to show); `behind`: Publish stopped because GitHub has newer changes. */
+type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy"; done: boolean; behind: boolean };
+/** The private settings dialog: secrets an example env file lists that this Mac lacks. */
+type EnvState = { open: boolean; siteId: string | null; needs: EnvNeeds | null; saving: boolean; error: string | null };
 type DiffState = { open: boolean; loading: boolean; files: string[]; text: string; error: string | null };
 type RulesState = { open: boolean; loading: boolean; saving: boolean; text: string; error: string | null };
 /** The preview card's "Get this site ready" (install) run. */
@@ -146,6 +156,11 @@ export type Store = {
   committedAt: number;
   newSite: NewSiteState;
   addSite: AddSiteState;
+  /** Where each site stands against its remote, from the last check (on open, before Publish, after a turn). */
+  sync: Record<string, SyncStatus>;
+  env: EnvState;
+  /** Sites whose "private settings" bar was dismissed with Not now, until the app restarts. */
+  envDismissed: Record<string, boolean>;
   /** Site id the "Remove from the sidebar?" dialog is asking about; null when closed. */
   removing: string | null;
   /** The "All sites" dropdown in the rail (⌘⇧O). */
@@ -178,7 +193,15 @@ export type Store = {
   chooseSitesFolder: () => Promise<void>;
   createSite: (name: string) => Promise<void>;
   /** Clone the link in the field (or `input`), install, add and select the site. */
-  cloneSite: (input?: string) => Promise<void>;
+  cloneSite: (input?: string, fresh?: boolean) => Promise<void>;
+  /** Fetch and compare with GitHub; `apply` fast-forwards when nothing of the user's is in the way. */
+  syncSite: (siteId: string, apply?: boolean) => Promise<void>;
+  /** A fresh conversation asking Claude to merge the remote's changes. */
+  mergeFromRemote: (siteId: string) => Promise<void>;
+  /** Opens the private settings dialog for a site, or closes it (null). */
+  openEnv: (siteId: string | null) => Promise<void>;
+  saveEnv: (values: [string, string][]) => Promise<void>;
+  dismissEnv: (siteId: string) => void;
   cancelClone: () => Promise<void>;
   /** "You already have this one": select that site, or add the folder that already is the repository. */
   openExistingSite: () => Promise<void>;
@@ -374,12 +397,15 @@ export const useStore = create<Store>((set, get) => ({
   previewNonce: 0,
   navigateRequest: null,
   previewRect: null,
-  publish: { open: false, running: false, log: [], url: null, error: null, cancelled: false, target: "production", step: "" },
+  publish: { open: false, running: false, log: [], url: null, error: null, cancelled: false, target: "production", step: "", done: false, behind: false },
   diff: { open: false, loading: false, files: [], text: "", error: null },
   rules: { open: false, loading: false, saving: false, text: "", error: null },
   committedAt: 0,
   newSite: { running: false, log: [], error: null },
   addSite: emptyAddSite({}),
+  sync: {},
+  env: { open: false, siteId: null, needs: null, saving: false, error: null },
+  envDismissed: {},
   removing: null,
   siteMenuOpen: false,
   toast: null,
@@ -440,6 +466,8 @@ export const useStore = create<Store>((set, get) => ({
           // A turn may have made the site previewable (the setup task, or an install Claude ran): look again.
           const site = siteId ? get().sites.find((s) => s.id === siteId) : undefined;
           if (site && (!site.dev || site.needsInstall)) void get().redetectSite(site.id);
+          // "Bring them in" ran, or anything else that may have pulled: check again so the bar reflects it
+          if (site && get().sync[site.id]?.state === "behind") void get().syncSite(site.id, false);
           get().syncBadge();
           if (!document.hasFocus()) void api.requestAttention().catch(() => {});
           // A sign-out mid-session (token expired, `claude auth logout`) shows up as an auth error; re-check so the checklist takes over.
@@ -546,6 +574,7 @@ export const useStore = create<Store>((set, get) => ({
     if (modelsStale(get().catalogue)) void get().refreshModels(true); // after the list, so the two never share the server at once
     if (devInfo) set({ dev: { ...get().dev, [id]: devInfo } });
     void get().refreshGit(id);
+    void get().syncSite(id, true);
     // the last session may be the hidden head of a chain now: its row is the tail
     const lastId = site.lastSessionId;
     const last = lastId ? (sessions.find((s) => s.id === lastId) ?? sessions.find((s) => s.chain?.some((c) => c.id === lastId)))?.id ?? sessions[0]?.id : sessions[0]?.id;
@@ -655,7 +684,7 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  async cloneSite(input) {
+  async cloneSite(input, fresh) {
     const a = get().addSite;
     const value = input ?? a.value;
     const repo = parseRepoLink(value);
@@ -663,7 +692,7 @@ export const useStore = create<Store>((set, get) => ({
     await rememberSitesFolder(get, set);
     set({ addSite: { ...get().addSite, value, repo, running: "clone", progress: { phase: "check" }, log: [], error: null, note: null, signIn: null } });
     try {
-      const site = await api.siteClone(value, a.folder);
+      const site = await api.siteClone(value, a.folder, fresh);
       set({ sites: [site, ...get().sites.filter((s) => s.id !== site.id)], addSite: emptyAddSite(get().settings) });
       get().showToast(`Added ${site.name}.`);
       await get().selectSite(site.id);
@@ -890,6 +919,64 @@ export const useStore = create<Store>((set, get) => ({
     startFreshSession(get);
     await get().send(fixPreviewPrompt(problem, log));
   },
+  async syncSite(siteId, apply = true) {
+    const site = get().sites.find((s) => s.id === siteId);
+    if (!site?.isGit) return;
+    // never move files under a turn that is running on this site
+    const r = await api.siteSync(siteId, apply && !siteBusy(get(), siteId)).catch(() => null);
+    if (!r) return;
+    set({ sync: { ...get().sync, [siteId]: r } });
+    if (r.state !== "updated") return;
+    get().showToast(`Brought in ${r.behind} change${r.behind === 1 ? "" : "s"} from GitHub.`);
+    void get().refreshGit(siteId);
+    try {
+      const fresh = await api.siteRefresh(siteId);
+      set({ sites: get().sites.map((s) => (s.id === siteId ? fresh : s)) });
+    } catch { /* the old detection stays */ }
+    if (!r.depsChanged || get().currentSiteId !== siteId) return;
+    get().showToast("Packages changed on GitHub. Updating them…");
+    try {
+      const installed = await api.siteInstall(siteId);
+      set({ sites: get().sites.map((s) => (s.id === siteId ? installed : s)) });
+      await get().restartDev(siteId);
+      get().showToast("Packages updated. The preview restarted.");
+    } catch (e) {
+      get().showToast(`Couldn't update the packages: ${e}`);
+    }
+  },
+  async mergeFromRemote(siteId) {
+    if (get().currentSiteId !== siteId) return;
+    set({ publish: { ...get().publish, open: false } });
+    startFreshSession(get);
+    await get().send(MERGE_PROMPT);
+  },
+  async openEnv(siteId) {
+    if (!siteId) { set({ env: { open: false, siteId: null, needs: null, saving: false, error: null } }); return; }
+    set({ env: { open: true, siteId, needs: null, saving: false, error: null } });
+    try {
+      const needs = await api.siteEnvNeeds(siteId);
+      if (get().env.siteId === siteId) set({ env: { ...get().env, needs, error: needs ? null : "Nothing is missing any more." } });
+    } catch (e) {
+      set({ env: { ...get().env, error: String(e) } });
+    }
+  },
+  async saveEnv(values) {
+    const { siteId, needs } = get().env;
+    if (!siteId || !needs) return;
+    set({ env: { ...get().env, saving: true, error: null } });
+    try {
+      const site = await api.siteEnvSave(siteId, needs.file, values);
+      set({ sites: get().sites.map((s) => (s.id === siteId ? site : s)), env: { open: false, siteId: null, needs: null, saving: false, error: null } });
+      const d = get().dev[siteId];
+      const running = !!d && (d.status === "ready" || d.status === "starting" || d.status === "error");
+      if (running) await get().restartDev(siteId);
+      const left = site.envMissing?.length ?? 0;
+      get().showToast(`Saved to ${needs.file}.${running ? " The preview restarted with them." : ""}${left ? ` ${left} still missing.` : ""}`);
+    } catch (e) {
+      set({ env: { ...get().env, saving: false, error: String(e) } });
+    }
+  },
+  dismissEnv(siteId) { set({ envDismissed: { ...get().envDismissed, [siteId]: true } }); },
   async refreshGit(siteId) {
     try { const g = await api.siteGitStatus(siteId); set({ git: { ...get().git, [siteId]: g } }); } catch { /* ignore */ }
   },
@@ -1084,7 +1171,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   openPublish() {
-    set({ publish: { open: true, running: false, log: [], url: null, error: null, cancelled: false, target: get().publish.target, step: "" } });
+    set({ publish: { open: true, running: false, log: [], url: null, error: null, cancelled: false, target: get().publish.target, step: "", done: false, behind: false } });
   },
   async runPublish(target, opts) {
     const siteId = get().currentSiteId;
@@ -1092,8 +1179,10 @@ export const useStore = create<Store>((set, get) => ({
     const site = get().sites.find((s) => s.id === siteId);
     const cmd = target === "preview" ? site?.preview : site?.publish;
     if (!cmd) { get().openPublish(); return; }
+    // A command that is itself a push (a downloaded site's default, the Git push preset) is the whole publish.
+    const pushCmd = /^\s*git\s+push\b/.test(cmd);
     const log: string[] = [];
-    set({ publish: { open: true, running: true, log, url: null, error: null, cancelled: false, target, step: opts.commit ? "commit" : "deploy" } });
+    set({ publish: { open: true, running: true, log, url: null, error: null, cancelled: false, target, step: opts.commit ? "commit" : "deploy", done: false, behind: false } });
     const push = (line: string) => set({ publish: { ...get().publish, log: [...get().publish.log, line] } });
     const stopIfCancelled = () => {
       if (!get().publish.cancelled) return false;
@@ -1102,6 +1191,21 @@ export const useStore = create<Store>((set, get) => ({
       return true;
     };
     try {
+      // Bring in what GitHub has first, so publishing neither fails on a rejected push nor overwrites it (PLAN §8e.11).
+      if (get().git[siteId]?.remote) {
+        push("Checking GitHub for newer changes…");
+        const r = await api.siteSync(siteId, true).catch(() => null);
+        if (r) set({ sync: { ...get().sync, [siteId]: r } });
+        if (r?.state === "updated") { push(`Brought in ${r.behind} change${r.behind === 1 ? "" : "s"} from GitHub.`); void get().refreshGit(siteId); }
+        else if (r?.state === "current") push("Up to date with GitHub.");
+        else if (r?.state === "failed") push("Couldn't reach GitHub to check for newer changes. Publishing anyway.");
+        else if (r?.state === "behind") {
+          push(`GitHub has ${r.behind} change${r.behind === 1 ? "" : "s"} this copy doesn't have${r.ahead ? `, and this copy has ${r.ahead} GitHub doesn't` : ""}.`);
+          set({ publish: { ...get().publish, running: false, step: "", behind: true, error: "GitHub has newer changes than this copy. Bring them in first, so publishing doesn't overwrite them." } });
+          return;
+        }
+        if (stopIfCancelled()) return;
+      }
       if (opts.commit) {
         push(`$ git commit -m ${JSON.stringify(opts.message.trim() || "Update site")}`);
         const g = await api.siteGitCommit(siteId, opts.message.trim() || "Update site");
@@ -1109,7 +1213,7 @@ export const useStore = create<Store>((set, get) => ({
         push("Committed.");
         if (stopIfCancelled()) return;
       }
-      if (opts.push) {
+      if (opts.push && !pushCmd) {
         set({ publish: { ...get().publish, step: "push" } });
         push("$ git push -u origin HEAD");
         const out = await api.siteGitPush(siteId);
@@ -1117,11 +1221,12 @@ export const useStore = create<Store>((set, get) => ({
         if (stopIfCancelled()) return;
       }
       if (stopIfCancelled()) return;
-      set({ publish: { ...get().publish, step: "deploy" } });
+      set({ publish: { ...get().publish, step: pushCmd ? "push" : "deploy" } });
       push(`$ ${cmd}`);
       const r = await api.publishRun(siteId, target);
       const cancelled = get().publish.cancelled;
-      set({ publish: { ...get().publish, running: false, step: "", url: cancelled ? null : r.url ?? null, error: cancelled || r.ok ? null : publishFailure(cmd, r.code, get().publish.log) } });
+      // git push prints GitHub's "create a pull request" link, which is not the site
+      set({ publish: { ...get().publish, running: false, step: "", done: !cancelled && r.ok, url: cancelled || pushCmd ? null : r.url ?? null, error: cancelled || r.ok ? null : publishFailure(cmd, r.code, get().publish.log) } });
       void get().refreshGit(siteId);
     } catch (e) {
       set({ publish: { ...get().publish, running: false, step: "", error: String(e) } });

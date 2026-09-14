@@ -464,6 +464,213 @@ A list of your GitHub repositories to pick from, a branch picker, forking, "Open
 `supasito://` link handler, GitLab- or Bitbucket-specific previews, Git LFS setup, and cloning into an existing
 non-empty folder. Each is a surface; none gets a person from a link to a preview any faster.
 
+### 8e.10 After the first review (planned 2026-09-14)
+
+**Where it stands.** Built on `github-link` (CHANGELOG session 33). On 2026-09-14 the app cloned a public GitHub repository
+into the sites folder, opened it and showed the preview. A review of the commit, mine plus an independent reviewer, found the
+problems below. None blocks that happy path; several break the next most common ones. Two items are decisions, taken here
+with a recommended answer so the work can proceed; change them before building if you disagree.
+
+**Order.** A, then B, then C. A is what a non-technical person hits in the first week; B needs the OAuth App to verify; C is
+polish and limits. Each item names its test. Estimate: A one day, B half a day plus the OAuth App, C half a day.
+
+#### A. Breaks common cases
+
+1. **Install with the lockfile the repository actually has.** Clone installs run with `CI=1`, which makes pnpm and Yarn
+   Berry refuse a lockfile that is out of step with `package.json` (reproduced: `ERR_PNPM_OUTDATED_LOCKFILE`). Pass what New
+   site already passes: `pnpm install --no-frozen-lockfile`, `yarn install --no-immutable` for Berry (plain `yarn install`
+   for Classic), `bun install`, `npm install`. Keep `CI=1` for everything else it does (no prompts, no progress spinners).
+   *Test:* a scratch repo with a stale pnpm lockfile installs, in the ignored clone test.
+
+2. **Links to a tag or a commit.** "Browse files" and release pages link `/tree/<sha>` and `/tree/v1.2.0`; only branch
+   names are matched today, so both dead-end on "That branch isn't in the repository". Resolve the first part of the path
+   against heads, then tags (`git ls-remote --heads --tags`), then a 7–40 character hex commit id. A branch is checked out
+   as today. A tag or a commit clones the default branch and opens the same folder in it; the card says "Opens the current
+   version on main, not the older one this link points at", because a detached checkout would break commit, Undo and Publish.
+   *Test:* `resolve_tree` table gains tags and ids; mock `?clone=tag`.
+
+3. **Names that look like domains.** "bakery.com" and "www.bakery.com" are refused as web addresses, and people name sites
+   after their domain. Treat input as an address only when it has a scheme (`://`), starts with `git@`, or has a `/` after
+   something host-shaped. Everything else is a name. *Test:* repo.test.ts rows for both.
+
+4. **One slug, and a free folder for New site too.** The dialog shows `sourdough-co` while Rust creates `sourdough---co`,
+   and a taken name fails with "already exists" instead of `-2`. Collapse runs of separators in `create_from_starter`,
+   pick the folder with `free_dest`, and have the dialog ask the backend for the folder (`site_dest(parent, name)`,
+   debounced like the lookup) instead of computing it. *Test:* a Rust test for the slug; the dialog line equals the created
+   path in the mock.
+
+5. **Cancel stops the step it lands in.** Cancel only kills a process that is already running, so pressed between the
+   download and the install, or just before git starts, the next step runs to the end. Check `cancelled` and spawn under the
+   same lock, store the pid before releasing it, and check again before each step. *Test:* a unit test that cancels between
+   steps with a fake spawner; mock Cancel at 100% of the download.
+
+6. **A half-finished clone never looks finished.** Sleep, a crash or quitting mid-clone leaves a folder whose origin matches,
+   and the next paste offers "Open it" on it. Clone into `<dest>.supasito-partial`, rename to `<dest>` only after git exits
+   0, and remove a stale partial of the same name before starting. Kill the clone slot's process group in the
+   `ExitRequested` handler with the agents and dev servers. *Test:* the ignored clone test kills git mid-download and
+   asserts no `<dest>` and no partial after the next run.
+
+7. **Monorepo folders that install at the root.** npm and Yarn workspaces put packages at the workspace root, so
+   `apps/web/node_modules` never appears, the site still "needs install" and the preview never starts. Count a site as
+   installed when `node_modules` exists at the site or at its workspace root (the nearest `package.json` with `workspaces`,
+   or `pnpm-workspace.yaml`), and run the install at that root. When the repository names a manager that is missing
+   (`packageManager`, a pnpm, Yarn or Bun lockfile), say which one instead of falling back to npm, which fails on
+   `workspace:` dependencies; use `corepack <pm>` when Corepack is on the PATH. *Test:* detection tests with a hoisted npm
+   workspace and a missing-manager fixture.
+
+#### B. Private repositories and sign-in
+
+8. **Sign-in that can always be started again.** After an expired or declined code the backend forgets the code while the
+   dialog keeps showing it, and a quick Cancel-then-restart lets the old poll run into the new attempt. Give each start a
+   generation: `github_sign_in_start` returns `{ id, code }`, every wait and cancel names that id, and a stale wait's result
+   is dropped. On expiry or refusal the dialog replaces the code with "Get a new code". *Test:* store test for expiry and
+   restart; mock `?signin=expire`.
+
+9. **Send what GitHub documents.** The device-flow requests send JSON; GitHub documents form fields, and a fake client id
+   could not tell the two apart. Send `application/x-www-form-urlencoded`. *Test:* only a real OAuth App can confirm this;
+   it is the first thing to run once one exists.
+
+10. **Credentials stay where they were.** Adding the Keychain helper next to the user's own makes git save a successful
+    login from another helper into the Keychain as well, which is how a second, stale github.com entry appears. Clone with
+    the user's git configuration untouched; after Sign in to GitHub, clone once with an isolated helper list (only the
+    Keychain) and the account in the URL (`https://<login>@github.com/…`) so git picks that entry and no other. *Test:* a
+    unit test on the argument lists; a real private repository once the OAuth App exists.
+
+11. **A wrong account is not a typo.** GitHub answers "Repository not found" to an account that cannot see a private
+    repository, so the dialog blames the link and never offers sign-in. For github.com, when the public API also does not
+    know the repository, say "GitHub can't find this repository, or it's private and the account on this Mac can't see it"
+    and offer Sign in to GitHub next to Edit link. When the clone still fails right after a sign-in, say that an
+    organisation may need to approve Supasito and link to the account's authorised-apps page. *Test:* mock `?clone=account`.
+
+#### C. Messages, limits and polish
+
+12. **Messages that name the real cause.** An unknown SSH host key gets its own kind ("This Mac hasn't connected to GitHub
+    over SSH before") with the web-link button. A timeout with no network error, which is what an unanswered macOS Keychain
+    prompt looks like, says "GitHub didn't answer. If your Mac asked about Keychain access, allow it and try again" instead
+    of "offline". *Test:* `classify` rows.
+
+13. **The card resolves what the clone will do.** For a `/tree/…` link the lookup runs the same heads-and-tags resolution
+    as the clone, so `feature/x/apps/web` reads "the apps/web folder, on branch feature/x". If the remote does not answer
+    (private, offline) the card says "a folder of this repository" rather than guessing. The lookup also recognises a site
+    you already have at the repository root from a `/tree/main` link. *Test:* lookup tests with a fake heads list.
+
+14. **⌘V without a surprise prompt.** The fallback reads the clipboard whenever WebKit sends no paste event, which may show
+    macOS's Paste prompt on a stray ⌘V. First, a one-minute check in the app: with nothing focused, does ⌘V with a link
+    open the dialog, and does a prompt ever appear? If the paste event arrives, delete the fallback. If it does not, replace
+    it with the native Edit → Paste menu item reading the clipboard through Tauri's clipboard plugin, only while no text field
+    has focus, which shows no prompt.
+
+15. **Submodules, Git LFS and a quiet start.** Clone with `--recurse-submodules`, so a Hugo theme arrives; the bar says
+    "Downloading parts…" while submodules fetch. When `.gitattributes` uses `filter=lfs` and `git-lfs` is missing, finish
+    the clone and show one line with the fix (`brew install git-lfs`, then Try again), since images would otherwise be
+    pointer files. While git prints only `remote:` lines, the label says "GitHub is preparing the download…" instead of
+    "Downloading… 0%". *Test:* classify and progress rows; an LFS fixture detection test.
+
+16. **Lookups for links, not keystrokes.** Typing a link letter by letter starts a GitHub API call for every partial name,
+    against an allowance of 60 an hour. Look up only after the input has been stable for 600 ms, cache answers per repository
+    for the dialog's lifetime, and never look up while the text is being typed rather than pasted unless it parses as a full
+    `owner/repo`. *Test:* store test counting lookups for a typed link.
+
+#### Decisions (recommended answers; building assumes them)
+
+- **D-e1 A pasted repository's own Claude settings.** Today pasting a link marks the folder trusted, so the repository's
+  `.claude/settings.json` hooks, permission rules and `.mcp.json` servers apply from the first message, with one grey line
+  of warning. Install scripts running is the point of the feature and stays. *Recommended:* trust silently when the
+  repository brings no hooks and no MCP servers, which is almost every site. When it brings either, do not write the trust;
+  the first session shows one card, "This project comes with its own Claude settings: 2 hooks that run commands, 1 MCP
+  server", with "Use them" and "Start without them". Only "Use them" writes the trust. This keeps D8 for the common case and
+  puts a real choice where the risk is.
+- **D-e2 Using one template twice.** Pasting the same starter repository again selects the first site instead of making a
+  new one, and a copy of someone else's repository still pushes to their origin on Publish. *Recommended:* when GitHub's API
+  says `is_template: true`, treat the link as "a new site from this template": always a fresh folder, a fresh git history
+  with one commit and no origin, and a card that says so. For ordinary repositories keep "You already have this one", with
+  a quiet "Download another copy" link under it.
+
+#### Acceptance
+
+- In the mock: every new switch (`tag`, `account`, `expire`, a stale lockfile) reaches its message and its button works;
+  the dialog's folder line always equals the created path.
+- In the app: a stale-lockfile pnpm repository, a `/tree/<tag>` link and a monorepo `/tree/main/apps/web` link each reach a
+  running preview; Cancel at the end of the download leaves nothing; quitting mid-clone and pasting again downloads again.
+- With the OAuth App: a private repository of yours, on a Mac whose Keychain holds a different GitHub account, clones after
+  one sign-in.
+
+**Out of scope here.** Choosing a branch in the dialog, forking, pulling updates from the origin later, and non-GitHub
+sign-in. Each is a surface, and none shortens the way from a link to a preview.
+
+### 8e.11 Continuing a site that lives on GitHub (planned and built 2026-09-14)
+
+**The gap.** A pasted link gives you a working copy of your own site, and 8e stops there. Continuing the work needs four
+things the app does not do: bring in changes made elsewhere (GitHub's web editor, another Mac, a teammate, a bot),
+publish the way the site is actually deployed (most sites deploy when their main branch is pushed), supply the secrets a
+site reads from `.env` files that git never stores, and avoid making a second copy of a site that is already on this Mac.
+Everything below lives in a new `remote.rs`, plus small changes to the store, the dialogs and the preview.
+
+#### 1. Stay in step with GitHub
+
+- **When.** Each time a site is opened, in the background, and again as the first step of Publish. Never while Claude is
+  working on that site, since files would change under it.
+- **How.** `git fetch` with prompts off, then ahead/behind against the branch's upstream. A site whose branch has no
+  upstream (a New site, a folder never pushed) is left alone.
+- **Behind and nothing of yours in the way:** `git merge --ff-only`. The files change, the dev server reloads, and a toast
+  says "Brought in 3 changes from GitHub." When `package.json` or a lockfile changed, packages are installed again and the
+  dev server restarts, with a toast for each step.
+- **Behind and both sides changed** (commits here, or uncommitted edits the update would overwrite): nothing is touched.
+  A bar above the conversation says "GitHub has 3 changes this copy doesn't have" with **Bring them in**, which starts a
+  fresh conversation asking Claude to commit local work, merge (never rebase), resolve conflicts keeping both sides'
+  intent, check the build and not push. You approve its steps like any other change. The bar re-checks when the turn ends.
+- **Publish.** Sync runs before the commit. If it cannot fast-forward, Publish stops before committing, says GitHub has
+  newer changes, and offers the same Claude hand-off, instead of failing later with git's "rejected" line.
+- **Offline or not signed in:** silent when opening; one line in the Publish log, and Publish carries on.
+
+#### 2. Publish the way the site deploys
+
+- **Defaults for a downloaded site** with no host file (`vercel.json`, `.vercel/`, `netlify.toml`, `wrangler.*`):
+  Production is `git push origin HEAD:<default branch>` and Preview is
+  `git push --force origin HEAD:supasito-preview`. Vercel, Netlify and Cloudflare build previews from pushed branches.
+  The default branch comes from `origin/HEAD`, which the clone records. Sites opened from a folder keep asking, as today:
+  a push they did not choose would be a surprise.
+- **The Git push preset** uses the site's default branch instead of always `main`.
+- **A push is the whole publish.** When the command is itself a `git push`, the separate "Push to origin" step is skipped,
+  and success says "Pushed to GitHub. If your host builds from GitHub, the site updates in a minute or two." A pushed
+  branch's "create a pull request" link is not shown as if it were the site.
+
+#### 3. Secrets the site expects
+
+- **Detect.** An example file (`.env.example`, `.env.local.example`, `.env.sample`, `.env.template`, `.env.dist`) whose
+  keys are not set, with a value, in `.env`, `.env.local`, `.env.development` or `.env.development.local`. Computed with the
+  site's other detection, so it costs a few file reads.
+- **Ask.** A bar at the top of the preview: "This site expects 3 private settings that aren't on this Mac" with **Add
+  them** and **Not now**. The dialog lists each key with the comment above it in the example as its hint, prefilled when
+  the example's value looks real (a local URL, a port) rather than a placeholder.
+- **Save.** Written by the backend straight to `.env.local` (Next, Vite, Astro, SvelteKit) or `.env` (Nuxt, anything
+  else, or whichever of the two already exists), existing lines replaced, others kept, file mode 600. If git would not
+  ignore that file, it is added to `.gitignore`. The dev server restarts. The values never pass through the conversation.
+
+#### 4. One copy per site
+
+- **Look where code usually lives.** The lookup also checks the top level of `~/Sites`, `~/Developer`, `~/Projects`,
+  `~/code`, `~/dev`, `~/src`, `~/repos`, `~/GitHub`, `~/git`, `~/workspace` and `~/www` for a folder whose `origin` is the
+  pasted repository, reading `.git/config` directly rather than starting git. `~/Documents`, `~/Desktop` and `~/Downloads`
+  are skipped: reading them makes macOS ask for permission. *Assumption:* those are your folders; say if your code lives
+  elsewhere and the list grows.
+- **Say what it has.** "You already have this one, in ~/code/bakery-site, with 12 earlier conversations", counted from
+  Claude's own project folder for that path. **Open it** keeps the history; **Download another copy** clones into a fresh
+  `-2` folder for someone who really wants two.
+
+#### Tests and acceptance
+
+- Rust, no network: two clones of a local bare repository. A push from one makes the other fast-forward; uncommitted
+  edits to the same file make it report "behind" and touch nothing; a local commit plus a remote one reports ahead and
+  behind. `.env` parsing, placeholders, saving (replace, quote, mode, `.gitignore`), `origin/HEAD`, `.git/config` origins,
+  and the folder scan against a temporary home.
+- Mock: `?sync=updated|behind|failed`, `?env=missing`, `?copy=elsewhere`, and a git-push Publish on a downloaded site.
+- In the app: edit a file on github.com, reopen the site, see the change arrive; publish a downloaded Vercel site with the
+  default and watch Vercel build it.
+
+**Not now.** Pulling while Claude works, choosing branches, showing the remote's commit list, secrets from a host's
+dashboard (`vercel env pull`), and warning that the Vercel preset creates a new project in an unlinked folder.
+
 ## 9. Roadmap
 
 Each version is a claim you can make honestly when it ends, not a feature list. The thesis holds:

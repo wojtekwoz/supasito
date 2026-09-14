@@ -3,7 +3,7 @@ import { useStore } from "./store";
 import { Rail } from "./Rail";
 import { SessionPane } from "./Session";
 import { Preview } from "./Preview";
-import { AddSiteDialog, DiffDialog, PublishDialog, RemoveSiteDialog, RulesDialog, SettingsDialog } from "./Dialogs";
+import { AddSiteDialog, DiffDialog, EnvDialog, PublishDialog, RemoveSiteDialog, RulesDialog, SettingsDialog } from "./Dialogs";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { cx } from "../util";
 import { parseRepoLink } from "../repo";
@@ -58,6 +58,7 @@ export default function App() {
         if (st.rules.open && !st.rules.saving) { st.closeRules(); return; }
         if (st.picking) { st.setPicking(false); return; }
         if (st.publish.open && !st.publish.running) { st.setPublishOpen(false); return; }
+        if (st.env.open && !st.env.saving) { void st.openEnv(null); return; }
         if (st.addSite.open && !st.addSite.running) { st.openAddSite(false); return; }
         if (st.removing) { st.askRemoveSite(null); return; }
         if (st.siteMenuOpen) { st.setSiteMenuOpen(false); return; }
@@ -115,6 +116,7 @@ export default function App() {
       <ErrorBoundary label="session"><SessionPane /></ErrorBoundary>
       <ErrorBoundary label="preview"><Preview /></ErrorBoundary>
       <AddSiteDialog />
+      <EnvDialog />
       <RemoveSiteDialog />
       <PublishDialog />
       <DiffDialog />

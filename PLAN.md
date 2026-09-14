@@ -788,6 +788,23 @@ move an item into that version's section when work starts. Section numbers point
 - §8e.10 D-e2: a template repository used twice becomes a fresh site each time.
 - §8e.11 "Not now": warn that the Vercel preset creates a new project in a folder not linked to one.
 
+**Codex (open since 0.2.0; CODEX.md has the background)**
+- *Slash commands in Codex sessions.* `codex.ts` accepts a `commands` list from `supasito/session`, but `codex.rs` never
+  sends one, so `/` suggests nothing in a GPT chat. Fill it from the app-server's `skills/list`.
+- *Fast mode's tooltip describes Claude* ("up to 2.5× faster, about twice the cost", "Claude Code returns to it by
+  itself"). For GPT models, Codex's `model/list` describes the `priority` tier as "1.5x speed, increased usage".
+- *"Always allow" overpromises on Codex.* Claude saves a rule every session inherits; Codex's `acceptForSession` lasts
+  for the thread only. Label it "Allow for this chat" on Codex sessions.
+- *A minimum Codex version* (CODEX.md §9). The checklist only checks that `codex` exists and is signed in; the
+  app-server protocol is experimental, so an incompatible CLI should get a plain "update Codex" line, not raw errors.
+- *Site rules in AGENTS.md* (CODEX.md §6). Codex gets the rules only because CLAUDE.md is appended to its developer
+  instructions, and a site that also has an AGENTS.md makes the two agents follow different rules. The rules dialog
+  should edit AGENTS.md, with CLAUDE.md pointing to it, and the starter should ship both.
+- *CLAUDE.md for this repo still describes a Claude-only app*: the opening ("the user's own Claude Code binary") and the
+  conventions ("spawn the user's `claude`", "transcripts stay in `~/.claude/projects`").
+- *Check live:* a deny with a reason reaching Codex as a mid-turn `turn/steer`, and a pasted screenshot in a GPT chat
+  (images go out as data URLs, which the schema allows but no real turn has confirmed).
+
 ## 10. Sources
 
 Webflow Source: https://webflow.com/source · HF0 / Dave Fontenot: https://tv.nyse.com/videos/hf0-ceo-dave-fontenot-on-a-unique-approach-to-vcs · Claude Code headless and control protocol: https://code.claude.com/docs/en/headless, https://code.claude.com/docs/en/agent-sdk/user-input · Tauri 2: https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html

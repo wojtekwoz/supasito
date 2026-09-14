@@ -718,6 +718,8 @@ the rail never shows you the seam between them.
 the one step before *say* a non-technical person cannot take. §8e has the plan: the New site field also takes a
 link, the app clones, installs and starts the preview, and private repositories use the credentials git already
 has before asking anyone to sign in. The claim: paste a link from the browser, see the site running.
+*Shipped 2026-09-14 as 0.2.2, together with 0.2.1's work, which was never released on its own; with it, §8e.11 (continuing a
+site from GitHub) and the §8e.10 fixes marked built. Sign in to GitHub is not in it: no OAuth App client id yet.*
 
 **v0.3 — survives other people's projects.** Everything so far assumes projects shaped like yours.
 Known holes, all from §7: a monorepo with the site at the repository root, Nuxt with a custom srcDir,

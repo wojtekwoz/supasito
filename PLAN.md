@@ -478,14 +478,7 @@ polish and limits. Each item names its test. Estimate: A one day, B half a day p
 
 *Built 2026-09-14 (CHANGELOG session 35): 1, 3 and 4, and decision D-e1 below. Still open: 2, 5, 6, 7, and all of B and C.*
 
-*Open after the 0.2.2 release (2026-09-14):*
-- *Sign in to GitHub needs a GitHub OAuth App with device flow enabled and its client id as `SUPASITO_GITHUB_CLIENT_ID`
-  in `.env.release`; until then B cannot be verified and the button stays hidden.*
-- *supasito.com does not serve `models.json`, so the app keeps its built-in Claude list (open since 0.2.1).*
-- *Unverified in the app: an installed copy updating itself, ⌘V with nothing focused, sync from a real github.com edit,
-  the private settings dialog on a real site, a git-push Publish building on a host, a pasted repository's hooks being
-  ignored until Use them, and the 0.2.1 conversation chain end to end.*
-- *D-e2 (a template used twice) is not built. Copies installed from the website's old 0.1.0 link cannot update.*
+*Everything still open when 0.2.2 shipped, from this section and §8e.11, is in the backlog, §9b.*
 
 1. **Install with the lockfile the repository actually has.** Clone installs run with `CI=1`, which makes pnpm and Yarn
    Berry refuse a lockfile that is out of step with `package.json` (reproduced: `ERR_PNPM_OUTDATED_LOCKFILE`). Pass what New
@@ -758,6 +751,42 @@ the WebView2 mixed-content policy, the all-frames injection, process groups and 
   in src/agent/codex.ts, no new pane. Whether it ships before v0.2 closes is the positioning call CODEX.md §2 names.
 - Everything on the §2 cut list: Inbox, Workflows, Agents, CMS, Brand, Campaigns, custom views,
   multiplayer, analytics. Still cut.
+
+## 9b. Backlog (later, not scheduled)
+
+What was still open when 0.2.2 shipped on 2026-09-14. Nothing here is scheduled; pick from it when a version needs it, and
+move an item into that version's section when work starts. Section numbers point at the full description.
+
+**Needs something outside the code first**
+- *Sign in to GitHub.* Create a GitHub OAuth App with device flow enabled and put its client id in `.env.release` as
+  `SUPASITO_GITHUB_CLIENT_ID`. Until then the button stays hidden and private repositories get the GitHub Desktop message.
+  With it: build and verify §8e.10 B8–B11 (a sign-in that can always be restarted, form-encoded requests, the user's git
+  credentials left untouched, a wrong account not reading as a typo).
+- *Serve `models.json` on supasito.com*, next to the `latest.json` route, so the Claude model list stops falling back to the
+  built-in one (open since 0.2.1, §8d.1).
+- *Copies installed from the old 0.1.0 download link cannot update.* Decide whether to tell those people (a line on the
+  site, a note in the next release) that they need to download once more.
+
+**Check in the installed app**
+- An installed copy updating itself: Settings → Updates → Check now offers the new version and restarts into it.
+- ⌘V with a link while nothing is focused, and whether macOS shows its Paste prompt (§8e.10 C14 decides what stays).
+- A change made on github.com arriving when the site is opened, and "Bring them in" when both sides changed (§8e.11 1).
+- The private settings dialog on a real site with a `.env.example` (§8e.11 3).
+- A downloaded site's git-push Publish building on Vercel or Netlify (§8e.11 2).
+- A pasted repository's hooks and MCP servers being ignored by Claude Code until "Use them" (§8e.10 D-e1).
+- The 0.2.1 conversation chain from Claude to Codex and back, end to end (§8d.2).
+
+**Build**
+- §8e.10 A2: links to a tag or a commit clone the default branch instead of dead-ending.
+- §8e.10 A5: Cancel stops the step it lands in, including between the download and the install.
+- §8e.10 A6: a half-finished clone never looks finished; quitting mid-clone stops git.
+- §8e.10 A7: monorepo folders whose packages install at the workspace root; name a missing package manager instead of
+  falling back to npm.
+- §8e.10 C12: messages that name the real cause (an unknown SSH host key, an unanswered Keychain prompt).
+- §8e.10 C13: the card resolves a `/tree/…` link the way the clone will, including branches with a slash.
+- §8e.10 C15: submodules, Git LFS files, and "GitHub is preparing the download" while the bar would sit at 0%.
+- §8e.10 D-e2: a template repository used twice becomes a fresh site each time.
+- §8e.11 "Not now": warn that the Vercel preset creates a new project in a folder not linked to one.
 
 ## 10. Sources
 

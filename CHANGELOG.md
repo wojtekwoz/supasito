@@ -78,6 +78,7 @@ From the first hands-on round: pointing worked on a real site. Fixed: the user b
 - **Per-session permission mode** via `control_request{subtype:"set_permission_mode"}` (smoke scenario `mode`); the header shows the current mode from `system/init.permissionMode`.
 
 ## Backlog (deferred on purpose)
+*Historical list from the first sessions. The live backlog is PLAN.md §9b.*
 - **Windows build.** Needs a Windows machine to test WebView2's mixed-content policy for the localhost iframe, the all-frames init script, process-group handling and the missing Dock APIs. Everything platform-specific already sits behind `#[cfg(target_os)]`.
 - **Second agent backend** (e.g. Codex CLI) behind the same `agent://` events.
 - **Session list caching** (`sessions.rs` re-reads JSONL heads on every site switch; fine until a site has hundreds of sessions).

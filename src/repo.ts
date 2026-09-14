@@ -63,5 +63,10 @@ export function parseRepoLink(input: string): RepoRef | null {
 /** The same repository over https: what "Use the web link instead" pastes for an SSH link. */
 export const webLinkOf = (r: RepoRef) => (r.host === "github.com" ? `https://github.com/${r.owner}/${r.repo}` : `https://${r.host}/${r.owner}/${r.repo}.git`);
 
-/** Something shaped like a web address that is not a repository, so the dialog can say so instead of offering it as a name. */
-export const looksLikeAddress = (s: string) => /:\/\/|^www\.|^git@|\.(com|org|io|dev|net|app|co)(\/|$)/i.test(s.trim());
+/** Something shaped like a web address that is not a repository, so the dialog can say so instead of offering it as a name:
+ *  a scheme, an SSH address, or a host followed by a path. A bare domain ("bakery.com") is a fine site name, and people often
+ *  name a site after its domain. */
+export const looksLikeAddress = (s: string) => {
+  const t = s.trim();
+  return /:\/\/|^git@/i.test(t) || /^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+\/\S/i.test(t);
+};

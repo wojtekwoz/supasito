@@ -476,6 +476,8 @@ polish and limits. Each item names its test. Estimate: A one day, B half a day p
 
 #### A. Breaks common cases
 
+*Built 2026-09-14 (CHANGELOG session 35): 1, 3 and 4, and decision D-e1 below. Still open: 2, 5, 6, 7, and all of B and C.*
+
 1. **Install with the lockfile the repository actually has.** Clone installs run with `CI=1`, which makes pnpm and Yarn
    Berry refuse a lockfile that is out of step with `package.json` (reproduced: `ERR_PNPM_OUTDATED_LOCKFILE`). Pass what New
    site already passes: `pnpm install --no-frozen-lockfile`, `yarn install --no-immutable` for Berry (plain `yarn install`

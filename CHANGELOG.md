@@ -512,3 +512,28 @@ the folder scan; `tsc`, `test:ui`; in the mock, `?sync=behind` (bar, Publish sto
 says so), `?copy=elsewhere` (folder and conversation count, another copy lands in `-2`, its Publish is a push).
 Not verified in the app: a real edit on github.com arriving on open, a real Vercel or Netlify build from the default push,
 and the secrets dialog against a real `.env.example`.
+
+### Session 35 (2026-09-14) — fixes before releasing the GitHub work (PLAN §8e.10 A1, A3, A4, D-e1)
+Found by the pre-release check of `github-link`: two regressions in New site and one install failure most real repositories
+would hit, plus the trust decision.
+- **Installs no longer refuse an out-of-date lockfile.** `sites::install_command` is the one place that names the install:
+  `pnpm install --no-frozen-lockfile`, `yarn install --no-immutable` for Yarn 2+ (a `.yarnrc.yml` or `packageManager:
+  yarn@2+` at or above the site), plain `yarn install` for Classic, `bun install`, `npm install --no-audit --no-fund`. Both
+  the clone's install and "Get this site ready" use it. Reproduced first: with `CI=1`, pnpm 10.33 exits 1 on a lockfile
+  listing a dependency package.json dropped, and exits 0 with the flag.
+- **"bakery.com" is a site name again.** `looksLikeAddress` counts only a scheme, `git@`, or a host followed by a path.
+- **New site creates the folder the dialog shows.** `sites::site_slug` collapses runs of separators (the dialog already
+  did, Rust wrote `sourdough---co`), a taken name gets `free_dest`'s `-2` instead of "already exists", and the dialog
+  asks the backend for that folder (`site_new_dest`).
+- **A pasted repository's own Claude settings wait for a yes (D-e1).** `sites::claude_extras` counts hook commands and an
+  `apiKeyHelper` in `.claude/settings.json`/`settings.local.json` and servers in `.mcp.json`, in the site folder and at its
+  repository's top. A clone that brings any is not marked trusted; `Site.claude_trust = "ask"` shows a bar above the
+  conversation, "This project brings its own Claude settings: 2 commands that run on their own and 1 MCP server", with
+  **Start without them** (remembered as declined) and **Use them** (`mark_trusted`). Permission rules alone, like the
+  starter's, count as nothing and the folder is trusted as before. Opening a folder by hand is unchanged (D8).
+
+Verified: `cargo test` (60 passed: slugs, install commands including a workspace-root Yarn Berry, extras counting across a
+site and its repository top, the starter bringing none), `tsc`, `test:ui` (bare domains are names); in the mock, New site
+with "bakery.com", "ClarityOps" (shows and would create `clarityops-2`) and "Sourdough & Co.", `?trust=ask` with both
+answers, and `?clone=hooks` arriving untrusted with the bar. Not verified in the app: Claude Code actually ignoring a
+pasted repository's hooks until Use them, which rests on the trust behaviour recorded in session 1.

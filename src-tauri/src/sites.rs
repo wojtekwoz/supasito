@@ -54,11 +54,24 @@ pub struct Site {
     pub default_branch: Option<String>,
     /// Keys an example env file lists that no real env file sets (remote.rs `env_needs`). Re-detected.
     pub env_missing: Vec<String>,
+    /// What the project's own Claude Code settings would run by themselves once the folder is trusted: hook commands
+    /// and MCP servers (`claude_extras`). Re-detected.
+    pub claude_extras: Option<ClaudeExtras>,
+    /// "ask": a pasted repository brought such settings, so the folder is not trusted until the user says so in the
+    /// session pane (PLAN §8e.10 D-e1); "declined": they said no. None: trusted the usual way. The user's answer, kept.
+    pub claude_trust: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClaudeExtras {
+    pub commands: u32,
+    pub mcp_servers: u32,
 }
 
 impl Default for Site {
     fn default() -> Self {
-        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0, continuations: Vec::new(), cloned_from: None, default_branch: None, env_missing: Vec::new() }
+        Self { id: String::new(), path: String::new(), name: String::new(), dev: None, publish: None, preview: None, last_session_id: None, last_port: None, package_manager: None, framework: None, is_git: false, needs_install: false, favorite: false, last_opened: 0, continuations: Vec::new(), cloned_from: None, default_branch: None, env_missing: Vec::new(), claude_extras: None, claude_trust: None }
     }
 }
 
@@ -179,6 +192,7 @@ impl Site {
             }
         }
         self.env_missing = crate::remote::env_needs(root, self.framework.as_deref()).map(|n| n.keys.into_iter().map(|k| k.name).collect()).unwrap_or_default();
+        self.claude_extras = claude_extras(root, git_top.as_deref());
         self.is_git = git_top.is_some();
         Ok(())
     }
@@ -387,10 +401,11 @@ fn rewrite_for_npm(dest: &Path) {
 /// Copy the bundled starter into `<parent>/<name>` and install dependencies, reporting each line
 /// of the installer's output to `on_log`.
 pub async fn create_from_starter(starter: &Path, parent: &str, name: &str, path_env: &str, on_log: impl Fn(String) + Send + Sync) -> Result<Site, String> {
-    let slug: String = name.trim().to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string();
-    if slug.is_empty() { return Err("Give the site a name".into()); }
-    let dest = Path::new(parent).join(&slug);
-    if dest.exists() { return Err(format!("{} already exists", dest.display())); }
+    if name.trim().is_empty() { return Err("Give the site a name".into()); }
+    let slug = site_slug(name);
+    // Every new site goes into the one sites folder now, so a name used before gets a free `-2` rather than an error;
+    // the dialog asks `site_new_dest` for the same folder, so what it shows is what is created.
+    let dest = crate::clone::free_dest(Path::new(parent), &slug);
     let (pm, pm_path) = pick_package_manager(path_env)?; // before copying, so a missing Node leaves nothing behind
     copy_dir(starter, &dest).map_err(|e| e.to_string())?;
     // personalise
@@ -497,7 +512,7 @@ pub async fn run_install(app: AppHandle, site: &Site, path_env: &str) -> Result<
             let _ = app.emit("install://log", json!({ "siteId": site_id, "line": format!("{detected} isn't installed on this Mac; using npm instead (its lockfile will be ignored).") }));
             "npm".to_string()
         } else { return Err(NO_NODE.into()) };
-    let cmd = format!("{pm} install");
+    let cmd = install_command(&pm, &site.path_buf());
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut child = tokio::process::Command::new(&shell)
         .args(["-lc", &cmd])
@@ -606,6 +621,73 @@ pub fn git_restore(path: &str, files: &[String], created: &[String], path_env: &
         }
     }
     Ok(report)
+}
+
+impl Site {
+    fn path_buf(&self) -> PathBuf { PathBuf::from(&self.path) }
+}
+
+/// A site's folder name: lowercase ASCII letters and digits, runs of anything else as one dash. A name with no such
+/// characters at all ("カフェ") still gets a folder.
+pub fn site_slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() { out.push(c); } else if !out.ends_with('-') { out.push('-'); }
+    }
+    let slug = out.trim_matches('-').to_string();
+    if slug.is_empty() && !name.trim().is_empty() { "new-site".into() } else { slug }
+}
+
+/// The install command for a package manager. Installs run with `CI=1` so nothing prompts, and under CI pnpm and Yarn
+/// Berry refuse a lockfile that is out of step with package.json; plenty of real repositories have one, so say so.
+pub fn install_command(pm: &str, root: &Path) -> String {
+    match pm {
+        "pnpm" => "pnpm install --no-frozen-lockfile".into(),
+        "yarn" if yarn_berry(root) => "yarn install --no-immutable".into(),
+        "yarn" => "yarn install".into(),
+        "bun" => "bun install".into(),
+        _ => "npm install --no-audit --no-fund".into(),
+    }
+}
+
+/// Yarn 2 and later: a `.yarnrc.yml`, or a `packageManager` field naming yarn@2+, in the folder or above it.
+fn yarn_berry(root: &Path) -> bool {
+    for dir in root.ancestors() {
+        if dir.join(".yarnrc.yml").exists() { return true; }
+        let pm = std::fs::read_to_string(dir.join("package.json")).ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| v.get("packageManager").and_then(|x| x.as_str()).map(String::from));
+        if let Some(pm) = pm {
+            return pm.strip_prefix("yarn@").and_then(|v| v.split('.').next()?.parse::<u32>().ok()).is_some_and(|major| major >= 2);
+        }
+    }
+    false
+}
+
+/// What a project's own Claude Code configuration runs by itself once its folder is trusted: hook commands and an
+/// `apiKeyHelper` in `.claude/settings.json` or `settings.local.json`, and servers in `.mcp.json`, in the site folder or at
+/// the top of its repository. None when there are none, which is almost every site.
+pub fn claude_extras(root: &Path, top: Option<&Path>) -> Option<ClaudeExtras> {
+    fn commands_in(v: &Value) -> u32 {
+        match v {
+            Value::Object(m) => m.iter().map(|(k, x)| if k == "command" && x.is_string() { 1 } else { commands_in(x) }).sum(),
+            Value::Array(a) => a.iter().map(commands_in).sum(),
+            _ => 0,
+        }
+    }
+    let read = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let mut dirs = vec![root.to_path_buf()];
+    if let Some(t) = top { if t != root { dirs.push(t.to_path_buf()); } }
+    let mut extras = ClaudeExtras::default();
+    for dir in &dirs {
+        for f in [".claude/settings.json", ".claude/settings.local.json"] {
+            let Some(v) = read(dir.join(f)) else { continue };
+            extras.commands += v.get("hooks").map(commands_in).unwrap_or(0);
+            if v.get("apiKeyHelper").and_then(|x| x.as_str()).is_some() { extras.commands += 1; }
+        }
+        extras.mcp_servers += read(dir.join(".mcp.json")).and_then(|v| v.get("mcpServers").and_then(|m| m.as_object()).map(|m| m.len() as u32)).unwrap_or(0);
+    }
+    (extras.commands + extras.mcp_servers > 0).then_some(extras)
 }
 
 #[cfg(test)]
@@ -847,6 +929,40 @@ mod tests {
         assert_eq!(r.restored, vec!["sub dir/my file.txt"]);
         assert!(r.skipped.is_empty());
         assert_eq!(std::fs::read_to_string(web.join("sub dir/my file.txt")).unwrap(), "one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folder_names_and_install_commands() {
+        assert_eq!(site_slug("Sourdough & Co."), "sourdough-co");
+        assert_eq!(site_slug("My Bakery & Café"), "my-bakery-caf");
+        assert_eq!(site_slug("bakery.com"), "bakery-com");
+        assert_eq!(site_slug("カフェ"), "new-site");
+        assert_eq!(site_slug("   "), "");
+        let dir = std::env::temp_dir().join(format!("supasito-pm-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("apps/web")).unwrap();
+        assert_eq!(install_command("pnpm", &dir), "pnpm install --no-frozen-lockfile");
+        assert_eq!(install_command("yarn", &dir.join("apps/web")), "yarn install");
+        std::fs::write(dir.join("package.json"), r#"{"packageManager":"yarn@4.5.0"}"#).unwrap();
+        assert_eq!(install_command("yarn", &dir.join("apps/web")), "yarn install --no-immutable", "Berry is named at the workspace root");
+        std::fs::write(dir.join("package.json"), r#"{"packageManager":"yarn@1.22.22"}"#).unwrap();
+        assert_eq!(install_command("yarn", &dir), "yarn install");
+        assert_eq!(install_command("npm", &dir), "npm install --no-audit --no-fund");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn counts_what_a_project_would_run_by_itself() {
+        let dir = std::env::temp_dir().join(format!("supasito-extras-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("apps/web/.claude")).unwrap();
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        // permission rules alone, like the starter's, are not something that runs
+        std::fs::write(dir.join("apps/web/.claude/settings.json"), r#"{"permissions":{"allow":["Bash(pnpm typecheck)"]}}"#).unwrap();
+        assert_eq!(claude_extras(&dir.join("apps/web"), Some(&dir)), None);
+        std::fs::write(dir.join(".claude/settings.json"), r#"{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"npx prettier --write"},{"type":"command","command":"./check.sh"}]}]},"apiKeyHelper":"./key.sh"}"#).unwrap();
+        std::fs::write(dir.join("apps/web/.mcp.json"), r#"{"mcpServers":{"db":{"command":"npx","args":["db-mcp"]}}}"#).unwrap();
+        assert_eq!(claude_extras(&dir.join("apps/web"), Some(&dir)), Some(ClaudeExtras { commands: 3, mcp_servers: 1 }));
+        assert_eq!(claude_extras(Path::new(env!("CARGO_MANIFEST_DIR")).join("../starters/next").as_path(), None), None, "the starter brings none");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

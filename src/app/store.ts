@@ -78,6 +78,8 @@ export type AddSiteState = {
   error: CloneError | null;
   /** New site's own failure, as text. */
   message: string | null;
+  /** The folder New site will create for the name in the field, as the backend picks it (`-2` when taken). */
+  nameDest: string | null;
   note: string | null;
   signIn: null | { stage: "starting" | "code" | "waiting"; code: DeviceCode | null; error: string | null };
 };
@@ -85,7 +87,7 @@ export type AddSiteState = {
 const emptyAddSite = (settings: Settings): AddSiteState => ({
   open: false, value: "", repo: null, lookup: null, looking: false,
   folder: settings.sitesFolder || settings.defaultSitesFolder || "", firstFolder: !settings.sitesFolder,
-  running: null, progress: null, log: [], error: null, message: null, note: null, signIn: null,
+  running: null, progress: null, log: [], error: null, message: null, nameDest: null, note: null, signIn: null,
 });
 type SetFn = (partial: Partial<Store>) => void;
 const toCloneError = (e: unknown): CloneError =>
@@ -101,6 +103,18 @@ async function runLookup(get: () => Store, set: SetFn, delay = 300) {
   const lookup = await api.siteRepoLookup(value, folder || null).catch(() => null);
   if (seq !== lookupSeq) return;
   set({ addSite: { ...get().addSite, lookup, looking: false } });
+}
+
+/** Ask the backend which folder New site would create for the name, once typing settles. */
+let destSeq = 0;
+async function runNameDest(get: () => Store, set: SetFn, delay = 200) {
+  const seq = ++destSeq;
+  if (delay) await new Promise((r) => setTimeout(r, delay));
+  if (seq !== destSeq) return;
+  const { value, folder, repo } = get().addSite;
+  if (repo || !value.trim() || !folder) return;
+  const nameDest = await api.siteNewDest(folder, value).catch(() => null);
+  if (seq === destSeq) set({ addSite: { ...get().addSite, nameDest } });
 }
 
 async function rememberSitesFolder(get: () => Store, set: SetFn) {
@@ -202,6 +216,8 @@ export type Store = {
   openEnv: (siteId: string | null) => Promise<void>;
   saveEnv: (values: [string, string][]) => Promise<void>;
   dismissEnv: (siteId: string) => void;
+  /** "This project brings its own Claude settings": Use them (true) or Start without them (false). */
+  answerClaudeTrust: (siteId: string, accept: boolean) => Promise<void>;
   cancelClone: () => Promise<void>;
   /** "You already have this one": select that site, or add the folder that already is the repository. */
   openExistingSite: () => Promise<void>;
@@ -657,17 +673,17 @@ export const useStore = create<Store>((set, get) => ({
     if (a.running) return;
     const repo = parseRepoLink(value);
     const same = !!repo && !!a.repo && repo.cloneUrl === a.repo.cloneUrl && repo.treePath === a.repo.treePath;
-    set({ addSite: { ...a, value, repo, lookup: same ? a.lookup : null, looking: !!repo && (!same || a.looking), error: null, message: null, note: null, signIn: null } });
+    set({ addSite: { ...a, value, repo, lookup: same ? a.lookup : null, looking: !!repo && (!same || a.looking), error: null, message: null, nameDest: null, note: null, signIn: null } });
     if (repo && !same) void runLookup(get, set);
-    if (!repo) lookupSeq++;
+    if (!repo) { lookupSeq++; void runNameDest(get, set); }
   },
 
   async chooseSitesFolder() {
     const picked = await api.sitePickFolder("Where should your sites live?");
     if (!picked) return;
     const repo = get().addSite.repo;
-    set({ addSite: { ...get().addSite, folder: picked, looking: !!repo } });
-    if (repo) void runLookup(get, set, 0);
+    set({ addSite: { ...get().addSite, folder: picked, looking: !!repo, nameDest: null } });
+    if (repo) void runLookup(get, set, 0); else void runNameDest(get, set, 0);
   },
 
   async createSite(name) {
@@ -977,6 +993,16 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
   dismissEnv(siteId) { set({ envDismissed: { ...get().envDismissed, [siteId]: true } }); },
+  async answerClaudeTrust(siteId, accept) {
+    try {
+      const site = await api.siteClaudeTrust(siteId, accept);
+      set({ sites: get().sites.map((s) => (s.id === siteId ? site : s)) });
+      const running = (get().sessions[siteId] ?? []).some((x) => get().running[x.id]);
+      if (accept) get().showToast(running ? "Claude uses them from this site's next conversation." : "Claude will use them in this site's conversations.");
+    } catch (e) {
+      get().showToast(String(e));
+    }
+  },
   async refreshGit(siteId) {
     try { const g = await api.siteGitStatus(siteId); set({ git: { ...get().git, [siteId]: g } }); } catch { /* ignore */ }
   },

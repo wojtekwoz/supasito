@@ -21,6 +21,7 @@ export function SessionPane() {
   const running = useStore((s) => (s.currentSessionId ? !!s.running[s.currentSessionId] : false));
   const sync = useStore((s) => (s.currentSiteId ? s.sync[s.currentSiteId] : undefined));
   const mergeFromRemote = useStore((s) => s.mergeFromRemote);
+  const answerClaudeTrust = useStore((s) => s.answerClaudeTrust);
   // a draft that continues a conversation on the other agent is still that conversation
   const draftContinues = useStore((s) => (s.currentSessionId === DRAFT ? s.transcripts[DRAFT]?.overrides.continues ?? null : null));
   const shownId = currentSessionId === DRAFT ? draftContinues : currentSessionId;
@@ -83,6 +84,17 @@ export function SessionPane() {
           <Bubble />
           <span className={cx("status-dot", session?.busy && "busy")} style={session?.items.some((i) => i.kind === "permission" && i.status === "pending") ? { background: "var(--warn)" } : undefined} />
         </button>
+      )}
+      {/* A pasted repository brought hooks or MCP servers of its own (PLAN §8e.10 D-e1): Claude Code ignores them until this says yes. */}
+      {site.claudeTrust === "ask" && site.claudeExtras && !agentBlocked(tools) && !(full && panelMin) && (
+        <div className="sync-bar trust-bar">
+          <span>This project brings its own Claude settings: {[
+            site.claudeExtras.commands ? `${site.claudeExtras.commands} command${site.claudeExtras.commands === 1 ? " that runs on its own" : "s that run on their own"}` : null,
+            site.claudeExtras.mcpServers ? `${site.claudeExtras.mcpServers} MCP server${site.claudeExtras.mcpServers === 1 ? "" : "s"}` : null,
+          ].filter(Boolean).join(" and ")}. Claude uses them only if you allow it.</span>
+          <button className="btn sm ghost" onClick={() => void answerClaudeTrust(site.id, false)}>Start without them</button>
+          <button className="btn sm" onClick={() => void answerClaudeTrust(site.id, true)}>Use them</button>
+        </div>
       )}
       {/* GitHub has commits this copy can't fast-forward to (PLAN §8e.11): Claude merges them, the user approves. */}
       {sync?.state === "behind" && !agentBlocked(tools) && !(full && panelMin) && (

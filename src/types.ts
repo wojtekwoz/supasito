@@ -21,6 +21,10 @@ export type Site = {
   defaultBranch?: string | null;
   /** Keys an example env file lists that no real env file sets. */
   envMissing?: string[];
+  /** What the project's own Claude settings would run by themselves: hook commands and MCP servers. */
+  claudeExtras?: { commands: number; mcpServers: number } | null;
+  /** "ask": a pasted repository brought such settings, and the folder isn't trusted until the user says so; "declined". */
+  claudeTrust?: "ask" | "declined" | null;
 };
 
 export type SessionInfo = {

@@ -380,7 +380,7 @@ async fn install(site: &Site, path_env: &str, slot: &SlotRef, on: OnProgress<'_>
     let pm = if crate::toolchain::which(&detected, path_env).is_some() { detected }
         else if crate::toolchain::which("npm", path_env).is_some() { "npm".to_string() }
         else { on(Progress::line("install", crate::sites::NO_NODE.into())); return false };
-    let cmd = format!("{pm} install");
+    let cmd = crate::sites::install_command(&pm, Path::new(&site.path));
     on(Progress::line("install", format!("$ {cmd}")));
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut c = tokio::process::Command::new(&shell);

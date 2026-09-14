@@ -68,7 +68,7 @@ export function AddSiteDialog() {
   const subFolder = folderSegs.join("/");
   const cloneDest = a.lookup?.dest ?? (repo && a.folder ? `${a.folder}/${repo.repo}` : a.folder);
   // For a folder inside a repository the site is that folder, so that is the path to show.
-  const target = mode === "name" ? `${a.folder}/${slugify(name) || "new-site"}` : subFolder ? `${cloneDest}/${subFolder}` : cloneDest;
+  const target = mode === "name" ? a.nameDest ?? `${a.folder}/${slugify(name) || "new-site"}` : subFolder ? `${cloneDest}/${subFolder}` : cloneDest;
   const close = () => { if (a.running) return; if (a.signIn) cancelSignIn(); openAddSite(false); };
 
   const badge = repo?.ssh ? <span className="add-badge">SSH link</span> : info?.private === false ? <span className="add-badge">Public</span> : null;

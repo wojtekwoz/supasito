@@ -22,6 +22,10 @@ export interface Backend {
   siteEnvNeeds(siteId: string): Promise<EnvNeeds | null>;
   /** Write values straight into the site's env file; resolves with the re-detected site. */
   siteEnvSave(siteId: string, file: string, values: [string, string][]): Promise<Site>;
+  /** The folder New site will create for `name` in `parent` (with `-2` when taken); null for an empty name. */
+  siteNewDest(parent: string, name: string): Promise<string | null>;
+  /** "Use them" (true) trusts the folder so Claude Code applies the project's own settings; false remembers the no. */
+  siteClaudeTrust(siteId: string, accept: boolean): Promise<Site>;
   siteCloneCancel(): Promise<void>;
   /** GitHub's device flow: a code to enter on github.com; `githubSignInWait` resolves with the account name once approved. */
   githubSignInStart(): Promise<DeviceCode>;
@@ -100,6 +104,8 @@ async function tauriBackend(): Promise<Backend> {
     siteSync: (siteId, apply) => invoke("site_sync", { siteId, apply }),
     siteEnvNeeds: (siteId) => invoke("site_env_needs", { siteId }),
     siteEnvSave: (siteId, file, values) => invoke("site_env_save", { siteId, file, values }),
+    siteNewDest: (parent, name) => invoke("site_new_dest", { parent, name }),
+    siteClaudeTrust: (siteId, accept) => invoke("site_claude_trust", { siteId, accept }),
     siteCloneCancel: () => invoke("site_clone_cancel"),
     githubSignInStart: () => invoke("github_sign_in_start"),
     githubSignInWait: () => invoke("github_sign_in_wait"),

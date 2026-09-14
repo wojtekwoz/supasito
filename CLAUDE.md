@@ -20,7 +20,8 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   `?update=found|error` (a newer version announced / the check failing), `?clone=private|missing|offline|ssh|install|slow|exists`
   (how a pasted GitHub link fails or lands), `?sitesFolder=unset` (first run: the dialog says where sites live), `?signin=off`
   (a build without a GitHub client id), `?sync=updated|behind|failed` (what opening the first site finds against GitHub),
-  `?env=missing` (the first site lacks secrets its .env.example lists), `?copy=elsewhere` (a pasted link is already in ~/code).
+  `?env=missing` (the first site lacks secrets its .env.example lists), `?copy=elsewhere` (a pasted link is already in ~/code),
+  `?trust=ask` (the first site brought hooks and an MCP server and waits for Use them), `?clone=hooks` (a pasted repository arrives that way).
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).

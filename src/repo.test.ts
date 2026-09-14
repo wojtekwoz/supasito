@@ -28,5 +28,6 @@ for (const s of ["My bakery", "bakery-site", "mara-okafor/bakery-site", "https:/
   "https://github.com/settings/profile", "https://example.com/about", "http://gitlab.com/group/site.git", "https://github.com/a b/c", "gh auth login", ""]) {
   assert.equal(parseRepoLink(s), null, s);
 }
-assert.ok(looksLikeAddress("https://example.com/about") && looksLikeAddress("www.mysite.com") && !looksLikeAddress("My bakery") && !looksLikeAddress("Sourdough & Co."));
+assert.ok(looksLikeAddress("https://example.com/about") && looksLikeAddress("example.com/about") && looksLikeAddress("git@gitlab.com:x/y"));
+for (const name of ["My bakery", "Sourdough & Co.", "bakery.com", "www.bakery.com", "My Site.co"]) assert.ok(!looksLikeAddress(name), `${name} is a name`);
 console.log("repo: ok");

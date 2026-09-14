@@ -368,7 +368,9 @@ async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, p
     // Remembered so Publish can default to the push most GitHub-deployed sites expect (PLAN §8e.11).
     site.cloned_from = clone::parse_repo_url(&input).map(|r| r.clone_url);
     let _ = site.refresh();
-    sites::mark_trusted(&site.path);
+    // A pasted repository that brings its own hooks or MCP servers is not trusted until the user says so (PLAN §8e.10
+    // D-e1): until then Claude Code ignores its project settings. Anything else is trusted as opening a folder is.
+    if site.claude_extras.is_some() { site.claude_trust = Some("ask".into()); } else { sites::mark_trusted(&site.path); }
     let out = {
         let mut p = state.persisted.lock().unwrap();
         match p.sites.iter().find(|s| s.path == site.path) {
@@ -377,6 +379,28 @@ async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, p
         }
     };
     state.save().map_err(|e| clone::CloneError::new("other", Some(e)))?;
+    Ok(out)
+}
+
+/// The folder New site will create for `name` in `parent`, so the dialog shows exactly that (`-2` when taken).
+#[tauri::command]
+fn site_new_dest(parent: String, name: String) -> Option<String> {
+    let slug = sites::site_slug(&name);
+    (!slug.is_empty()).then(|| clone::free_dest(std::path::Path::new(&parent), &slug).to_string_lossy().to_string())
+}
+
+/// The answer to "this project brings its own Claude settings": `accept` trusts the folder so Claude Code applies them.
+#[tauri::command]
+fn site_claude_trust(state: State<'_, AppState>, site_id: String, accept: bool) -> Result<sites::Site, String> {
+    let path = state.site(&site_id)?.path;
+    if accept { sites::mark_trusted(&path); }
+    let out = {
+        let mut p = state.persisted.lock().unwrap();
+        let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
+        s.claude_trust = if accept { None } else { Some("declined".into()) };
+        s.clone()
+    };
+    state.save()?;
     Ok(out)
 }
 
@@ -741,7 +765,7 @@ pub fn run() {
             settings_get, settings_set, toolchain_check, models_list,
             updates::update_check, updates::update_install, updates::update_dismiss, updates::app_version,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
-            site_repo_lookup, site_clone, site_clone_cancel, site_sync, site_env_needs, site_env_save, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
+            site_repo_lookup, site_clone, site_clone_cancel, site_sync, site_env_needs, site_env_save, site_new_dest, site_claude_trust, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,

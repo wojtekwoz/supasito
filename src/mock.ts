@@ -207,6 +207,10 @@ const MOCK_ENV_KEYS = [
   { name: "NEXT_PUBLIC_SITE_URL", hint: null, value: "http://localhost:3000" },
 ];
 if (query.get("env") === "missing" && mockSites[0]) mockSites[0].envMissing = MOCK_ENV_KEYS.map((k) => k.name);
+// `?trust=ask`: the first site brought hooks and an MCP server and waits for Use them (PLAN §8e.10 D-e1); `?clone=hooks` makes a
+// pasted repository arrive that way.
+if (query.get("trust") === "ask" && mockSites[0]) Object.assign(mockSites[0], { claudeTrust: "ask", claudeExtras: { commands: 2, mcpServers: 1 } });
+const mockSlug = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || (name.trim() ? "new-site" : "");
 
 export function mockBackend(): Backend {
   if (mockUpdate === "found") setTimeout(() => emit("update://available", { ...MOCK_NEWER }), 2500);
@@ -272,11 +276,20 @@ export function mockBackend(): Backend {
         await wait(500);
       }
       const sub = repo.treePath?.split("/").slice(1).join("/") ?? "";
-      const s: Site = { ...site, id: "site-" + Math.random().toString(36).slice(2), path: `${parent}/${repo.repo}${fresh ? "-2" : ""}${sub ? "/" + sub : ""}`, name: sub ? sub.split("/").pop()! : repo.repo, lastSessionId: null, favorite: false, needsInstall: cloneSim === "install", clonedFrom: repo.cloneUrl, defaultBranch: "main", publish: "git push origin HEAD:main", preview: "git push --force origin HEAD:supasito-preview", envMissing: [] };
+      const s: Site = { ...site, id: "site-" + Math.random().toString(36).slice(2), path: `${parent}/${repo.repo}${fresh ? "-2" : ""}${sub ? "/" + sub : ""}`, name: sub ? sub.split("/").pop()! : repo.repo, lastSessionId: null, favorite: false, needsInstall: cloneSim === "install", clonedFrom: repo.cloneUrl, defaultBranch: "main", publish: "git push origin HEAD:main", preview: "git push --force origin HEAD:supasito-preview", envMissing: [], ...(cloneSim === "hooks" ? { claudeTrust: "ask" as const, claudeExtras: { commands: 1, mcpServers: 0 } } : {}) };
       mockSites.push(s);
       return { ...s };
     },
     siteCloneCancel: async () => { mockCloneCancelled = true; },
+    siteNewDest: async (parent, name) => {
+      const slug = mockSlug(name);
+      if (!slug) return null;
+      const taken = new Set(mockSites.map((x) => x.path));
+      let dest = `${parent}/${slug}`;
+      for (let n = 2; taken.has(dest); n++) dest = `${parent}/${slug}-${n}`;
+      return dest;
+    },
+    siteClaudeTrust: async (siteId, accept) => { const s = siteOf(siteId); s.claudeTrust = accept ? null : "declined"; return { ...s }; },
     siteSync: async (siteId, apply) => {
       await wait(500);
       const base = { ahead: 0, behind: 0, branch: "main", files: [] as string[], depsChanged: false, detail: null };

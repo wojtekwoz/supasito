@@ -493,3 +493,4 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line-2)
 .modal .env-key .env-name { font-family: var(--mono); font-size: 12px; color: var(--ink); }
 .env-hint { font-size: 12px; color: var(--ink-3); }
 .env-key .text-input { font-family: var(--mono); font-size: 12px; }
+.sync-bar.trust-bar { background: var(--accent-soft); }

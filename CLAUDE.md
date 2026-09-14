@@ -17,7 +17,9 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   `brew install` lines), `?sites=none|two|many`, `?dev=taken[:unknown|:site]` (port held by
   another program / something unnamed / the second site), `?dev=none` (no dev command until a turn ran), `?devDelay=<ms>` and
   `?stopDelay=<ms>` (dev-server start/kill timing; `window.__mock.devs` is the registry), `?context=full`, `?fast=on`,
-  `?update=found|error` (a newer version announced / the check failing).
+  `?update=found|error` (a newer version announced / the check failing), `?clone=private|missing|offline|ssh|install|slow|exists`
+  (how a pasted GitHub link fails or lands), `?sitesFolder=unset` (first run: the dialog says where sites live), `?signin=off`
+  (a build without a GitHub client id).
 - `pnpm test` = route mapping + transcript reducer (node --experimental-strip-types) + `cargo test`.
   Test files are excluded from the app tsconfig. `cargo test -- --ignored` also creates a real site
   from the starter (runs pnpm install).
@@ -64,6 +66,15 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   `pnpm release` signs `Supasito.app.tar.gz` with the key in `.env.release` and writes `release/latest.json`;
   `cargo test -- --ignored updater_package` checks that key against the pubkey shipped in tauri.conf.json,
   which is the one mismatch that would silently break every future update.
+- `src-tauri/src/clone.rs` — a site from a pasted repository link (PLAN §8e). `parse_repo_url` is mirrored by `src/repo.ts`
+  (same test table in both); GitHub's public API fills the card; `git ls-remote` runs before anything is written, then
+  `git clone --progress` (full history: a partial clone fetches the files at checkout with no progress output) with prompts
+  off and `LC_ALL=C`, so `classify` can name the failure from git's English. Credentials: git's own helpers plus the
+  Keychain, then `gh auth git-credential`; Sign in to GitHub is the OAuth device flow, and its token goes into the Keychain
+  through `git credential approve`, never into app state. The client id is compiled in from `SUPASITO_GITHUB_CLIENT_ID`
+  (`.env.release`; debug builds also read it at run time) and without one the button is not offered. The UI is
+  `AddSiteDialog` (Dialogs.tsx, one field for a name or a link); ⌘V with a link outside a text field opens it (App.tsx).
+  Network test: `cargo test -- --ignored clone_public`.
 - `src-tauri/src/devserver.rs` — dev-server supervisor. A port counts as free only if it binds *and* refuses a
   connection (a wildcard listener passes a loopback bind on macOS), and as ready only when the listener is in our own
   process group. Readiness must stay dual-stack

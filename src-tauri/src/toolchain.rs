@@ -110,7 +110,7 @@ async fn node(path_env: &str) -> Tool {
 
 /// macOS ships `/usr/bin/git` as a stub that opens the "install command line tools" dialog when
 /// run, so ask `xcode-select` first instead of triggering that dialog from a background check.
-async fn git(path_env: &str) -> Tool {
+pub(crate) async fn git(path_env: &str) -> Tool {
     let Some(p) = which("git", path_env) else { return Tool::default() };
     let path = p.to_string_lossy().to_string();
     if cfg!(target_os = "macos") && path == "/usr/bin/git" && run("/usr/bin/xcode-select", &["-p"], path_env, 8).await.is_none() {

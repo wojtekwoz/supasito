@@ -6,7 +6,7 @@ import { Markdown } from "../ui/Markdown";
 import { Bubble, Collapse, Crosshair, Doc, Globe, Minus, Pen, Robot, Search, Send, Signal, Sparkle, Stop, Terminal, X } from "../ui/Icons";
 import { cx, fmtDuration, relPath } from "../util";
 import { PermissionCard, QuestionCard } from "./Approval";
-import { Checklist, agentBlocked, claudeUsable, codexUsable, nodeTooOld, toolsMissing, toolsWarn } from "./Checklist";
+import { Checklist, agentBlocked, claudeUsable, codexUsable, toolsMissing, toolsWarn } from "./Checklist";
 import { UsageButton } from "./Usage";
 import type { Selection } from "../types";
 import { useShown } from "./ui";
@@ -208,7 +208,7 @@ function Setup() {
 
 function Welcome() {
   const addSiteFromFolder = useStore((s) => s.addSiteFromFolder);
-  const openNewSite = useStore((s) => s.openNewSite);
+  const openAddSite = useStore((s) => s.openAddSite);
   const tools = useStore((s) => s.tools);
   const missing = toolsMissing(tools);
   const warn = toolsWarn(tools);
@@ -225,14 +225,15 @@ function Welcome() {
             </>
           ) : (
             <>
-              <h2>Open a site to begin</h2>
-              <p>A site is a folder with a dev server. Open one you already have, or start a new one from the starter and describe what it should be.</p>
+              <h2>Add a site to begin</h2>
+              <p>Paste a link to a site that lives on GitHub, or name a new one and describe what it should be.</p>
             </>
           )}
           <div className="actions">
-            <button className="btn primary" onClick={() => void addSiteFromFolder()}>Open a folder…</button>
-            <button className="btn" onClick={() => openNewSite(true)} disabled={!!tools && (!tools.node.ok || nodeTooOld(tools))} title={tools && !tools.node.ok ? "Needs Node.js" : tools && nodeTooOld(tools) ? "Needs a newer Node.js" : undefined}>New site</button>
+            <button className="btn primary" onClick={() => openAddSite(true)}>New site or GitHub link…</button>
+            <button className="btn" onClick={() => void addSiteFromFolder()}>Open a folder…</button>
           </div>
+          <p className="tip">Copied a link from GitHub? Press <kbd>⌘V</kbd> anywhere.</p>
         </div>
       </div>
     </section>

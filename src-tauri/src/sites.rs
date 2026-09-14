@@ -323,7 +323,7 @@ pub fn write_site_json(path: &str, key: &str, value: &str) -> Result<(), String>
     std::fs::write(&file, serde_json::to_string_pretty(&root).unwrap()).map_err(|e| e.to_string())
 }
 
-const NO_NODE: &str = "Node.js isn't installed, so packages can't be installed. Get it from https://nodejs.org (npm comes with it), then try again.";
+pub(crate) const NO_NODE: &str = "Node.js isn't installed, so packages can't be installed. Get it from https://nodejs.org (npm comes with it), then try again.";
 
 /// The package manager to install with: pnpm when present, else npm (which ships with Node).
 fn pick_package_manager(path_env: &str) -> Result<(&'static str, PathBuf), String> {
@@ -505,7 +505,7 @@ pub async fn run_install(app: AppHandle, site: &Site, path_env: &str) -> Result<
 }
 
 /// Spawn a task that forwards each line of `reader` into `tx`.
-fn pump_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(reader: R, tx: tokio::sync::mpsc::Sender<String>) {
+pub(crate) fn pump_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(reader: R, tx: tokio::sync::mpsc::Sender<String>) {
     use tokio::io::AsyncBufReadExt;
     let mut lines = tokio::io::BufReader::new(reader).lines();
     tauri::async_runtime::spawn(async move {

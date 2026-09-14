@@ -1,5 +1,6 @@
 mod agent;
 mod capture;
+mod clone;
 mod devserver;
 mod models;
 mod sites;
@@ -28,6 +29,8 @@ fn settings_get(state: State<'_, AppState>) -> Value {
         "fastMode": p.fast_mode,
         "hidden": p.hidden,
         "updatesEnabled": p.updates_enabled,
+        "sitesFolder": p.sites_folder,
+        "defaultSitesFolder": dirs::home_dir().map(|h| h.join("Sites").to_string_lossy().to_string()),
     })
 }
 
@@ -41,6 +44,7 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
         // Claude's five plus Codex's `ultra`; claude.rs drops an effort its CLI does not take (`ultra` on a Claude session)
         if let Some(v) = patch.get("effort") { p.effort = v.as_str().map(|s| s.to_string()).filter(|s| agent::claude::EFFORTS.contains(&s.as_str()) || s == "ultra"); }
         if let Some(v) = patch.get("fastMode") { p.fast_mode = v.as_bool().unwrap_or(false); }
+        if let Some(v) = patch.get("sitesFolder") { p.sites_folder = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()); }
         if let Some(v) = patch.get("updatesEnabled") { p.updates_enabled = v.as_bool().unwrap_or(true); }
         if let Some(v) = patch.get("hidden") { p.hidden = v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(); }
     }
@@ -93,10 +97,10 @@ fn sites_list(state: State<'_, AppState>) -> Vec<sites::Site> {
 }
 
 #[tauri::command]
-async fn site_pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+async fn site_pick_folder(app: AppHandle, title: Option<String>) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().file().set_title("Open a site folder").pick_folder(move |p| {
+    app.dialog().file().set_title(title.as_deref().unwrap_or("Open a site folder")).pick_folder(move |p| {
         let _ = tx.send(p);
     });
     let picked = rx.await.map_err(|e| e.to_string())?;
@@ -339,6 +343,70 @@ async fn site_new(app: AppHandle, state: State<'_, AppState>, parent: String, na
     }
     state.save()?;
     Ok(site)
+}
+
+// ---------- a site from a pasted link (PLAN §8e; clone.rs) ----------
+
+#[tauri::command]
+async fn site_repo_lookup(state: State<'_, AppState>, input: String, parent: Option<String>) -> Result<Option<clone::Lookup>, String> {
+    let sites = state.persisted.lock().unwrap().sites.clone();
+    Ok(clone::lookup(&input, parent.as_deref().map(std::path::Path::new), &sites, &state.path_env).await)
+}
+
+#[tauri::command]
+async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, parent: String) -> Result<sites::Site, clone::CloneError> {
+    {
+        let mut slot = state.clone_slot.lock().unwrap();
+        if slot.running { return Err(clone::CloneError::new("busy", None)); }
+        *slot = clone::Slot { running: true, ..Default::default() };
+    }
+    let emitter = app.clone();
+    let result = clone::clone_repo(&input, std::path::Path::new(&parent), &state.path_env, state.clone_slot.clone(), move |p| { let _ = emitter.emit("clone://progress", p); }).await;
+    state.clone_slot.lock().unwrap().running = false;
+    let site = result?;
+    sites::mark_trusted(&site.path);
+    let out = {
+        let mut p = state.persisted.lock().unwrap();
+        match p.sites.iter().find(|s| s.path == site.path) {
+            Some(existing) => existing.clone(),
+            None => { p.sites.insert(0, site.clone()); site }
+        }
+    };
+    state.save().map_err(|e| clone::CloneError::new("other", Some(e)))?;
+    Ok(out)
+}
+
+#[tauri::command]
+fn site_clone_cancel(state: State<'_, AppState>) {
+    let mut slot = state.clone_slot.lock().unwrap();
+    if !slot.running { return; }
+    slot.cancelled = true;
+    if let Some(pid) = slot.pid.filter(|p| *p > 0) {
+        unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+    }
+}
+
+#[tauri::command]
+async fn github_sign_in_start(state: State<'_, AppState>) -> Result<clone::DeviceCode, String> {
+    let code = clone::device_start().await?;
+    *state.github_code.lock().unwrap() = Some(code.clone());
+    state.github_cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+    Ok(code)
+}
+
+/// Resolves with the GitHub account name once the user approved and the token is in the Keychain.
+#[tauri::command]
+async fn github_sign_in_wait(state: State<'_, AppState>) -> Result<String, String> {
+    let code = state.github_code.lock().unwrap().clone().ok_or("Start the sign-in first.")?;
+    let cancel = state.github_cancel.clone();
+    let result = clone::device_wait(&code, &state.path_env, move || cancel.load(std::sync::atomic::Ordering::SeqCst)).await;
+    *state.github_code.lock().unwrap() = None;
+    result
+}
+
+#[tauri::command]
+fn github_sign_in_cancel(state: State<'_, AppState>) {
+    state.github_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn starter_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -640,6 +708,7 @@ pub fn run() {
             settings_get, settings_set, toolchain_check, models_list,
             updates::update_check, updates::update_install, updates::update_dismiss, updates::app_version,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
+            site_repo_lookup, site_clone, site_clone_cancel, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,

@@ -15,7 +15,7 @@ export function Rail() {
   const currentSiteId = useStore((s) => s.currentSiteId);
   const selectSite = useStore((s) => s.selectSite);
   const addSiteFromFolder = useStore((s) => s.addSiteFromFolder);
-  const openNewSite = useStore((s) => s.openNewSite);
+  const openAddSite = useStore((s) => s.openAddSite);
   const askRemoveSite = useStore((s) => s.askRemoveSite);
   const favoriteSite = useStore((s) => s.favoriteSite);
   const siteMenuOpen = useStore((s) => s.siteMenuOpen);
@@ -55,7 +55,7 @@ export function Rail() {
             <span>Sites</span>
             <span className="actions">
               <button className="icon-btn" title="Open a folder" onClick={() => void addSiteFromFolder()}><Folder /></button>
-              <button className="icon-btn" title="New site from the starter" onClick={() => openNewSite(true)}><Plus /></button>
+              <button className="icon-btn" title="New site or GitHub link" onClick={() => openAddSite(true)}><Plus /></button>
             </span>
           </div>
           <div className="list">
@@ -173,7 +173,7 @@ function SiteMenu() {
   const favoriteSite = useStore((s) => s.favoriteSite);
   const askRemoveSite = useStore((s) => s.askRemoveSite);
   const addSiteFromFolder = useStore((s) => s.addSiteFromFolder);
-  const openNewSite = useStore((s) => s.openNewSite);
+  const openAddSite = useStore((s) => s.openAddSite);
   const setSiteMenuOpen = useStore((s) => s.setSiteMenuOpen);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
@@ -209,7 +209,7 @@ function SiteMenu() {
         </div>
         <div className="foot">
           <button className="row" onClick={() => { setSiteMenuOpen(false); void addSiteFromFolder(); }}><Folder className="glyph" /><span className="t">Open a folder…</span></button>
-          <button className="row" onClick={() => { setSiteMenuOpen(false); openNewSite(true); }}><Plus className="glyph" /><span className="t">New site from the starter…</span></button>
+          <button className="row" onClick={() => { setSiteMenuOpen(false); openAddSite(true); }}><Plus className="glyph" /><span className="t">New site or GitHub link…</span></button>
         </div>
       </div>
     </>

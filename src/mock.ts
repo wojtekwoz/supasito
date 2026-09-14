@@ -5,6 +5,7 @@ import pickerSource from "../src-tauri/src/picker.js?raw";
 import codexTrace from "./agent/fixtures/codex-0.149.0-write-turn.jsonl?raw";
 import codexModelList from "./agent/fixtures/codex-0.154.0-model-list.json";
 import { DEFAULT_HIDDEN } from "./app/ui";
+import { parseRepoLink } from "./repo";
 
 type Handler = (payload: any) => void;
 const handlers = new Map<EventName, Set<Handler>>();
@@ -182,10 +183,24 @@ async function fakeTurn(sessionId: string, text: string) {
   emit("agent://permission", { sessionId, requestId: reqId, request: { subtype: "can_use_tool", tool_name: "Bash", display_name: "Bash", input: { command: "pnpm exec tsc --noEmit", description: "Type-check the project" }, description: "Type-check the project", permission_suggestions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "pnpm exec tsc:*" }], behavior: "allow", destination: "localSettings" }], tool_use_id: "toolu_3" } });
 }
 
+// A pasted GitHub link (PLAN §8e). `?clone=private|missing|offline|ssh|install|slow` makes the clone fail that way
+// (private until Sign in to GitHub succeeds; offline on the first try only; install = the packages step fails and the
+// site arrives needing it; slow = a ten-second download). `?clone=exists` or the link github.com/you/clarityops finds the
+// first site already in the rail. `?sitesFolder=unset` is the first run, when the dialog asks where sites live;
+// `?signin=off` is a build without a GitHub client id.
+const cloneSim = query.get("clone");
+const MOCK_REPOS: Record<string, { description: string; sizeKb: number; language: string }> = {
+  "mara-okafor/bakery-site": { description: "Website for Sourdough & Co., a neighbourhood bakery", sizeKb: 38112, language: "TypeScript" },
+  "fieldnotes/monorepo": { description: "Fieldnotes: the app, the docs and the marketing site", sizeKb: 112400, language: "Astro" },
+  "you/clarityops": { description: "ClarityOps marketing site", sizeKb: 54210, language: "TypeScript" },
+};
+let mockSignedIn = false, mockOfflineOnce = cloneSim === "offline", mockCloneCancelled = false, mockSignInCancelled = false;
+const mockCloneFail = (kind: string, detail: string | null = null) => ({ kind, detail, signIn: query.get("signin") !== "off" });
+
 export function mockBackend(): Backend {
   if (mockUpdate === "found") setTimeout(() => emit("update://available", { ...MOCK_NEWER }), 2500);
   return {
-    settingsGet: async () => ({ ...mockSettings }),
+    settingsGet: async () => ({ defaultSitesFolder: "/Users/you/Sites", sitesFolder: query.get("sitesFolder") === "unset" ? null : "/Users/you/Sites", ...mockSettings }),
     settingsSet: async (patch) => { Object.assign(mockSettings, patch); },
     // `?tools=missing|nologin|nonode|oldnode|nogit|nogitpath|nogitid|nopnpm` simulates a Mac that lacks
     // something, for checking the checklist; `&brew=no` drops Homebrew, which hides the `brew install` lines.
@@ -206,7 +221,63 @@ export function mockBackend(): Backend {
       return mockCatalogue();
     },
     sitesList: async () => [...mockSites],
-    sitePickFolder: async () => "/Users/you/Sites/another",
+    sitePickFolder: async (title) => (title ? "/Users/you/Documents/Websites" : "/Users/you/Sites/another"),
+    siteRepoLookup: async (input, parent) => {
+      const repo = parseRepoLink(input);
+      if (!repo) return null;
+      await wait(350);
+      const key = `${repo.owner}/${repo.repo}`.toLowerCase();
+      const card = MOCK_REPOS[key];
+      const existing = cloneSim === "exists" || key === "you/clarityops" ? mockSites[0]?.id ?? null : null;
+      return { repo, info: card && cloneSim !== "private" ? { ...card, private: false, defaultBranch: "main" } : null, existingSiteId: existing, existingPath: null, dest: parent ? `${parent}/${repo.repo}` : null };
+    },
+    siteClone: async (input, parent) => {
+      const repo = parseRepoLink(input);
+      if (!repo) throw mockCloneFail("link");
+      mockCloneCancelled = false;
+      const progress = (p: object) => emit("clone://progress", p);
+      progress({ phase: "check" });
+      await wait(600);
+      if (mockCloneCancelled) throw mockCloneFail("cancelled");
+      if (cloneSim === "private" && !mockSignedIn) throw mockCloneFail("private", "fatal: could not read Username for 'https://github.com': terminal prompts disabled");
+      if (cloneSim === "missing") throw mockCloneFail("missing", "remote: Repository not found.");
+      if (cloneSim === "ssh" && repo.ssh) throw mockCloneFail("ssh", "git@github.com: Permission denied (publickey).");
+      const card = MOCK_REPOS[`${repo.owner}/${repo.repo}`.toLowerCase()];
+      const mib = (card?.sizeKb ?? 20000) / 1024;
+      progress({ phase: "download", percent: 0, line: `$ git clone --progress ${repo.cloneUrl} ${parent}/${repo.repo}` });
+      const total = cloneSim === "slow" ? 10000 : 2600;
+      for (let pct = 0; pct <= 100; pct += 2) {
+        if (mockCloneCancelled) throw mockCloneFail("cancelled");
+        if (mockOfflineOnce && pct >= 8) { mockOfflineOnce = false; throw mockCloneFail("offline", "fatal: unable to access 'https://github.com/': Could not resolve host: github.com"); }
+        progress({ phase: "download", percent: (pct / 100) * 0.85, amount: `${((mib * pct) / 100).toFixed(2)} MiB` });
+        if (pct % 20 === 0) progress({ phase: "download", line: `Receiving objects: ${pct}% (${Math.round(18.04 * pct)}/1804)` });
+        await wait(total / 50);
+      }
+      progress({ phase: "download", percent: 1, line: "Resolving deltas: 100% (903/903), done." });
+      progress({ phase: "install" });
+      for (const line of ["$ pnpm install", "Packages: +312", cloneSim === "install" ? "ERR_PNPM_FETCH_404 GET https://registry.npmjs.org/@acme%2fprivate-ui: Not Found" : "Done in 4.1s"]) {
+        if (mockCloneCancelled) throw mockCloneFail("cancelled");
+        progress({ phase: "install", line });
+        await wait(500);
+      }
+      const sub = repo.treePath?.split("/").slice(1).join("/") ?? "";
+      const s: Site = { ...site, id: "site-" + Math.random().toString(36).slice(2), path: `${parent}/${repo.repo}${sub ? "/" + sub : ""}`, name: sub ? sub.split("/").pop()! : repo.repo, lastSessionId: null, favorite: false, needsInstall: cloneSim === "install", publish: null, preview: null };
+      mockSites.push(s);
+      return { ...s };
+    },
+    siteCloneCancel: async () => { mockCloneCancelled = true; },
+    githubSignInStart: async () => {
+      await wait(400);
+      if (query.get("signin") === "off") throw "GitHub sign-in isn't available in this build.";
+      mockSignInCancelled = false;
+      return { userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", interval: 5, expiresIn: 900 };
+    },
+    githubSignInWait: async () => {
+      for (let i = 0; i < 30; i++) { if (mockSignInCancelled) throw "cancelled"; await wait(100); }
+      mockSignedIn = true;
+      return "you";
+    },
+    githubSignInCancel: async () => { mockSignInCancelled = true; },
     siteAdd: async (path) => { const s = { ...site, id: "site-" + Math.random().toString(36).slice(2), path, name: path.split("/").pop() || "site", lastSessionId: null }; mockSites.push(s); return s; },
     siteRemove: async () => {},
     siteRefresh: async (siteId) => {

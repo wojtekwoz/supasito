@@ -69,7 +69,7 @@ This builds `Supasito.app` and copies it into Applications. Nothing else on your
 
 1. **Open Supasito.** If a tool is missing you see a "Before you start" checklist. Fix what it names and click **Check again**. Otherwise you see "Open a site to begin".
 2. **Pick a site.**
-   - **New site** copies the bundled Next.js starter into a folder you choose, installs packages and opens a session. Describe the site in your first message.
+   - **New site or GitHub link…** takes either one. A name copies the bundled Next.js starter into your sites folder (asked once, `~/Sites` by default), installs packages and opens a session; describe the site in your first message. A link to a GitHub repository, or any https address ending in `.git`, downloads it into the same folder, installs packages and starts the preview. Private repositories use the sign-in git already has on your Mac, then the GitHub CLI's, then **Sign in to GitHub**. Pressing ⌘V with a link anywhere outside a text field opens the same dialog.
    - **Open a folder…** points Supasito at a project you already have. It detects the framework, offers to install packages when `node_modules` is missing, and offers to set up git when the folder has none. In a monorepo, open the app's own folder (for example `apps/web`), not the workspace root.
 3. **Wait for the preview.** The right pane shows the site as soon as its dev server is ready. The terminal icon in the preview toolbar shows the server's log.
 4. **Ask for a change.** Type it and press Enter. Claude's steps stream in the middle pane ("Editing components/hero.tsx") and the preview reloads by itself.

@@ -1,5 +1,5 @@
 import type {
-  Attachment, Catalogue, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
+  Attachment, Catalogue, DeviceCode, DevInfo, EventName, GitStatus, PublishResult, PublishTarget, RepoLookup, RestoreReport, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -11,7 +11,16 @@ export interface Backend {
   /** The model catalogue from the app state; `refresh` also asks Codex for its list (through the site's app-server) when it is installed. */
   modelsList(siteId: string | null, refresh: boolean): Promise<Catalogue>;
   sitesList(): Promise<Site[]>;
-  sitePickFolder(): Promise<string | null>;
+  sitePickFolder(title?: string): Promise<string | null>;
+  /** A pasted link (PLAN §8e): GitHub's card, whether you already have it, and where a clone would go in `parent`. Null when it is not a link. */
+  siteRepoLookup(input: string, parent: string | null): Promise<RepoLookup | null>;
+  /** Clone into `parent`, install packages and add the site; progress arrives as `clone://progress`. Rejects with a `CloneError`. */
+  siteClone(input: string, parent: string): Promise<Site>;
+  siteCloneCancel(): Promise<void>;
+  /** GitHub's device flow: a code to enter on github.com; `githubSignInWait` resolves with the account name once approved. */
+  githubSignInStart(): Promise<DeviceCode>;
+  githubSignInWait(): Promise<string>;
+  githubSignInCancel(): Promise<void>;
   siteAdd(path: string): Promise<Site>;
   siteRemove(siteId: string): Promise<void>;
   siteRefresh(siteId: string): Promise<Site>;
@@ -79,7 +88,13 @@ async function tauriBackend(): Promise<Backend> {
     toolchainCheck: () => invoke("toolchain_check"),
     modelsList: (siteId, refresh) => invoke("models_list", { siteId, refresh }),
     sitesList: () => invoke("sites_list"),
-    sitePickFolder: () => invoke("site_pick_folder"),
+    sitePickFolder: (title) => invoke("site_pick_folder", { title: title ?? null }),
+    siteRepoLookup: (input, parent) => invoke("site_repo_lookup", { input, parent }),
+    siteClone: (input, parent) => invoke("site_clone", { input, parent }),
+    siteCloneCancel: () => invoke("site_clone_cancel"),
+    githubSignInStart: () => invoke("github_sign_in_start"),
+    githubSignInWait: () => invoke("github_sign_in_wait"),
+    githubSignInCancel: () => invoke("github_sign_in_cancel"),
     siteAdd: (path) => invoke("site_add", { path }),
     siteRemove: (siteId) => invoke("site_remove", { siteId }),
     siteRefresh: (siteId) => invoke("site_refresh", { siteId }),

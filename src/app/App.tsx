@@ -3,9 +3,10 @@ import { useStore } from "./store";
 import { Rail } from "./Rail";
 import { SessionPane } from "./Session";
 import { Preview } from "./Preview";
-import { DiffDialog, NewSiteDialog, PublishDialog, RemoveSiteDialog, RulesDialog, SettingsDialog } from "./Dialogs";
+import { AddSiteDialog, DiffDialog, PublishDialog, RemoveSiteDialog, RulesDialog, SettingsDialog } from "./Dialogs";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { cx } from "../util";
+import { parseRepoLink } from "../repo";
 
 export default function App() {
   const init = useStore((s) => s.init);
@@ -57,7 +58,7 @@ export default function App() {
         if (st.rules.open && !st.rules.saving) { st.closeRules(); return; }
         if (st.picking) { st.setPicking(false); return; }
         if (st.publish.open && !st.publish.running) { st.setPublishOpen(false); return; }
-        if (st.newSite.open && !st.newSite.running) { st.openNewSite(false); return; }
+        if (st.addSite.open && !st.addSite.running) { st.openAddSite(false); return; }
         if (st.removing) { st.askRemoveSite(null); return; }
         if (st.siteMenuOpen) { st.setSiteMenuOpen(false); return; }
         if (st.settingsOpen) { st.setSettingsOpen(false); return; }
@@ -69,6 +70,33 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // ⌘V with a repository link anywhere outside a text field opens Add a site with it (PLAN §8e). The paste event carries
+  // what the user just pasted, so no clipboard permission is involved. WebKit may not dispatch `paste` when nothing
+  // editable has focus, so a ⌘V that produced no paste event reads the clipboard itself (macOS may show its Paste button).
+  useEffect(() => {
+    let fallback: ReturnType<typeof setTimeout> | null = null;
+    const editable = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    const offer = (text: string) => {
+      const st = useStore.getState();
+      if (!parseRepoLink(text) || st.addSite.running) return false;
+      st.openAddSite(true, text.trim());
+      return true;
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (fallback) { clearTimeout(fallback); fallback = null; }
+      if (editable(e.target) || editable(document.activeElement)) return;
+      if (offer(e.clipboardData?.getData("text/plain") ?? "")) e.preventDefault();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "v" || editable(e.target)) return;
+      if (fallback) clearTimeout(fallback);
+      fallback = setTimeout(() => { fallback = null; void navigator.clipboard?.readText().then(offer).catch(() => {}); }, 80);
+    };
+    window.addEventListener("paste", onPaste);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("paste", onPaste); window.removeEventListener("keydown", onKey); if (fallback) clearTimeout(fallback); };
   }, []);
 
   // Dropping a file anywhere outside the composer must not navigate the window.
@@ -86,7 +114,7 @@ export default function App() {
       <ErrorBoundary label="rail"><Rail /></ErrorBoundary>
       <ErrorBoundary label="session"><SessionPane /></ErrorBoundary>
       <ErrorBoundary label="preview"><Preview /></ErrorBoundary>
-      <NewSiteDialog />
+      <AddSiteDialog />
       <RemoveSiteDialog />
       <PublishDialog />
       <DiffDialog />

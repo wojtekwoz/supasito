@@ -82,7 +82,9 @@ export type CodexStatus = Tool & { loggedIn?: boolean | null };
 export type Toolchain = { claude: ClaudeStatus; codex?: CodexStatus | null; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null; hasBrew?: boolean; gitIdentity?: boolean };
 /** `hidden` lists the interface elements switched off in Settings → Interface (keys in src/app/ui.ts).
  *  `updatesEnabled` is the once-a-day check for a newer Supasito, on unless Settings → Updates turns it off. */
-export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null; updatesEnabled?: boolean | null };
+export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null; updatesEnabled?: boolean | null;
+  /** Where new and pasted sites go; null until the first one, when the dialog suggests `defaultSitesFolder` (~/Sites). */
+  sitesFolder?: string | null; defaultSitesFolder?: string | null };
 
 /** One fetched model (models.rs `Model`): `backend` says which CLI runs it; `efforts` empty = the backend's fixed list. */
 export type CatalogueModel = { id: string; label: string; hint?: string; backend?: "claude" | "codex" | string; isDefault?: boolean; efforts?: string[]; defaultEffort?: string | null; fast?: boolean; hidden?: boolean };
@@ -97,6 +99,18 @@ export type SessionOverrides = { model?: string | null; effort?: string | null; 
   handoff?: string | null;
   /** The session this one continues; the backend records the link in the site as it mints the new id. */
   continues?: string | null };
+/** A pasted repository link (clone.rs `RepoRef`, mirrored by src/repo.ts). `treePath` is everything after `/tree/` in a GitHub link. */
+export type RepoRef = { host: string; owner: string; repo: string; cloneUrl: string; ssh: boolean; treePath: string | null; fromCommand: boolean };
+/** GitHub's public card for a repository; absent for a private one, another host, or when the API did not answer. */
+export type RepoInfo = { description?: string | null; private?: boolean | null; sizeKb?: number | null; defaultBranch?: string | null; language?: string | null };
+/** What the dialog knows before anything downloads: the card, whether you already have it, and where a clone would go. */
+export type RepoLookup = { repo: RepoRef; info?: RepoInfo | null; existingSiteId?: string | null; existingPath?: string | null; dest?: string | null };
+export type CloneErrorKind = "private" | "missing" | "offline" | "ssh" | "branch" | "folder" | "disk" | "nogit" | "link" | "busy" | "cancelled" | "other";
+/** `detail` is git's own last line; `signIn` says this build can offer Sign in to GitHub. */
+export type CloneError = { kind: CloneErrorKind; detail?: string | null; signIn?: boolean };
+/** `clone://progress`: check (asking the remote), download (`percent` 0…1), install. */
+export type CloneProgress = { phase: "check" | "download" | "install"; percent?: number | null; amount?: string | null; line?: string | null };
+export type DeviceCode = { userCode: string; verificationUri: string; interval: number; expiresIn: number };
 export type PublishResult = { ok: boolean; code?: number | null; url?: string | null; log: string[] };
 
 export type RestoreReport = { restored: string[]; deleted: string[]; skipped: string[] };
@@ -112,5 +126,6 @@ export type EventName =
   | "dev://log"
   | "publish://log"
   | "install://log"
+  | "clone://progress"
   | "update://available"
   | "update://progress";

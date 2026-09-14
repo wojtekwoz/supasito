@@ -1,33 +1,213 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useStore } from "./store";
-import { Check } from "../ui/Icons";
-import { Checklist } from "./Checklist";
+import { Branch, Check, Chevron, Folder, Plus, Shield, Sparkle } from "../ui/Icons";
+import { Checklist, nodeTooOld } from "./Checklist";
 import { PlanRows } from "./Usage";
 import { EFFORT_HINTS, baseModel, effortsFor, hasLongContext, isCodexModel, isEffort } from "../models";
 import { UI_GROUPS } from "./ui";
 import { cx } from "../util";
 import { openExternal } from "../backend";
+import { looksLikeAddress, webLinkOf } from "../repo";
+import type { CloneError } from "../types";
 
-export function NewSiteDialog() {
-  const ns = useStore((s) => s.newSite);
-  const openNewSite = useStore((s) => s.openNewSite);
+/** Words for each way adding a site from a link can fail (clone.rs `classify`). */
+function cloneErrorText(e: CloneError): { title: string; body: string } {
+  switch (e.kind) {
+    case "private": return { title: "This repository is private, or the link is wrong.", body: e.signIn ? "If it's yours, sign in to GitHub once and Supasito can download it." : "If it's yours, download it once with GitHub Desktop, then use Open a folder." };
+    case "missing": return { title: "GitHub can't find this repository.", body: "Check the link for a typo, or ask the owner to give your GitHub account access." };
+    case "offline": return { title: "You seem to be offline.", body: "Connect to the internet, then try again. Nothing was saved." };
+    case "ssh": return { title: "This Mac has no SSH key for GitHub.", body: "The same repository downloads with its regular web link." };
+    case "branch": return { title: "That branch isn't in the repository.", body: "The link may point at a branch that was deleted. The repository's main page still works." };
+    case "folder": return { title: `The folder ${e.detail ?? ""} isn't in this repository.`, body: "Nothing was saved. The repository's main page still works." };
+    case "disk": return { title: "This Mac is out of space.", body: "Free some space, then try again. Nothing was saved." };
+    case "nogit": return { title: "Downloading a site needs git.", body: "The line below says how to get it." };
+    case "busy": return { title: "Another site is still being added.", body: "Wait for it to finish, then try again." };
+    default: return { title: "The download didn't work.", body: e.detail ?? "Try again in a moment." };
+  }
+}
+
+const aboutSize = (kb?: number | null) => (kb == null ? null : kb < 1024 ? "under 1 MB" : `about ${Math.round(kb / 1024)} MB`);
+const slugify = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/** New site and Add a site from GitHub share one field (PLAN §8e): a name starts from the starter, a pasted link clones. */
+export function AddSiteDialog() {
+  const a = useStore((s) => s.addSite);
+  const tools = useStore((s) => s.tools);
+  const sites = useStore((s) => s.sites);
+  const home = useStore((s) => s.settings.defaultSitesFolder?.replace(/\/Sites$/, "") ?? null);
+  const openAddSite = useStore((s) => s.openAddSite);
+  const setValue = useStore((s) => s.setAddSiteValue);
+  const chooseFolder = useStore((s) => s.chooseSitesFolder);
   const createSite = useStore((s) => s.createSite);
-  const [name, setName] = useState("");
-  if (!ns.open) return null;
-  return (
-    <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !ns.running) openNewSite(false); }}>
-      <div className="modal">
-        <h2>New site</h2>
-        <p style={{ margin: 0, color: "var(--ink-2)" }}>Supasito copies its Next.js starter into a folder you choose, installs packages, and starts a session. Describe the site in your first message.</p>
-        <div className="row2">
-          <label>Name</label>
-          <input className="text-input" autoFocus placeholder="e.g. ClarityOps" value={name} onChange={(e) => setName(e.target.value)} disabled={ns.running} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) void createSite(name); }} />
+  const cloneSite = useStore((s) => s.cloneSite);
+  const cancelClone = useStore((s) => s.cancelClone);
+  const openExisting = useStore((s) => s.openExistingSite);
+  const startSignIn = useStore((s) => s.startGithubSignIn);
+  const continueSignIn = useStore((s) => s.continueGithubSignIn);
+  const cancelSignIn = useStore((s) => s.cancelGithubSignIn);
+  const [details, setDetails] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!a.open) return;
+    setDetails(false);
+    requestAnimationFrame(() => { const i = inputRef.current; if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
+  }, [a.open]);
+  if (!a.open) return null;
+
+  const tilde = (p: string | null | undefined) => (p && home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p ?? "");
+  const repo = a.repo;
+  const name = a.value.trim();
+  const info = a.lookup?.info ?? null;
+  const existing = a.lookup?.existingSiteId ? sites.find((s) => s.id === a.lookup!.existingSiteId) ?? null : null;
+  const mode = a.running ? "running" : a.signIn ? "signin" : repo
+    ? a.error ? "error" : a.looking ? "looking" : existing || a.lookup?.existingPath ? "exists" : "card"
+    : !name ? "empty" : looksLikeAddress(name) ? "address" : "name";
+  const noNode = !!tools && (!tools.node.ok || nodeTooOld(tools));
+  const noGit = !!tools && !tools.git.ok;
+  const [branch, ...folderSegs] = repo?.treePath?.split("/") ?? [];
+  const subFolder = folderSegs.join("/");
+  const cloneDest = a.lookup?.dest ?? (repo && a.folder ? `${a.folder}/${repo.repo}` : a.folder);
+  // For a folder inside a repository the site is that folder, so that is the path to show.
+  const target = mode === "name" ? `${a.folder}/${slugify(name) || "new-site"}` : subFolder ? `${cloneDest}/${subFolder}` : cloneDest;
+  const close = () => { if (a.running) return; if (a.signIn) cancelSignIn(); openAddSite(false); };
+
+  const badge = repo?.ssh ? <span className="add-badge">SSH link</span> : info?.private === false ? <span className="add-badge">Public</span> : null;
+  const repoLine = repo && <div className="add-line"><Branch className="glyph" /><span className="grow add-name">{repo.owner} / <b>{repo.repo}</b></span>{badge}</div>;
+  const folderLine = a.firstFolder ? (
+    <div className="add-where">
+      <div className="add-line"><Folder className="glyph" /><span className="grow">{a.folder ? <>Your sites will live in <b className="mono">{tilde(a.folder)}</b></> : "Choose where your sites will live"}</span><button className="link-btn" onClick={() => void chooseFolder()}>{a.folder ? "Change…" : "Choose…"}</button></div>
+      <p>Supasito asks this once. New sites go there too.</p>
+    </div>
+  ) : (
+    <div className="add-line muted"><Folder className="glyph" /><span className="grow mono" title={target}>{tilde(target)}</span><button className="link-btn" onClick={() => void chooseFolder()}>Change</button></div>
+  );
+  const detailsBlock = a.log.length > 0 && (
+    <>
+      <button className="details-btn" aria-expanded={details} onClick={() => setDetails(!details)}><Chevron className="glyph" /> Details</button>
+      {details && <div className="log" ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}>{a.log.slice(-200).join("\n")}</div>}
+    </>
+  );
+
+  let body: ReactNode = null;
+  let primary: { label: string; run?: () => void; disabled?: boolean } = { label: "Add site", disabled: true };
+  let secondary: { label: string; run: () => void } | null = null;
+  let cancel: { label: string; run: () => void; disabled?: boolean } = { label: "Cancel", run: close };
+  switch (mode) {
+    case "empty":
+      body = <p className="add-help">A name starts a fresh site from the starter. A link brings in a site that already lives on GitHub.</p>;
+      break;
+    case "address":
+      body = <div className="add-line warn">That link isn't a repository. Paste the address of the repository's main page, like github.com/owner/name.</div>;
+      break;
+    case "name":
+      body = <>
+        <div className="add-line"><Sparkle className="glyph" /><span>Starts a fresh site from Supasito's starter. Describe it in your first message.</span></div>
+        {noNode && <div className="add-line warn">New sites need a recent Node.js. The checklist on the welcome screen says how to get it.</div>}
+        {folderLine}
+        {a.message && <div className="err">{a.message}</div>}
+      </>;
+      primary = { label: "Create site", run: () => void createSite(name), disabled: noNode || !a.folder };
+      break;
+    case "looking":
+      body = <div className="add-line muted"><span className="spinner" /><span>Looking up <b>{repo!.owner}/{repo!.repo}</b>…</span></div>;
+      break;
+    case "card":
+      body = <>
+        <div className="add-repo">
+          {repoLine}
+          {info?.description && <p className="add-desc">{info.description}</p>}
+          <div className="add-meta">{[info?.language, aboutSize(info?.sizeKb)].filter(Boolean).join(" · ") || `${repo!.host}/${repo!.owner}/${repo!.repo}`}</div>
+          {branch && <div className="add-sub"><Folder className="glyph" /><span>{subFolder ? <>Opens the <b>{subFolder}</b> folder, on branch <b>{branch}</b></> : <>On branch <b>{branch}</b></>}</span></div>}
+          {repo!.fromCommand && <div className="add-sub"><Check className="glyph" /><span>Read from the command you copied</span></div>}
         </div>
-        {ns.running && <div className="log">{ns.log.slice(-14).join("\n") || "Copying the starter…"}</div>}
-        {ns.error && <div className="err">{ns.error}</div>}
+        <div className="add-line muted"><Shield className="glyph" /><span>Supasito will run this project's code on your Mac.</span></div>
+        {noGit ? <Checklist compact /> : folderLine}
+        {a.note && <div className="add-note">{a.note}</div>}
+      </>;
+      primary = { label: "Add site", run: () => void cloneSite(), disabled: noGit || !a.folder };
+      break;
+    case "exists":
+      body = <div className="add-found"><Check className="glyph" /><div><b>You already have this one.</b><span>{existing ? <>{existing.name}, in <span className="mono">{tilde(existing.path)}</span></> : <>In <span className="mono">{tilde(a.lookup?.existingPath)}</span></>}</span></div></div>;
+      primary = { label: "Open it", run: () => void openExisting() };
+      break;
+    case "error": {
+      const e = a.error!;
+      const text = cloneErrorText(e);
+      body = <>
+        {repoLine}
+        <div className="add-err"><b>{text.title}</b><span>{text.body}</span></div>
+        {e.kind === "nogit" && <Checklist compact />}
+        {detailsBlock}
+      </>;
+      const retry = { label: "Try again", run: () => void cloneSite() };
+      primary = e.kind === "private" && e.signIn ? { label: "Sign in to GitHub", run: () => void startSignIn() }
+        : e.kind === "ssh" || e.kind === "branch" || e.kind === "folder" ? { label: e.kind === "ssh" ? "Use the web link instead" : "Use the main page", run: () => void cloneSite(webLinkOf(repo!)) }
+        : retry;
+      if (e.kind === "missing" || e.kind === "private") secondary = { label: "Edit link", run: () => { setValue(a.value); inputRef.current?.focus(); } };
+      break;
+    }
+    case "signin": {
+      const s = a.signIn!;
+      body = <>
+        {repoLine}
+        <div className="add-signin">
+          <b>Sign in to GitHub</b>
+          {s.stage === "starting" && <div className="add-line muted"><span className="spinner" /><span>Asking GitHub for a code…</span></div>}
+          {s.code && <>
+            <p>{s.stage === "waiting" ? "Enter this code on the GitHub page that opened, then approve Supasito." : "GitHub will ask for this code. Copy it, then approve Supasito on the page that opens."}</p>
+            <div className="add-code">{s.code.userCode}</div>
+            {s.stage === "waiting" && <div className="add-line muted"><span className="spinner" /><span>Waiting for you to approve on GitHub…</span></div>}
+          </>}
+          {s.error && <div className="err">{s.error}</div>}
+          <p className="small">Supasito keeps no password. Your Mac's Keychain remembers the sign-in, so publishing to GitHub works too.</p>
+        </div>
+      </>;
+      cancel = { label: s.stage === "waiting" ? "Cancel" : "Back", run: cancelSignIn };
+      primary = s.stage === "waiting"
+        ? { label: "Open GitHub again", run: () => void openExternal(s.code!.verificationUri) }
+        : { label: "Copy code and open GitHub", run: () => void continueSignIn(), disabled: !s.code };
+      break;
+    }
+    case "running": {
+      const p = a.progress;
+      const downloading = a.running === "clone" && p?.phase === "download";
+      const pct = Math.floor((p?.percent ?? 0) * 100);
+      const label = a.running === "create" ? (a.log.some((l) => l.startsWith("$")) ? "Installing packages…" : "Copying the starter…")
+        : !p || p.phase === "check" ? (repo?.host === "github.com" ? "Connecting to GitHub…" : "Connecting…")
+        : p.phase === "download" ? `Downloading… ${pct}%` : "Installing packages…";
+      body = <>
+        {a.running === "clone" && repoLine}
+        <div className="add-prog">
+          <div className="add-prog-top"><b>{label}</b>{downloading && p?.amount && <span>{p.amount}</span>}</div>
+          <div className={cx("add-bar", !downloading && "busy")} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={downloading ? pct : undefined}>
+            <i style={downloading ? { width: `${Math.max(2, pct)}%` } : undefined} />
+          </div>
+          {detailsBlock}
+        </div>
+      </>;
+      primary = { label: a.running === "create" ? "Creating…" : "Adding…", disabled: true };
+      cancel = a.running === "clone" ? { label: "Cancel", run: () => void cancelClone() } : { label: "Cancel", run: close, disabled: true };
+      break;
+    }
+  }
+
+  const title = mode === "name" ? "New site" : repo ? (repo.host === "github.com" ? "Add a site from GitHub" : "Add a site from a link") : "Add a site";
+  return (
+    <div className="backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <div className="modal add-site" role="dialog" aria-modal="true" aria-label={title}>
+        <h2>{title}</h2>
+        <div className="add-field">
+          <span className={cx("lead", repo && "link")}>{repo ? <Branch /> : mode === "name" ? <Sparkle /> : <Plus />}</span>
+          <input ref={inputRef} id="add-site-input" className="text-input" autoComplete="off" spellCheck={false} placeholder="Name a new site, or paste a GitHub link"
+            aria-label="Site name or GitHub link" value={a.value} disabled={!!a.running || !!a.signIn}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && primary.run && !primary.disabled) { e.preventDefault(); primary.run(); } }} />
+        </div>
+        <div className="add-body">{body}</div>
         <div className="foot">
-          <button className="btn ghost" disabled={ns.running} onClick={() => openNewSite(false)}>Cancel</button>
-          <button className="btn primary" disabled={ns.running || !name.trim()} onClick={() => void createSite(name)}>{ns.running ? "Creating…" : "Choose a folder and create"}</button>
+          <button className="btn ghost" disabled={cancel.disabled} onClick={cancel.run}>{cancel.label}</button>
+          {secondary && <button className="btn ghost" onClick={secondary.run}>{secondary.label}</button>}
+          <button className="btn primary" disabled={primary.disabled || !primary.run} onClick={primary.run}>{primary.label}</button>
         </div>
       </div>
     </div>

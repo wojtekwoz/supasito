@@ -446,3 +446,38 @@ conversation in two.
   `finds_the_port_our_own_process_group_listens_on` devserver test under parallel `cargo test` (untouched by
   the branch, passes alone); Undo from a continuing draft marks the draft's copy of the item, which becomes
   the tail's on send.
+
+### Session 33 (2026-09-14) — paste a GitHub link, get a working preview (PLAN §8e, branch `github-link`)
+Planned in PLAN §8e, prototyped as a click-through page, then built.
+- **One field.** The New site dialog became Add a site: a name starts from the starter, a pasted link clones. The rail's +, its
+  menu and the welcome screen say "New site or GitHub link…". ⌘V with a link anywhere outside a text field opens the dialog
+  with it (App.tsx); when WebKit dispatches no `paste` event without an editable focus, a ⌘V reads the clipboard itself.
+  The sites folder is asked once (suggested `~/Sites`), saved as `sitesFolder`, and New site uses it too, so neither path
+  opens a folder picker any more.
+- **clone.rs.** `parse_repo_url` (page links, `/tree/<branch>/<folder>`, `/blob/…`, SSH, a copied `gh repo clone`, any https
+  `.git`), mirrored by `src/repo.ts` with the same table in both test files. `lookup` fills the card from GitHub's public API
+  and finds a site in the rail, or a folder in the sites folder, that already is the repository. `clone_repo` asks
+  `git ls-remote --heads` before writing anything (prompts off, `LC_ALL=C`, BatchMode SSH), resolves a branch with a slash
+  by the longest matching head, clones with `--progress` parsed on `\r`, installs with the site's package manager, and
+  removes only a folder it created on failure or Cancel. A failed install keeps the site for the preview's existing card.
+  Credentials: git's own helpers plus the Keychain, then `gh auth git-credential` on a private or missing answer.
+- **Plan change.** `--filter=blob:none` was dropped: on vercel/commerce the partial clone fetched the files at checkout
+  with no progress output, so the bar would have sat at 100% through most of the wait. Full clone: 5 s, 12 MB.
+- **Sign in to GitHub.** OAuth device flow; the token goes to the Keychain through `git credential approve` and is never
+  stored by Supasito. Compiled in only with `SUPASITO_GITHUB_CLIENT_ID`; without it the private error points to GitHub
+  Desktop and Open a folder.
+- **Errors recorded from git 2.51** and classified in tests: private (`could not read Username … terminal prompts
+  disabled`), missing (`Repository not found`), offline (`Could not resolve host`), ssh (`Permission denied (publickey)`),
+  branch (`Remote branch … not found`).
+
+Verified: `cargo test` (54 passed), `cargo test -- --ignored clone_public` against github.com (clones octocat/Hello-World,
+the same link again reuses the folder, a missing repository leaves nothing), `pnpm test:ui` including repo.test.ts,
+`tsc --noEmit`, and every dialog state in the mock (`?clone=private|missing|offline|ssh|slow`, `?signin=off`,
+`?sitesFolder=unset`, the ClarityOps "already have it" link, a `/tree/…` link, a name, a non-repository address): the paste
+event opens the dialog focused, progress reaches the bar, Cancel mid-download leaves no site, Escape does not close a
+running clone, Sign in → code → approve → the clone resumes.
+
+Not verified: anything in the Tauri window. ⌘V outside a text field in WKWebView, the clipboard fallback and its macOS
+Paste prompt, the dialog under the release CSP, and the device flow against GitHub (no OAuth App exists yet: create one
+with device flow enabled and put its client id in `.env.release`). A real private repository through the app, and an
+existing folder that is the repository but not in the rail (`existingPath`), are exercised only by code, not by hand.

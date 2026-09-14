@@ -322,6 +322,148 @@ CODEX.md (a §11 pointing here; "switching backend offers a new session" in mile
 Merging histories into one CLI store, a combined context ring across segments, editing the handoff,
 and per-backend settings. None of them shortens the loop.
 
+## 8e. v0.2.2 — paste a GitHub link, get a working preview (planned and built 2026-09-14 on `github-link`; CHANGELOG session 33)
+
+Today a site that lives on GitHub reaches Supasito only through a terminal: someone has to `git clone` it and then
+"Open a folder…". That is the one step of the loop a non-technical person cannot do, and it comes before *say*.
+This closes it without a new pane: the New site dialog also accepts a link, and everything after the link is
+work the app already knows how to do (detect, install, start the dev server, hand a dead end to Claude).
+
+**The claim.** Someone who has never opened a terminal copies a repository link from their browser, pastes it
+into Supasito, and is looking at the site running, with nothing to answer except where their sites live (once).
+
+### 8e.1 The flow, as the user sees it
+
+1. **Paste.** Three ways in, all landing in the same dialog, prefilled:
+   - The New site dialog has one field: *"Name a new site, or paste a GitHub link"*. A link turns the dialog into
+     the clone flow as you type; a name keeps today's starter flow. No tabs, no mode switch.
+   - The welcome screen and the rail's "+" menu name it: "New site or GitHub link…".
+   - ⌘V with a GitHub link anywhere outside a text field opens the dialog with the link in it. It uses the paste
+     event the user just made, so no clipboard permission and no reading the clipboard behind their back.
+2. **Recognise.** Within half a second of a valid link the field shows what it points at, before anything is
+   downloaded: `owner/repo`, its description, "Public · about 40 MB", and, for a `/tree/<branch>/<folder>` link,
+   "the apps/web folder on branch main". Source: GitHub's public API when it answers (no token, 60 requests an
+   hour is plenty), `git ls-remote` as the authority either way. An unrecognisable string just stays a name.
+3. **Where it goes.** Folder: `<sites folder>/<repo>`. The sites folder is asked for once, the first time either
+   New site or a clone runs, prefilled with `~/Sites` (created if missing, and outside the folders macOS asks
+   permission for), and shown afterwards as a quiet "in ~/Sites · Change" line under the field. New site uses the
+   same folder, so the per-site folder picker goes away for both.
+4. **One button: "Add site".** Then a single progress line with a bar, not a log:
+   *Downloading… 45%* → *Installing packages…* → *Starting the preview…*. The log stays available behind
+   "Details" for whoever wants it. Cancel is live the whole time and leaves nothing on disk.
+5. **Done.** The dialog closes, the site is selected, the preview is running. If the project has no dev command,
+   or install cannot clear, the existing hand-off runs ("Set up the preview": Claude's first task), exactly as it
+   does for a folder today (session 18, session 28).
+
+### 8e.2 What the link can be
+
+Parsed in Rust (`sites::parse_repo_url`), unit-tested, accepting what people actually copy:
+
+| Pasted | Clones | Site folder |
+|---|---|---|
+| `https://github.com/owner/repo` (with or without `.git`, trailing `/`, `?tab=…`, `#readme`) | https URL | repo root |
+| `github.com/owner/repo`, `owner/repo` only when it came with `github.com` | https URL | repo root |
+| `https://github.com/owner/repo/tree/<branch>/<path>` | https URL, that branch | `<path>` inside the clone (D5 already scopes git to a subfolder) |
+| `https://github.com/owner/repo/blob/…` | https URL | repo root (a file link means the repo) |
+| `git@github.com:owner/repo.git` | kept as SSH | repo root |
+| `gh repo clone owner/repo` (a copied command) | https URL | repo root |
+| any other `https://…` ending in `.git` (GitLab, Bitbucket, self-hosted) | as given | repo root, no preview card |
+
+A branch name with a slash (`feature/x`) is resolved by matching the longest `/tree/…` prefix against
+`git ls-remote --heads`, so `/tree/feature/x/apps/web` finds the branch before the folder.
+
+### 8e.3 Already have it?
+
+- Folder exists and its `origin` is the same repository → it is that site: add it (or select it if already in
+  the rail) and say "You already had this one". No download.
+- Folder exists and is something else → `<repo>-2`, shown in the "in ~/Sites" line before the button is pressed.
+- A site already in the rail with the same `origin` elsewhere on disk → select it; the dialog says where it is.
+
+Nothing is ever overwritten or merged into an existing folder.
+
+### 8e.4 Rust
+
+- `sites::parse_repo_url(&str) -> Option<RepoRef { clone_url, owner, repo, branch, subdir, host }>`.
+- `sites::repo_info(&RepoRef)` for the preview card: GitHub API with the `reqwest` already in Cargo.toml, 3 s
+  timeout, failure is silent (the card just shows `owner/repo`).
+- `sites::clone_repo(repo, parent, path_env, on_progress) -> Site`, mirroring `create_from_starter`:
+  1. `git ls-remote --heads <url>` first, with `GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` and
+     `LC_ALL=C`, so a private, missing or unreachable repository fails in a second, in English, before any folder
+     exists; the branch list it returns resolves `/tree/…`. Then `git clone --progress [--branch b] <url> <dest>` in its
+     own process group. *Changed while building:* this said `--filter=blob:none`, but a partial clone downloads the
+     files at checkout with no progress output at all (measured on vercel/commerce: the bar would sit at 100% for the
+     longest part of the wait), so the clone takes the full history and the bar stays honest.
+  2. Progress: split stderr on `\r` and `\n`, map `Receiving objects: NN%` to 0–85% and `Resolving deltas` /
+     `Updating files` to 85–100% of the download phase. Emitted as `clone://progress {phase, percent, line}`.
+  3. `Site::from_path(dest or dest/subdir)`, `mark_trusted`, then install through the same code as `run_install`
+     when `needs_install` (streamed into the same progress line), then return. The UI starts the dev server as
+     `selectSite` already does.
+  4. Failure or cancel at any step before the site is saved removes `dest` — the same rule New site follows.
+- `site_clone(url, parent)` and `site_clone_cancel()` commands; cancel kills the process group (the publish
+  cancel pattern). `sitesFolder: Option<String>` in `Persisted`, read and written through `settings_get/set`.
+- Errors, classified from recorded git output (tests carry the exact lines):
+
+| git says | The dialog says | Offers |
+|---|---|---|
+| `fatal: could not read Username for 'https://github.com': terminal prompts disabled` | This repository is private, or the link is wrong. | Sign in to GitHub (8e.5) |
+| `remote: Repository not found.` | GitHub can't find it. Check the link, or ask the owner to give your account access. | Try again |
+| `Could not resolve host` / connection timed out | You seem to be offline. | Try again |
+| `Permission denied (publickey)` (SSH link) | This Mac has no SSH key for GitHub. | Use the https link instead (one click, same repo) |
+| git missing / Xcode stub | The Checklist line for git, in the dialog, instead of the field | — |
+| anything else | The last line of git's output | Details |
+
+### 8e.5 Private repositories
+
+Recorded on this Mac: with no stored credentials git stops at the username prompt; with the Keychain helper it
+just works. So, in order:
+
+1. **Whatever git already has.** Clone first with the user's own credential helpers (osxkeychain ships with both
+   Apple's and Homebrew's git). Most people who have ever pushed from this Mac never see step 2.
+2. **`gh` if signed in.** On the "private" error, if `gh auth status` succeeds, retry once with
+   `-c credential.helper='!gh auth git-credential'`. No UI.
+3. **Sign in to GitHub** (the button). GitHub's OAuth device flow: the dialog shows an 8-character code with
+   "Copy and open GitHub", polls until the user approves, then hands the token to `git credential approve` so it
+   lands in the macOS Keychain under github.com. The clone retries by itself. Supasito keeps no token of its own:
+   after this, git — including Publish's push — authenticates the same way it would for a terminal user.
+   *Needs from you:* a GitHub OAuth App owned by the Supasito account with device flow enabled; only its public
+   client id ships in the app (device flow has no secret). This is the one piece that touches the network beyond
+   github.com's own git endpoints, and it creates no Supasito account (§3 still holds).
+
+*Built:* all three. Step 3 is compiled in only when `SUPASITO_GITHUB_CLIENT_ID` is set at build time
+(`.env.release`); a build without it says "download it once with GitHub Desktop, then use Open a folder" instead of
+offering the button. The OAuth App does not exist yet, so step 3 has not run against GitHub.
+
+### 8e.6 Trust
+
+Pasting a link is the same decision as opening a folder (D8): the site's `.claude/settings.json` applies, its
+install scripts and dev command run. For someone else's repository that is a real choice, so the preview card says
+it in one line — *"Supasito will run this project's code on your Mac."* — and nothing more. No second dialog.
+
+### 8e.7 Mock and tests
+
+- Mock: `?clone=private|missing|offline|ssh|exists|slow` (slow = a 10 s download with real progress ticks),
+  `?sitesFolder=unset` for the first-run folder question.
+- `cargo test`: URL table above, `/tree` branch-with-slash resolution against a fake heads list, progress parsing
+  from a recorded stderr, error classification from the recorded lines in 8e.4.
+- `cargo test -- --ignored clone_public`: clones octocat/Hello-World into a temp dir and asserts a Site comes back
+  with `is_git` and no leftover on cancel.
+
+### 8e.8 Acceptance
+
+- In the mock, every row of the error table reaches its message and its button works; cancel mid-download leaves
+  `window.__mock` with no site and no folder.
+- In the release app: paste a public Next repo link and a public Astro monorepo `/tree/main/apps/web` link, both
+  reach a running preview with no other input than the first-time folder.
+- A private repo of yours clones on this Mac with no prompt (step 1), and under a fake `HOME` it shows the private
+  error rather than hanging.
+- The §9 v0.2 fresh-account walk includes a pasted link.
+
+### 8e.9 Cut
+
+A list of your GitHub repositories to pick from, a branch picker, forking, "Open in Supasito" buttons or a
+`supasito://` link handler, GitLab- or Bitbucket-specific previews, Git LFS setup, and cloning into an existing
+non-empty folder. Each is a surface; none gets a person from a link to a preview any faster.
+
 ## 9. Roadmap
 
 Each version is a claim you can make honestly when it ends, not a feature list. The thesis holds:
@@ -362,6 +504,11 @@ defaults to a model Supasito cannot show), and changing agent mid-conversation s
 in two. §8d has the plan: the list comes from `model/list` and a served catalogue, and a conversation is
 a chain of backend sessions shown as one. The claim: you pick any model either CLI offers today, and
 the rail never shows you the seam between them.
+
+**v0.2.2 — a GitHub link is a site.** Today a repository reaches Supasito only through a terminal, which is
+the one step before *say* a non-technical person cannot take. §8e has the plan: the New site field also takes a
+link, the app clones, installs and starts the preview, and private repositories use the credentials git already
+has before asking anyone to sign in. The claim: paste a link from the browser, see the site running.
 
 **v0.3 — survives other people's projects.** Everything so far assumes projects shaped like yours.
 Known holes, all from §7: a monorepo with the site at the repository root, Nuxt with a custom srcDir,

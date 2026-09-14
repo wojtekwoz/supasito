@@ -30,6 +30,9 @@ pub struct Persisted {
     pub update_skipped: Option<String>,
     /// The model catalogue as last fetched (models.rs): Codex's from `model/list`, Claude's from the served file.
     pub models: Catalogue,
+    /// Where New site and a pasted GitHub link put sites (PLAN §8e); None until the first one is added, when the
+    /// dialog asks once, suggesting ~/Sites.
+    pub sites_folder: Option<String>,
 }
 
 /// What a fresh install hides: the chips under the composer, the picker button in the composer, the keyboard hint,
@@ -52,6 +55,7 @@ impl Default for Persisted {
             update_checked_at: 0,
             update_skipped: None,
             models: Catalogue::default(),
+            sites_folder: None,
         }
     }
 }
@@ -67,6 +71,11 @@ pub struct AppState {
     pub publishes: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
     /// PATH as seen by the user's login shell, so spawned tools resolve like in a terminal.
     pub path_env: String,
+    /// The one clone that may run at a time (clone.rs), for Cancel.
+    pub clone_slot: crate::clone::SlotRef,
+    /// The GitHub sign-in in progress: its code, and whether the user cancelled the wait.
+    pub github_code: Mutex<Option<crate::clone::DeviceCode>>,
+    pub github_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -95,6 +104,9 @@ impl AppState {
             dev: devserver::Registry::new(dir.join("dev-pids.json")),
             publishes: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             path_env: login_shell_path(),
+            clone_slot: Default::default(),
+            github_code: Mutex::new(None),
+            github_cancel: Default::default(),
         })
     }
 

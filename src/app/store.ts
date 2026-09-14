@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, Catalogue, ClaudeStatus, DevInfo, GitStatus, PermissionRequest, PublishTarget, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
+import type { Attachment, Catalogue, ClaudeStatus, CloneError, CloneProgress, DeviceCode, DevInfo, GitStatus, PermissionRequest, PublishTarget, RepoLookup, RepoRef, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, concatSegments, emptySession, expirePermissions, handoffItem, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type Segment, type SessionState } from "../agent/transcript";
 import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
 import { BUILTIN_MODELS, isCodexModel, mergeModels, setModels, type ModelOption } from "../models";
 import { routeForFile } from "../routes";
+import { parseRepoLink } from "../repo";
 
 export const DRAFT = "draft";
 
@@ -46,7 +47,58 @@ export type Device = "desktop" | "tablet" | "phone";
 type PublishState = { open: boolean; running: boolean; log: string[]; url: string | null; error: string | null; cancelled: boolean; target: PublishTarget; step: "" | "commit" | "push" | "deploy" };
 type DiffState = { open: boolean; loading: boolean; files: string[]; text: string; error: string | null };
 type RulesState = { open: boolean; loading: boolean; saving: boolean; text: string; error: string | null };
-type NewSiteState = { open: boolean; running: boolean; log: string[]; error: string | null };
+/** The preview card's "Get this site ready" (install) run. */
+type NewSiteState = { running: boolean; log: string[]; error: string | null };
+/** The Add a site dialog (PLAN §8e): one field that takes a name for a new site or a pasted repository link. */
+export type AddSiteState = {
+  open: boolean;
+  value: string;
+  /** `value` read as a link, the moment it is one. */
+  repo: RepoRef | null;
+  /** GitHub's card, whether you already have it and where it would go; null while looking or when the lookup failed. */
+  lookup: RepoLookup | null;
+  looking: boolean;
+  /** The sites folder this dialog uses; saved when a site is added. */
+  folder: string;
+  /** No sites folder was ever saved: the dialog says where sites will live, once. */
+  firstFolder: boolean;
+  running: null | "create" | "clone";
+  progress: CloneProgress | null;
+  log: string[];
+  error: CloneError | null;
+  /** New site's own failure, as text. */
+  message: string | null;
+  note: string | null;
+  signIn: null | { stage: "starting" | "code" | "waiting"; code: DeviceCode | null; error: string | null };
+};
+
+const emptyAddSite = (settings: Settings): AddSiteState => ({
+  open: false, value: "", repo: null, lookup: null, looking: false,
+  folder: settings.sitesFolder || settings.defaultSitesFolder || "", firstFolder: !settings.sitesFolder,
+  running: null, progress: null, log: [], error: null, message: null, note: null, signIn: null,
+});
+type SetFn = (partial: Partial<Store>) => void;
+const toCloneError = (e: unknown): CloneError =>
+  e && typeof e === "object" && "kind" in e ? (e as CloneError) : { kind: "other", detail: String(e) };
+
+/** Look the pasted link up once typing settles; an older answer never overwrites a newer link. */
+let lookupSeq = 0;
+async function runLookup(get: () => Store, set: SetFn, delay = 300) {
+  const seq = ++lookupSeq;
+  if (delay) await new Promise((r) => setTimeout(r, delay));
+  if (seq !== lookupSeq || !get().addSite.repo) return;
+  const { value, folder } = get().addSite;
+  const lookup = await api.siteRepoLookup(value, folder || null).catch(() => null);
+  if (seq !== lookupSeq) return;
+  set({ addSite: { ...get().addSite, lookup, looking: false } });
+}
+
+async function rememberSitesFolder(get: () => Store, set: SetFn) {
+  const folder = get().addSite.folder;
+  if (!folder || get().settings.sitesFolder === folder) return;
+  set({ settings: { ...get().settings, sitesFolder: folder } });
+  await api.settingsSet({ sitesFolder: folder }).catch(() => {});
+}
 
 export type Store = {
   ready: boolean;
@@ -93,6 +145,7 @@ export type Store = {
   /** Time of the last commit made from Supasito; turns before it can no longer be undone. */
   committedAt: number;
   newSite: NewSiteState;
+  addSite: AddSiteState;
   /** Site id the "Remove from the sidebar?" dialog is asking about; null when closed. */
   removing: string | null;
   /** The "All sites" dropdown in the rail (⌘⇧O). */
@@ -119,8 +172,20 @@ export type Store = {
   removeSite: (id: string) => Promise<void>;
   /** The preview card's one button: install what the site needs, and hand over to Claude if that is not enough. */
   prepareSite: (id: string) => Promise<void>;
+  /** Opens the Add a site dialog, prefilled when a link was pasted; closing is refused while it is adding. */
+  openAddSite: (open: boolean, value?: string) => void;
+  setAddSiteValue: (value: string) => void;
+  chooseSitesFolder: () => Promise<void>;
   createSite: (name: string) => Promise<void>;
-  openNewSite: (open: boolean) => void;
+  /** Clone the link in the field (or `input`), install, add and select the site. */
+  cloneSite: (input?: string) => Promise<void>;
+  cancelClone: () => Promise<void>;
+  /** "You already have this one": select that site, or add the folder that already is the repository. */
+  openExistingSite: () => Promise<void>;
+  startGithubSignIn: () => Promise<void>;
+  /** Copy the code, open GitHub, wait for approval, then clone again. */
+  continueGithubSignIn: () => Promise<void>;
+  cancelGithubSignIn: () => void;
   newSession: () => void;
   openSession: (id: string, forSiteId?: string) => Promise<void>;
   send: (text: string) => Promise<void>;
@@ -313,7 +378,8 @@ export const useStore = create<Store>((set, get) => ({
   diff: { open: false, loading: false, files: [], text: "", error: null },
   rules: { open: false, loading: false, saving: false, text: "", error: null },
   committedAt: 0,
-  newSite: { open: false, running: false, log: [], error: null },
+  newSite: { running: false, log: [], error: null },
+  addSite: emptyAddSite({}),
   removing: null,
   siteMenuOpen: false,
   toast: null,
@@ -332,7 +398,7 @@ export const useStore = create<Store>((set, get) => ({
       // The toolchain check runs `claude auth status`, `node --version` etc.; don't hold the window on it.
       const toolsP = api.toolchainCheck().then((tools) => set({ tools, claude: tools.claude })).catch((e) => get().showToast(`Could not check the tools on this Mac: ${e}`));
       const [settings, sites, running] = await Promise.all([api.settingsGet(), api.sitesList(), api.agentRunning()]);
-      set({ settings, sites, running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
+      set({ settings, sites, addSite: emptyAddSite(settings), running: Object.fromEntries(running.map((r) => [r.sessionId, true])) });
       // The cached catalogue now (instant); the live `model/list` comes with the first site (through its app-server, so
       // no second Codex process just to list), on Recheck, and whenever the cache is an hour old.
       await get().refreshModels(false);
@@ -437,9 +503,19 @@ export const useStore = create<Store>((set, get) => ({
       await api.on("publish://log", ({ line }) => {
         set({ publish: { ...get().publish, log: [...get().publish.log, line] } });
       });
-      await api.on("install://log", ({ line }) => {
+      await api.on("install://log", ({ siteId, line }) => {
+        // New site's install reports no site id yet; it belongs to the Add a site dialog.
+        const a = get().addSite;
+        if (siteId == null && a.running === "create") { set({ addSite: { ...a, log: [...a.log.slice(-300), line] } }); return; }
         const ns = get().newSite;
         set({ newSite: { ...ns, log: [...ns.log.slice(-200), line] } });
+      });
+      await api.on("clone://progress", (p: CloneProgress) => {
+        const a = get().addSite;
+        if (a.running !== "clone") return;
+        const same = a.progress?.phase === p.phase;
+        const progress: CloneProgress = { phase: p.phase, percent: p.percent ?? (same ? a.progress?.percent : null), amount: p.amount ?? (same ? a.progress?.amount : null) };
+        set({ addSite: { ...a, progress, log: p.line ? [...a.log.slice(-300), p.line] : a.log } });
       });
 
       set({ ready: true });
@@ -538,19 +614,120 @@ export const useStore = create<Store>((set, get) => ({
     await get().setupPreview(id);
   },
 
-  openNewSite(open) { set({ newSite: { open, running: false, log: [], error: null } }); },
+  openAddSite(open, value = "") {
+    const cur = get().addSite;
+    if (cur.running) { if (open && !cur.open) set({ addSite: { ...cur, open: true } }); return; }
+    if (cur.signIn?.stage === "waiting") void api.githubSignInCancel();
+    lookupSeq++;
+    set({ addSite: { ...emptyAddSite(get().settings), open } });
+    if (open && value) get().setAddSiteValue(value);
+  },
+
+  setAddSiteValue(value) {
+    const a = get().addSite;
+    if (a.running) return;
+    const repo = parseRepoLink(value);
+    const same = !!repo && !!a.repo && repo.cloneUrl === a.repo.cloneUrl && repo.treePath === a.repo.treePath;
+    set({ addSite: { ...a, value, repo, lookup: same ? a.lookup : null, looking: !!repo && (!same || a.looking), error: null, message: null, note: null, signIn: null } });
+    if (repo && !same) void runLookup(get, set);
+    if (!repo) lookupSeq++;
+  },
+
+  async chooseSitesFolder() {
+    const picked = await api.sitePickFolder("Where should your sites live?");
+    if (!picked) return;
+    const repo = get().addSite.repo;
+    set({ addSite: { ...get().addSite, folder: picked, looking: !!repo } });
+    if (repo) void runLookup(get, set, 0);
+  },
 
   async createSite(name) {
-    const parent = await api.sitePickFolder();
-    if (!parent) return;
-    set({ newSite: { open: true, running: true, log: [], error: null } });
+    const a = get().addSite;
+    if (a.running || !name.trim() || !a.folder) return;
+    await rememberSitesFolder(get, set);
+    set({ addSite: { ...get().addSite, running: "create", log: [], message: null, error: null, note: null } });
     try {
-      const site = await api.siteNew(parent, name);
-      set({ sites: [site, ...get().sites], newSite: { open: false, running: false, log: [], error: null } });
+      const site = await api.siteNew(a.folder, name);
+      set({ sites: [site, ...get().sites.filter((s) => s.id !== site.id)], addSite: emptyAddSite(get().settings) });
       await get().selectSite(site.id);
     } catch (e) {
-      set({ newSite: { ...get().newSite, running: false, error: String(e) } });
+      set({ addSite: { ...get().addSite, running: null, message: String(e) } });
     }
+  },
+
+  async cloneSite(input) {
+    const a = get().addSite;
+    const value = input ?? a.value;
+    const repo = parseRepoLink(value);
+    if (a.running || !a.folder || !repo) return;
+    await rememberSitesFolder(get, set);
+    set({ addSite: { ...get().addSite, value, repo, running: "clone", progress: { phase: "check" }, log: [], error: null, note: null, signIn: null } });
+    try {
+      const site = await api.siteClone(value, a.folder);
+      set({ sites: [site, ...get().sites.filter((s) => s.id !== site.id)], addSite: emptyAddSite(get().settings) });
+      get().showToast(`Added ${site.name}.`);
+      await get().selectSite(site.id);
+    } catch (e) {
+      const err = toCloneError(e);
+      const stopped = err.kind === "cancelled";
+      set({ addSite: { ...get().addSite, running: null, progress: null, error: stopped ? null : err, note: stopped ? "Stopped. Nothing was left on disk." : null } });
+    }
+  },
+
+  async cancelClone() {
+    if (get().addSite.running === "clone") await api.siteCloneCancel();
+  },
+
+  async openExistingSite() {
+    const l = get().addSite.lookup;
+    if (!l) return;
+    const id = l.existingSiteId;
+    if (id && get().sites.some((s) => s.id === id)) {
+      set({ addSite: emptyAddSite(get().settings) });
+      await get().selectSite(id);
+      return;
+    }
+    if (!l.existingPath) return;
+    try {
+      const site = await api.siteAdd(l.existingPath);
+      set({ sites: [site, ...get().sites.filter((s) => s.id !== site.id)], addSite: emptyAddSite(get().settings) });
+      await get().selectSite(site.id);
+    } catch (e) {
+      set({ addSite: { ...get().addSite, error: { kind: "other", detail: String(e) } } });
+    }
+  },
+
+  async startGithubSignIn() {
+    set({ addSite: { ...get().addSite, signIn: { stage: "starting", code: null, error: null } } });
+    try {
+      const code = await api.githubSignInStart();
+      if (get().addSite.signIn) set({ addSite: { ...get().addSite, signIn: { stage: "code", code, error: null } } });
+    } catch (e) {
+      if (get().addSite.signIn) set({ addSite: { ...get().addSite, signIn: { stage: "code", code: null, error: String(e) } } });
+    }
+  },
+
+  async continueGithubSignIn() {
+    const s = get().addSite.signIn;
+    if (!s?.code) return;
+    void navigator.clipboard?.writeText(s.code.userCode).catch(() => {});
+    void api.openExternal(s.code.verificationUri);
+    set({ addSite: { ...get().addSite, signIn: { ...s, stage: "waiting", error: null } } });
+    try {
+      const login = await api.githubSignInWait();
+      if (!get().addSite.signIn) return;
+      set({ addSite: { ...get().addSite, signIn: null, error: null } });
+      get().showToast(`Signed in to GitHub as ${login}.`);
+      await get().cloneSite();
+    } catch (e) {
+      const cur = get().addSite.signIn;
+      if (String(e) !== "cancelled" && cur) set({ addSite: { ...get().addSite, signIn: { ...cur, stage: "code", error: String(e) } } });
+    }
+  },
+
+  cancelGithubSignIn() {
+    if (get().addSite.signIn?.stage === "waiting") void api.githubSignInCancel();
+    set({ addSite: { ...get().addSite, signIn: null } });
   },
 
   newSession() {

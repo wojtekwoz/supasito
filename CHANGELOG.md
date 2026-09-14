@@ -537,3 +537,23 @@ site and its repository top, the starter bringing none), `tsc`, `test:ui` (bare 
 with "bakery.com", "ClarityOps" (shows and would create `clarityops-2`) and "Sourdough & Co.", `?trust=ask` with both
 answers, and `?clone=hooks` arriving untrusted with the bar. Not verified in the app: Claude Code actually ignoring a
 pasted repository's hooks until Use them, which rests on the trust behaviour recorded in session 1.
+
+### Session 36 (2026-09-14) — a pasted link shows its card at once
+Reported from the app: after pasting a link, "Looking up…" took too long. Measured on this Mac: a 300 ms wait for typing to
+settle, GitHub's API at 0.2–0.4 s (with a 4 s timeout on a slow network), and a `git remote get-url` process per rail site
+(0.16 s for 8 sites); the code-folder scan was 2 ms. The dialog waited for all of it before showing the card or enabling
+Add site.
+- **Two lookups instead of one.** `site_repo_lookup` is now local only — whether you already have the repository and where
+  it would go — and runs on every change with no typing delay, on a blocking thread. Origins come from the config file
+  (`clone::origin_of`, worktrees followed through `commondir`) instead of a git process per site; the clone's own "is this
+  folder already it" check uses the same read. `site_repo_info` fetches GitHub's description, language and size beside it.
+- **The card never waits for GitHub.** It renders the moment the link parses; its detail line says "Asking GitHub for
+  details…" until they arrive; Add site waits only for the local check. The HTTP client lives for the app's life (a second
+  link reuses the connection), GitHub's answers are kept ten minutes in the backend (404 kept, rate limits and timeouts
+  not), and the dialog remembers them per repository. A paste asks GitHub at once; a link edited letter by letter waits
+  for a 400 ms pause.
+
+Verified: `cargo test` (61 passed, including the file-read lookup finding a rail site through a worktree, a folder in the
+sites folder, and the `-2` destination), `tsc`, `test:ui`. In the mock with GitHub slowed to 3 s (`?infoDelay=3000`): card at
+34 ms, Add site enabled at 46 ms with "Asking GitHub for details…", details at 3 s, the same link pasted again filled from
+the cache immediately, and the ClarityOps link still answers "You already have this one". Not measured in the app itself.

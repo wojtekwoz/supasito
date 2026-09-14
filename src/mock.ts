@@ -240,11 +240,16 @@ export function mockBackend(): Backend {
     siteRepoLookup: async (input, parent) => {
       const repo = parseRepoLink(input);
       if (!repo) return null;
-      await wait(350);
+      await wait(30); // file reads in the backend
       const key = `${repo.owner}/${repo.repo}`.toLowerCase();
-      const card = MOCK_REPOS[key];
       const existing = cloneSim === "exists" || key === "you/clarityops" ? mockSites[0]?.id ?? null : null;
-      return { repo, info: card && cloneSim !== "private" ? { ...card, private: false, defaultBranch: "main" } : null, existingSiteId: existing, existingPath: !existing && query.get("copy") === "elsewhere" ? `/Users/you/code/${repo.repo}` : null, existingConversations: existing ? 6 : query.get("copy") === "elsewhere" ? 12 : 0, dest: parent ? `${parent}/${repo.repo}` : null };
+      return { repo, existingSiteId: existing, existingPath: !existing && query.get("copy") === "elsewhere" ? `/Users/you/code/${repo.repo}` : null, existingConversations: existing ? 6 : query.get("copy") === "elsewhere" ? 12 : 0, dest: parent ? `${parent}/${repo.repo}` : null };
+    },
+    siteRepoInfo: async (input) => {
+      const repo = parseRepoLink(input);
+      await wait(Number(query.get("infoDelay")) || 450); // GitHub's API; `?infoDelay=<ms>` for a slow network
+      const card = repo ? MOCK_REPOS[`${repo.owner}/${repo.repo}`.toLowerCase()] : undefined;
+      return card && cloneSim !== "private" ? { ...card, private: false, defaultBranch: "main" } : null;
     },
     siteClone: async (input, parent, fresh) => {
       const repo = parseRepoLink(input);

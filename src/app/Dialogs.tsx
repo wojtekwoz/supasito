@@ -57,10 +57,10 @@ export function AddSiteDialog() {
   const tilde = (p: string | null | undefined) => (p && home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p ?? "");
   const repo = a.repo;
   const name = a.value.trim();
-  const info = a.lookup?.info ?? null;
+  const info = a.info;
   const existing = a.lookup?.existingSiteId ? sites.find((s) => s.id === a.lookup!.existingSiteId) ?? null : null;
   const mode = a.running ? "running" : a.signIn ? "signin" : repo
-    ? a.error ? "error" : a.looking ? "looking" : existing || a.lookup?.existingPath ? "exists" : "card"
+    ? a.error ? "error" : existing || a.lookup?.existingPath ? "exists" : "card"
     : !name ? "empty" : looksLikeAddress(name) ? "address" : "name";
   const noNode = !!tools && (!tools.node.ok || nodeTooOld(tools));
   const noGit = !!tools && !tools.git.ok;
@@ -108,15 +108,12 @@ export function AddSiteDialog() {
       </>;
       primary = { label: "Create site", run: () => void createSite(name), disabled: noNode || !a.folder };
       break;
-    case "looking":
-      body = <div className="add-line muted"><span className="spinner" /><span>Looking up <b>{repo!.owner}/{repo!.repo}</b>…</span></div>;
-      break;
     case "card":
       body = <>
         <div className="add-repo">
           {repoLine}
           {info?.description && <p className="add-desc">{info.description}</p>}
-          <div className="add-meta">{[info?.language, aboutSize(info?.sizeKb)].filter(Boolean).join(" · ") || `${repo!.host}/${repo!.owner}/${repo!.repo}`}</div>
+          <div className="add-meta">{[info?.language, aboutSize(info?.sizeKb)].filter(Boolean).join(" · ") || (a.infoLoading ? "Asking GitHub for details…" : `${repo!.host}/${repo!.owner}/${repo!.repo}`)}</div>
           {branch && <div className="add-sub"><Folder className="glyph" /><span>{subFolder ? <>Opens the <b>{subFolder}</b> folder, on branch <b>{branch}</b></> : <>On branch <b>{branch}</b></>}</span></div>}
           {repo!.fromCommand && <div className="add-sub"><Check className="glyph" /><span>Read from the command you copied</span></div>}
         </div>
@@ -124,7 +121,8 @@ export function AddSiteDialog() {
         {noGit ? <Checklist compact /> : folderLine}
         {a.note && <div className="add-note">{a.note}</div>}
       </>;
-      primary = { label: "Add site", run: () => void cloneSite(), disabled: noGit || !a.folder };
+      // only the local check gates the button (milliseconds); GitHub's details may still be on their way
+      primary = { label: "Add site", run: () => void cloneSite(), disabled: noGit || !a.folder || a.looking };
       break;
     case "exists":
       {

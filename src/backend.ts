@@ -1,5 +1,5 @@
 import type {
-  Attachment, Catalogue, DeviceCode, DevInfo, EventName, GitStatus, EnvNeeds, PublishResult, PublishTarget, RepoLookup, RestoreReport, SyncStatus, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
+  Attachment, Catalogue, DeviceCode, DevInfo, EventName, GitStatus, EnvNeeds, PublishResult, PublishTarget, RepoInfo, RepoLookup, RestoreReport, SyncStatus, Selection, SessionInfo, SessionOverrides, Settings, Site, Toolchain, UpdateInfo,
 } from "./types";
 
 export type Unlisten = () => void;
@@ -14,6 +14,8 @@ export interface Backend {
   sitePickFolder(title?: string): Promise<string | null>;
   /** A pasted link (PLAN §8e): GitHub's card, whether you already have it, and where a clone would go in `parent`. Null when it is not a link. */
   siteRepoLookup(input: string, parent: string | null): Promise<RepoLookup | null>;
+  /** GitHub's description, language and size for a pasted link; null for a private repository, another host, or no answer. */
+  siteRepoInfo(input: string): Promise<RepoInfo | null>;
   /** Clone into `parent`, install packages and add the site; progress arrives as `clone://progress`. Rejects with a `CloneError`. */
   siteClone(input: string, parent: string, fresh?: boolean): Promise<Site>;
   /** Fetch and compare with the upstream; `apply` fast-forwards when nothing of the user's is in the way (PLAN §8e.11). */
@@ -100,6 +102,7 @@ async function tauriBackend(): Promise<Backend> {
     sitesList: () => invoke("sites_list"),
     sitePickFolder: (title) => invoke("site_pick_folder", { title: title ?? null }),
     siteRepoLookup: (input, parent) => invoke("site_repo_lookup", { input, parent }),
+    siteRepoInfo: (input) => invoke("site_repo_info", { input }),
     siteClone: (input, parent, fresh) => invoke("site_clone", { input, parent, fresh: fresh ?? false }),
     siteSync: (siteId, apply) => invoke("site_sync", { siteId, apply }),
     siteEnvNeeds: (siteId) => invoke("site_env_needs", { siteId }),

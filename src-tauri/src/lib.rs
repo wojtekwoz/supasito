@@ -351,7 +351,13 @@ async fn site_new(app: AppHandle, state: State<'_, AppState>, parent: String, na
 #[tauri::command]
 async fn site_repo_lookup(state: State<'_, AppState>, input: String, parent: Option<String>) -> Result<Option<clone::Lookup>, String> {
     let sites = state.persisted.lock().unwrap().sites.clone();
-    Ok(clone::lookup(&input, parent.as_deref().map(std::path::Path::new), &sites, &state.path_env).await)
+    tauri::async_runtime::spawn_blocking(move || clone::lookup(&input, parent.as_deref().map(std::path::Path::new), &sites)).await.map_err(|e| e.to_string())
+}
+
+/// GitHub's description and size for a pasted link, fetched beside the local lookup so the card never waits for it.
+#[tauri::command]
+async fn site_repo_info(input: String) -> Result<Option<clone::RepoInfo>, String> {
+    Ok(match clone::parse_repo_url(&input) { Some(repo) => clone::repo_info(&repo).await, None => None })
 }
 
 #[tauri::command]
@@ -765,7 +771,7 @@ pub fn run() {
             settings_get, settings_set, toolchain_check, models_list,
             updates::update_check, updates::update_install, updates::update_dismiss, updates::app_version,
             sites_list, site_pick_folder, site_add, site_remove, site_refresh, site_install, site_git_status, site_git_init, site_read_text, site_write_text, site_rename, site_git_commit, site_git_diff, site_git_push, site_undo_files, preview_event, site_set_publish, set_badge, request_attention, preview_capture, site_open_editor, site_set_last_session, site_favorite, site_opened, site_new,
-            site_repo_lookup, site_clone, site_clone_cancel, site_sync, site_env_needs, site_env_save, site_new_dest, site_claude_trust, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
+            site_repo_lookup, site_repo_info, site_clone, site_clone_cancel, site_sync, site_env_needs, site_env_save, site_new_dest, site_claude_trust, github_sign_in_start, github_sign_in_wait, github_sign_in_cancel,
             dev_start, dev_stop, dev_status, dev_log, dev_free_port,
             publish_run, publish_cancel,
             agent_start, agent_send, agent_respond, agent_set_mode, agent_set_model, agent_apply_settings, agent_interrupt, agent_stop, agent_running,

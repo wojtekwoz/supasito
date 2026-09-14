@@ -79,7 +79,11 @@ pub fn default_branch(root: &Path) -> Option<String> {
 
 /// `url` of `[remote "origin"]` in a repository's `.git/config`.
 pub fn origin_from_config(repo_dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(repo_dir.join(".git/config")).ok()?;
+    origin_in_config(&std::fs::read_to_string(repo_dir.join(".git/config")).ok()?)
+}
+
+/// `url` of `[remote "origin"]` in the text of a git config file.
+pub fn origin_in_config(text: &str) -> Option<String> {
     let mut in_origin = false;
     for line in text.lines().map(str::trim) {
         if line.starts_with('[') { in_origin = line.replace(' ', "") == "[remote\"origin\"]"; continue; }

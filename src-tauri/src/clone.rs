@@ -195,12 +195,12 @@ pub struct RepoInfo {
     pub language: Option<String>,
 }
 
-/// Everything the dialog shows about a pasted link before anything downloads.
+/// Everything local the dialog knows about a pasted link: whether you already have it and where a clone would go.
+/// GitHub's description and size come separately (`repo_info`), so the card never waits on the network.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Lookup {
     pub repo: RepoRef,
-    pub info: Option<RepoInfo>,
     /// A site in the rail whose origin is this repository (and, for a `/tree/…` link, the same folder of it).
     pub existing_site_id: Option<String>,
     /// A folder that already is this repository but is not in the rail: in the sites folder, or at the top of one of
@@ -212,14 +212,33 @@ pub struct Lookup {
     pub dest: Option<String>,
 }
 
-/// GitHub's public API, for the card. A private repository answers 404 and a rate limit 403; either way the card
-/// shows only the name, and git stays the authority on whether the clone works.
+/// One HTTP client for the app's life, so a second link reuses the connection instead of a new TLS handshake.
+static HTTP: std::sync::OnceLock<Option<reqwest::Client>> = std::sync::OnceLock::new();
+/// GitHub's answers by repository, kept ten minutes: changing the sites folder or pasting the same link again asks nothing.
+type InfoCache = std::collections::HashMap<String, (std::time::Instant, Option<RepoInfo>)>;
+static INFO_CACHE: std::sync::Mutex<Option<InfoCache>> = std::sync::Mutex::new(None);
+
+/// GitHub's public API, for the card's description, language and size. A private repository answers 404, which is kept
+/// (it stays unknown); a rate limit (403) or a timeout is not kept, since asking again may work. Either way the card shows
+/// the name, and git stays the authority on whether the clone works.
 pub async fn repo_info(repo: &RepoRef) -> Option<RepoInfo> {
     if repo.host != "github.com" { return None; }
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(4)).user_agent(UA).build().ok()?;
+    let key = repo.key();
+    let cached = INFO_CACHE.lock().unwrap().as_ref().and_then(|c| c.get(&key)).cloned();
+    if let Some((at, answer)) = cached {
+        if at.elapsed() < Duration::from_secs(600) { return answer; }
+    }
+    let client = HTTP.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(3)).user_agent(UA).build().ok()).as_ref()?;
     let r = client.get(format!("https://api.github.com/repos/{}/{}", repo.owner, repo.repo)).header("Accept", "application/vnd.github+json").send().await.ok()?;
-    if !r.status().is_success() { return None; }
-    Some(info_from_api(&r.json::<Value>().await.ok()?))
+    let answer = if r.status().is_success() {
+        Some(info_from_api(&r.json::<Value>().await.ok()?))
+    } else if r.status() == reqwest::StatusCode::NOT_FOUND {
+        None
+    } else {
+        return None;
+    };
+    INFO_CACHE.lock().unwrap().get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), answer.clone()));
+    answer
 }
 
 pub fn info_from_api(v: &Value) -> RepoInfo {
@@ -227,10 +246,23 @@ pub fn info_from_api(v: &Value) -> RepoInfo {
     RepoInfo { description: s("description"), private: v.get("private").and_then(|x| x.as_bool()), size_kb: v.get("size").and_then(|x| x.as_u64()), default_branch: s("default_branch"), language: s("language") }
 }
 
-/// The origin of a folder that is itself a repository (not a folder somewhere inside one), in `repo_key` form.
-async fn origin_key(dir: &Path, path_env: &str) -> Option<String> {
-    let out = tokio::process::Command::new("git").env("PATH", path_env).env("LC_ALL", "C").arg("-C").arg(dir).args(["remote", "get-url", "origin"]).output().await.ok()?;
-    out.status.success().then(|| repo_key(String::from_utf8_lossy(&out.stdout).trim()))
+/// The origin of a folder that is itself a repository (not a folder somewhere inside one), in `repo_key` form. Read from
+/// the config file rather than by starting git: the lookup does this for every site in the rail, and a process each made
+/// a pasted link wait (0.16 s for 8 sites, measured 2026-09-14). A worktree's `.git` is a file naming its git dir, whose
+/// `commondir` leads to the shared config.
+fn origin_of(dir: &Path) -> Option<String> {
+    let dot_git = dir.join(".git");
+    let config = if dot_git.is_dir() {
+        dot_git.join("config")
+    } else {
+        let gitdir = std::fs::read_to_string(&dot_git).ok()?.trim().strip_prefix("gitdir:")?.trim().to_string();
+        let gitdir = if Path::new(&gitdir).is_absolute() { PathBuf::from(gitdir) } else { dir.join(gitdir) };
+        match std::fs::read_to_string(gitdir.join("commondir")) {
+            Ok(common) => gitdir.join(common.trim()).join("config"),
+            Err(_) => gitdir.join("config"),
+        }
+    };
+    crate::remote::origin_in_config(&std::fs::read_to_string(config).ok()?).map(|u| repo_key(&u))
 }
 
 /// For a `/tree/main/apps/web` link and a folder that is the repository: the deepest part of the path that exists.
@@ -239,25 +271,21 @@ fn existing_subdir(repo_dir: &Path, tree: &str) -> PathBuf {
     (1..segs.len()).map(|i| repo_dir.join(segs[i..].join("/"))).find(|p| p.is_dir()).unwrap_or_else(|| repo_dir.to_path_buf())
 }
 
-pub async fn lookup(input: &str, parent: Option<&Path>, sites: &[Site], path_env: &str) -> Option<Lookup> {
+/// File reads only, so it answers in milliseconds and runs on every change of the field without waiting for typing to settle.
+pub fn lookup(input: &str, parent: Option<&Path>, sites: &[Site]) -> Option<Lookup> {
     let repo = parse_repo_url(input)?;
     let key = repo.key();
-    let existing = async {
-        for s in sites.iter().filter(|s| s.is_git) {
-            let dir = Path::new(&s.path);
-            let Some(top) = crate::sites::git_toplevel(dir) else { continue };
-            if origin_key(&top, path_env).await.as_deref() != Some(key.as_str()) { continue; }
-            let rel = dir.strip_prefix(&top).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
-            let same = match &repo.tree_path { None => rel.is_empty(), Some(t) => !rel.is_empty() && (t == &rel || t.ends_with(&format!("/{rel}"))) };
-            if same { return Some(s.id.clone()); }
-        }
-        None
-    };
-    let (info, existing_site_id) = tokio::join!(repo_info(&repo), existing);
+    let existing_site_id = sites.iter().filter(|s| s.is_git).find(|s| {
+        let dir = Path::new(&s.path);
+        let Some(top) = crate::sites::git_toplevel(dir) else { return false };
+        if origin_of(&top).as_deref() != Some(key.as_str()) { return false; }
+        let rel = dir.strip_prefix(&top).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
+        match &repo.tree_path { None => rel.is_empty(), Some(t) => !rel.is_empty() && (t == &rel || t.ends_with(&format!("/{rel}"))) }
+    }).map(|s| s.id.clone());
     let (mut existing_path, mut dest) = (None, None);
     if let Some(parent) = parent {
         let named = parent.join(&repo.repo);
-        if named.join(".git").exists() && origin_key(&named, path_env).await.as_deref() == Some(key.as_str()) {
+        if origin_of(&named).as_deref() == Some(key.as_str()) {
             let dir = match &repo.tree_path { Some(t) => existing_subdir(&named, t), None => named };
             existing_path = Some(dir.to_string_lossy().to_string());
         }
@@ -271,7 +299,7 @@ pub async fn lookup(input: &str, parent: Option<&Path>, sites: &[Site], path_env
     }
     let existing_dir = existing_site_id.as_ref().and_then(|id| sites.iter().find(|s| &s.id == id)).map(|s| s.path.clone()).or_else(|| existing_path.clone());
     let existing_conversations = existing_dir.map(|d| crate::remote::conversations(Path::new(&d))).unwrap_or(0);
-    Some(Lookup { repo, info, existing_site_id, existing_path, existing_conversations, dest })
+    Some(Lookup { repo, existing_site_id, existing_path, existing_conversations, dest })
 }
 
 // ---------- cloning ----------
@@ -429,7 +457,7 @@ pub async fn clone_repo(input: &str, parent: &Path, path_env: &str, slot: SlotRe
 
     std::fs::create_dir_all(parent).map_err(|e| CloneError::new("other", Some(e.to_string())))?;
     let named = parent.join(&repo.repo);
-    let same = !fresh && named.join(".git").exists() && origin_key(&named, path_env).await.as_deref() == Some(repo.key().as_str());
+    let same = !fresh && origin_of(&named).as_deref() == Some(repo.key().as_str());
     let dest = if same { named } else { free_dest(parent, &repo.repo) };
     let fail = |kind: &str, detail: Option<String>| { if !same { let _ = std::fs::remove_dir_all(&dest); } CloneError::new(kind, detail) };
     if !same {
@@ -659,6 +687,30 @@ mod tests {
         assert_eq!(parse_token_poll(&serde_json::json!({ "error": "authorization_pending" })), TokenPoll::Pending);
         assert_eq!(parse_token_poll(&serde_json::json!({ "error": "slow_down", "interval": 10 })), TokenPoll::SlowDown(10));
         assert!(matches!(parse_token_poll(&serde_json::json!({ "error": "access_denied" })), TokenPoll::Failed(_)));
+    }
+
+    #[test]
+    fn looks_up_what_you_already_have_without_starting_git() {
+        let base = std::env::temp_dir().join(format!("supasito-lookup-{}", uuid::Uuid::new_v4()));
+        let sites_dir = base.join("Sites");
+        let main = sites_dir.join("bakery-site");
+        std::fs::create_dir_all(main.join(".git/worktrees/wt")).unwrap();
+        std::fs::write(main.join(".git/config"), "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:mara-okafor/bakery-site.git\n").unwrap();
+        // a worktree elsewhere: its .git is a file naming the git dir, whose commondir leads back to the shared config
+        std::fs::create_dir_all(base.join("wt")).unwrap();
+        std::fs::write(base.join("wt/.git"), format!("gitdir: {}\n", main.join(".git/worktrees/wt").display())).unwrap();
+        std::fs::write(main.join(".git/worktrees/wt/commondir"), "../..\n").unwrap();
+        assert_eq!(origin_of(&base.join("wt")).as_deref(), Some("github.com/mara-okafor/bakery-site"));
+        let rail = Site { id: "rail".into(), path: base.join("wt").to_string_lossy().into(), is_git: true, ..Default::default() };
+        let link = "https://github.com/mara-okafor/bakery-site";
+        let hit = lookup(link, Some(&sites_dir), &[rail]).unwrap();
+        assert_eq!(hit.existing_site_id.as_deref(), Some("rail"));
+        let miss = lookup(link, Some(&sites_dir), &[]).unwrap();
+        assert_eq!(miss.existing_site_id, None);
+        assert_eq!(miss.existing_path, Some(main.to_string_lossy().to_string()), "the folder in the sites folder already is it");
+        assert_eq!(miss.dest, Some(sites_dir.join("bakery-site-2").to_string_lossy().to_string()));
+        assert!(lookup("Sourdough & Co.", Some(&sites_dir), &[]).is_none());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Network: clones octocat/Hello-World. `cargo test -- --ignored clone_public`.

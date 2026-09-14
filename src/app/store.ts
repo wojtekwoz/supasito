@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { backend, type Backend } from "../backend";
-import type { Attachment, Catalogue, ClaudeStatus, CloneError, CloneProgress, DeviceCode, DevInfo, EnvNeeds, GitStatus, PermissionRequest, PublishTarget, RepoLookup, RepoRef, Selection, SessionInfo, SessionOverrides, Settings, Site, SyncStatus, Toolchain, UpdateInfo } from "../types";
+import type { Attachment, Catalogue, ClaudeStatus, CloneError, CloneProgress, DeviceCode, DevInfo, EnvNeeds, GitStatus, PermissionRequest, PublishTarget, RepoInfo, RepoLookup, RepoRef, Selection, SessionInfo, SessionOverrides, Settings, Site, SyncStatus, Toolchain, UpdateInfo } from "../types";
 import { addNotice, addPermission, addUser, applyFs, applyMessage, backendOf, concatSegments, emptySession, expirePermissions, handoffItem, handoffText, markUndone, parseRateLimit, resetProcessCost, settlePermission, type PlanWindow, type Segment, type SessionState } from "../agent/transcript";
 import { applyCodexMessage, parseCodexRateLimits } from "../agent/codex";
 import { BUILTIN_MODELS, isCodexModel, mergeModels, setModels, type ModelOption } from "../models";
@@ -68,6 +68,9 @@ export type AddSiteState = {
   /** GitHub's card, whether you already have it and where it would go; null while looking or when the lookup failed. */
   lookup: RepoLookup | null;
   looking: boolean;
+  /** GitHub's description and size for the card, fetched beside the lookup so the card never waits for them. */
+  info: RepoInfo | null;
+  infoLoading: boolean;
   /** The sites folder this dialog uses; saved when a site is added. */
   folder: string;
   /** No sites folder was ever saved: the dialog says where sites will live, once. */
@@ -85,7 +88,7 @@ export type AddSiteState = {
 };
 
 const emptyAddSite = (settings: Settings): AddSiteState => ({
-  open: false, value: "", repo: null, lookup: null, looking: false,
+  open: false, value: "", repo: null, lookup: null, looking: false, info: null, infoLoading: false,
   folder: settings.sitesFolder || settings.defaultSitesFolder || "", firstFolder: !settings.sitesFolder,
   running: null, progress: null, log: [], error: null, message: null, nameDest: null, note: null, signIn: null,
 });
@@ -93,16 +96,36 @@ type SetFn = (partial: Partial<Store>) => void;
 const toCloneError = (e: unknown): CloneError =>
   e && typeof e === "object" && "kind" in e ? (e as CloneError) : { kind: "other", detail: String(e) };
 
-/** Look the pasted link up once typing settles; an older answer never overwrites a newer link. */
+/** Whether you already have the pasted repository and where it would go. The backend only reads files, so this runs on
+ *  every change without waiting for typing to settle; an older answer never overwrites a newer link. */
 let lookupSeq = 0;
-async function runLookup(get: () => Store, set: SetFn, delay = 300) {
+async function runLookup(get: () => Store, set: SetFn) {
   const seq = ++lookupSeq;
-  if (delay) await new Promise((r) => setTimeout(r, delay));
-  if (seq !== lookupSeq || !get().addSite.repo) return;
-  const { value, folder } = get().addSite;
+  const { value, folder, repo } = get().addSite;
+  if (!repo) return;
   const lookup = await api.siteRepoLookup(value, folder || null).catch(() => null);
   if (seq !== lookupSeq) return;
   set({ addSite: { ...get().addSite, lookup, looking: false } });
+}
+
+/** GitHub's details for the card, remembered per repository for the app's life. A paste asks at once; typing a link
+ *  letter by letter waits for a pause, so it doesn't spend GitHub's hourly allowance on half-typed names. */
+const infoCache = new Map<string, RepoInfo>();
+let infoSeq = 0;
+async function runInfo(get: () => Store, set: SetFn, delay: number) {
+  const seq = ++infoSeq;
+  const repo = get().addSite.repo;
+  if (!repo || repo.host !== "github.com") { set({ addSite: { ...get().addSite, info: null, infoLoading: false } }); return; }
+  const key = `${repo.owner}/${repo.repo}`.toLowerCase();
+  const hit = infoCache.get(key);
+  if (hit) { set({ addSite: { ...get().addSite, info: hit, infoLoading: false } }); return; }
+  set({ addSite: { ...get().addSite, info: null, infoLoading: true } });
+  if (delay) await new Promise((r) => setTimeout(r, delay));
+  if (seq !== infoSeq) return;
+  const info = await api.siteRepoInfo(get().addSite.value).catch(() => null);
+  if (seq !== infoSeq) return;
+  if (info) infoCache.set(key, info);
+  set({ addSite: { ...get().addSite, info, infoLoading: false } });
 }
 
 /** Ask the backend which folder New site would create for the name, once typing settles. */
@@ -673,9 +696,10 @@ export const useStore = create<Store>((set, get) => ({
     if (a.running) return;
     const repo = parseRepoLink(value);
     const same = !!repo && !!a.repo && repo.cloneUrl === a.repo.cloneUrl && repo.treePath === a.repo.treePath;
-    set({ addSite: { ...a, value, repo, lookup: same ? a.lookup : null, looking: !!repo && (!same || a.looking), error: null, message: null, nameDest: null, note: null, signIn: null } });
-    if (repo && !same) void runLookup(get, set);
-    if (!repo) { lookupSeq++; void runNameDest(get, set); }
+    set({ addSite: { ...a, value, repo, lookup: same ? a.lookup : null, looking: !!repo && (!same || a.looking), info: same ? a.info : null, infoLoading: same && a.infoLoading, error: null, message: null, nameDest: null, note: null, signIn: null } });
+    // a link that appears in one go (a paste) asks GitHub at once; one being edited waits for a pause
+    if (repo && !same) { void runLookup(get, set); void runInfo(get, set, a.repo ? 400 : 0); }
+    if (!repo) { lookupSeq++; infoSeq++; void runNameDest(get, set); }
   },
 
   async chooseSitesFolder() {
@@ -683,7 +707,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!picked) return;
     const repo = get().addSite.repo;
     set({ addSite: { ...get().addSite, folder: picked, looking: !!repo, nameDest: null } });
-    if (repo) void runLookup(get, set, 0); else void runNameDest(get, set, 0);
+    if (repo) void runLookup(get, set); else void runNameDest(get, set, 0);
   },
 
   async createSite(name) {

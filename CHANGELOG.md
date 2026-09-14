@@ -573,3 +573,30 @@ Ships 0.2.1's work (never released on its own), paste a GitHub link, continuing 
   that fixed-name copy so no release needs a site edit again. Copies installed from the old link stay on 0.1.0 until their
   owners download again.
 - Not verified: an installed copy updating itself to 0.2.2 through Settings → Updates.
+
+### Learnings, 2026-09-14 (sessions 33–36 and release 0.2.2)
+- **The rhythm held.** Plan in PLAN.md, a click-through HTML mock to feel the flow, build on a branch, an independent review,
+  fixes, a test in the installed app, then release. The review found 15 defects; three would have hit people in the first
+  week (installs refusing stale lockfiles, tag links dead-ending, domain names blocked as addresses). The user's own use of
+  the installed app found the rest that mattered: the slow lookup.
+- **Measure before optimising.** The slow lookup was structure, not any one call: the card waited for a typing delay, the
+  GitHub API and a git process per rail site, together. Splitting what is local from what is network made the card appear
+  in milliseconds without making anything individually faster.
+- **Record the tool's own failure text first.** git's messages for private, missing, offline, SSH and missing-branch were
+  recorded with `LC_ALL=C` before `classify` was written, and prompts are off everywhere a GUI has no terminal to answer them.
+- **A cheaper option can hide the longest wait.** `--filter=blob:none` downloads less, but fetches the files at checkout
+  with no progress output; measured on a real repository before shipping it.
+- **Moving a default re-opens old paths.** One sites folder for everything made name collisions likely in New site, and an
+  address heuristic written for links blocked domain-style names. Both were regressions against 0.2.0 that no new test
+  covered until the old path was walked again.
+- **A mock can make a bug look real, or hide one.** A turn that waits for an approval never ended in a scripted check; a
+  close and a paste in the same frame skipped the dialog. Both were the harness, confirmed before anything was changed.
+- **A pasted link is a weaker trust signal than a folder on disk.** Repositories that bring their own Claude hooks or MCP
+  servers now wait for "Use them"; everything else keeps D8.
+- **Releasing:** a background wrapper's exit code is not the build's, so read the log; Apple's notary service can answer 503,
+  so retry; check what people actually receive (the live manifest, the bytes of the update package, every download link),
+  not the upload. That check found the website handing new users 0.1.0, which cannot update.
+- **Still unverified after the release:** an installed copy updating itself, ⌘V with nothing focused in WKWebView, sync from
+  a real github.com edit, the private settings dialog on a real site, a git-push Publish building on a host, a pasted
+  repository's hooks being ignored until Use them, the 0.2.1 conversation chain end to end, and Sign in to GitHub (no OAuth
+  App exists).

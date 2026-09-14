@@ -37,6 +37,14 @@ surface that isn't part of that loop, don't build it (see the cut list in PLAN.m
   identity + App Store Connect API key; key material lives outside the repo, nothing secret in git).
   Without them the same command still produces the unsigned "underground" build.
 - `pnpm release [--install]` builds Supasito.app (and copies it to /Applications).
+- Shipping a release (done this way for 0.2.2): write `release/notes-<version>.md` first, since it becomes the update banner's
+  text; run `pnpm release --zip` and read the log for "status Accepted" and "stapled" (Apple's notary service sometimes
+  answers 503: retry; a wrapper's exit code is not the build's); run `cargo test --release -- --ignored updater_package`
+  with `.env.release` sourced; then `gh release create v<version> --latest` with both zips (`Supasito-<version>-macos.zip`
+  and the fixed-name `Supasito-macos.zip` the website links to), the tarball, its `.sig`, `latest.json` and `models.json`.
+  Check what people receive: GitHub's `releases/latest/download/latest.json` and the bytes it points to,
+  `supasito.com/updates/latest.json` (a route in ~/supasito, github.com/wojtekwoz/supasito-site on Vercel, caching 10 min),
+  and the site's download link.
 - **The release-app trial is running** (PLAN §8.1): the user works in `/Applications/Supasito.app`,
   not `tauri dev`. Do not start `pnpm tauri dev` without saying so — the two share the app-state
   file. A fix only reaches the installed app after `pnpm release --install`. Papercuts go in PLAN §8c.

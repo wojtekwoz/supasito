@@ -478,6 +478,15 @@ polish and limits. Each item names its test. Estimate: A one day, B half a day p
 
 *Built 2026-09-14 (CHANGELOG session 35): 1, 3 and 4, and decision D-e1 below. Still open: 2, 5, 6, 7, and all of B and C.*
 
+*Open after the 0.2.2 release (2026-09-14):*
+- *Sign in to GitHub needs a GitHub OAuth App with device flow enabled and its client id as `SUPASITO_GITHUB_CLIENT_ID`
+  in `.env.release`; until then B cannot be verified and the button stays hidden.*
+- *supasito.com does not serve `models.json`, so the app keeps its built-in Claude list (open since 0.2.1).*
+- *Unverified in the app: an installed copy updating itself, ⌘V with nothing focused, sync from a real github.com edit,
+  the private settings dialog on a real site, a git-push Publish building on a host, a pasted repository's hooks being
+  ignored until Use them, and the 0.2.1 conversation chain end to end.*
+- *D-e2 (a template used twice) is not built. Copies installed from the website's old 0.1.0 link cannot update.*
+
 1. **Install with the lockfile the repository actually has.** Clone installs run with `CI=1`, which makes pnpm and Yarn
    Berry refuse a lockfile that is out of step with `package.json` (reproduced: `ERR_PNPM_OUTDATED_LOCKFILE`). Pass what New
    site already passes: `pnpm install --no-frozen-lockfile`, `yarn install --no-immutable` for Berry (plain `yarn install`

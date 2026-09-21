@@ -112,6 +112,26 @@ export function toolRows(t: Toolchain | null): Row[] {
   return [claude, codex, node, git, packageManager];
 }
 
+
+/** The folders the check walked. Folded away, and only while something is missing: a user whose node
+ *  lives somewhere Supasito never looked can see that here instead of guessing — and copy it into a
+ *  report. Clicking the list copies it. */
+function Searched({ folders }: { folders?: string[] | null }) {
+  const [open, setOpen] = useState(false);
+  if (!folders?.length) return null;
+  return (
+    <div className="searched">
+      <button className="btn sm ghost" onClick={() => setOpen(!open)}>{open ? "Hide" : "Where Supasito looked"}</button>
+      {open && (
+        <>
+          <p>Supasito runs your tools with the PATH your Terminal uses. If the folder holding your Node.js or agent isn't here, tell us — that's the bug.</p>
+          <Cmd block>{folders.join("\n")}</Cmd>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Checklist({ compact }: { compact?: boolean }) {
   const tools = useStore((s) => s.tools);
   const recheck = useStore((s) => s.recheckTools);
@@ -133,6 +153,7 @@ export function Checklist({ compact }: { compact?: boolean }) {
         <button className="btn sm" disabled={checking} onClick={again}>{checking ? "Checking…" : "Check again"}</button>
         {tools && !tools.claude.ok && !compact && <button className="btn sm ghost" onClick={() => setSettingsOpen(true)}>Set the path manually</button>}
       </div>
+      {!compact && toolsMissing(tools) && <Searched folders={tools?.searched} />}
     </div>
   );
 }

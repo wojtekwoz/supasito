@@ -58,13 +58,13 @@ fn settings_set(state: State<'_, AppState>, patch: Value) -> Result<(), String> 
 #[tauri::command]
 async fn models_list(app: AppHandle, state: State<'_, AppState>, site_id: Option<String>, refresh: bool) -> Result<models::Catalogue, String> {
     if refresh {
-        if let Some(codex_path) = agent::codex::locate(None, &state.path_env).await {
+        if let Some(codex_path) = agent::codex::locate(None, &state.path()).await {
             let site = site_id.as_deref().and_then(|id| state.site(id).ok());
             let (sid, cwd) = match site {
                 Some(s) => (s.id.clone(), s.path.clone()),
                 None => ("models".to_string(), dirs::home_dir().map(|h| h.to_string_lossy().to_string()).unwrap_or_else(|| "/".into())),
             };
-            match state.codex.models(&app, &sid, &cwd, &codex_path, &state.path_env).await {
+            match state.codex.models(&app, &sid, &cwd, &codex_path, &state.path()).await {
                 Ok(reply) => {
                     let rows = models::from_codex_list(&reply);
                     if !rows.is_empty() {
@@ -84,10 +84,14 @@ async fn models_list(app: AppHandle, state: State<'_, AppState>, site_id: Option
 }
 
 /// What this Mac has (Node, package manager, git, Claude Code and its login), for the checklist.
+/// The PATH is read from the login shell again first: "install Node, then click Check again" has to
+/// work while Supasito stays open, and a version manager's folder is not on the PATH we started with.
 #[tauri::command]
 async fn toolchain_check(state: State<'_, AppState>) -> Result<toolchain::Toolchain, String> {
     let configured = state.persisted.lock().unwrap().claude_path.clone();
-    Ok(toolchain::check(configured.as_deref(), &state.path_env).await)
+    let path = tokio::task::spawn_blocking(state::login_shell_path).await.map_err(|e| e.to_string())?;
+    state.set_path(path.clone());
+    Ok(toolchain::check(configured.as_deref(), &path).await)
 }
 
 // ---------- sites ----------
@@ -146,7 +150,7 @@ fn site_refresh(state: State<'_, AppState>, site_id: String) -> Result<sites::Si
 #[tauri::command]
 async fn site_install(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<sites::Site, String> {
     let site = state.site(&site_id)?;
-    sites::run_install(app, &site, &state.path_env).await?;
+    sites::run_install(app, &site, &state.path()).await?;
     let mut p = state.persisted.lock().unwrap();
     let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
     s.refresh()?;
@@ -159,7 +163,7 @@ async fn site_install(app: AppHandle, state: State<'_, AppState>, site_id: Strin
 #[tauri::command]
 async fn site_git_status(state: State<'_, AppState>, site_id: String) -> Result<sites::GitStatus, String> {
     let site = state.site(&site_id)?;
-    let env = state.path_env.clone();
+    let env = state.path();
     tauri::async_runtime::spawn_blocking(move || sites::git_status(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
@@ -167,7 +171,7 @@ async fn site_git_status(state: State<'_, AppState>, site_id: String) -> Result<
 pub(crate) async fn undo_files(app: &AppHandle, site_id: &str, files: Vec<String>, created: Vec<String>) -> Result<sites::RestoreReport, String> {
     let state = app.state::<AppState>();
     let site = state.site(site_id)?;
-    let env = state.path_env.clone();
+    let env = state.path();
     tauri::async_runtime::spawn_blocking(move || sites::git_restore(&site.path, &files, &created, &env)).await.map_err(|e| e.to_string())?
 }
 
@@ -200,14 +204,14 @@ fn site_set_publish(state: State<'_, AppState>, site_id: String, command: String
 #[tauri::command]
 async fn site_git_commit(state: State<'_, AppState>, site_id: String, message: String) -> Result<sites::GitStatus, String> {
     let site = state.site(&site_id)?;
-    let env = state.path_env.clone();
+    let env = state.path();
     tauri::async_runtime::spawn_blocking(move || sites::git_commit(&site.path, &message, &env)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn site_git_diff(state: State<'_, AppState>, site_id: String, files: Vec<String>) -> Result<String, String> {
     let site = state.site(&site_id)?;
-    let env = state.path_env.clone();
+    let env = state.path();
     tauri::async_runtime::spawn_blocking(move || sites::git_diff(&site.path, &files, &env)).await.map_err(|e| e.to_string())?
 }
 
@@ -223,7 +227,7 @@ async fn preview_capture(app: AppHandle, x: f64, y: f64, w: f64, h: f64, _scale:
 #[tauri::command]
 async fn site_open_editor(state: State<'_, AppState>, site_id: String) -> Result<String, String> {
     let site = state.site(&site_id)?;
-    let path_env = state.path_env.clone();
+    let path_env = state.path();
     let find = |bin: &str| path_env.split(':').map(|d| std::path::Path::new(d).join(bin)).find(|p| p.is_file());
     for bin in ["code", "cursor", "zed", "windsurf"] {
         if let Some(exe) = find(bin) {
@@ -296,7 +300,7 @@ fn site_rename(state: State<'_, AppState>, site_id: String, name: String) -> Res
 #[tauri::command]
 async fn site_git_init(state: State<'_, AppState>, site_id: String) -> Result<(), String> {
     let site = state.site(&site_id)?;
-    let env = state.path_env.clone();
+    let env = state.path();
     tauri::async_runtime::spawn_blocking(move || sites::git_init(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
@@ -336,7 +340,7 @@ fn site_set_last_session(state: State<'_, AppState>, site_id: String, session_id
 async fn site_new(app: AppHandle, state: State<'_, AppState>, parent: String, name: String) -> Result<sites::Site, String> {
     let starter = starter_dir(&app).ok_or("starter template not found")?;
     let log_app = app.clone();
-    let site = sites::create_from_starter(&starter, &parent, &name, &state.path_env, move |line| { let _ = log_app.emit("install://log", json!({ "siteId": null, "line": line })); }).await?;
+    let site = sites::create_from_starter(&starter, &parent, &name, &state.path(), move |line| { let _ = log_app.emit("install://log", json!({ "siteId": null, "line": line })); }).await?;
     sites::mark_trusted(&site.path);
     {
         let mut p = state.persisted.lock().unwrap();
@@ -368,7 +372,7 @@ async fn site_clone(app: AppHandle, state: State<'_, AppState>, input: String, p
         *slot = clone::Slot { running: true, ..Default::default() };
     }
     let emitter = app.clone();
-    let result = clone::clone_repo(&input, std::path::Path::new(&parent), &state.path_env, state.clone_slot.clone(), fresh.unwrap_or(false), move |p| { let _ = emitter.emit("clone://progress", p); }).await;
+    let result = clone::clone_repo(&input, std::path::Path::new(&parent), &state.path(), state.clone_slot.clone(), fresh.unwrap_or(false), move |p| { let _ = emitter.emit("clone://progress", p); }).await;
     state.clone_slot.lock().unwrap().running = false;
     let mut site = result?;
     // Remembered so Publish can default to the push most GitHub-deployed sites expect (PLAN §8e.11).
@@ -416,7 +420,7 @@ fn site_claude_trust(state: State<'_, AppState>, site_id: String, accept: bool) 
 #[tauri::command]
 async fn site_sync(state: State<'_, AppState>, site_id: String, apply: bool) -> Result<remote::SyncStatus, String> {
     let site = state.site(&site_id)?;
-    Ok(remote::sync(&site.path, &state.path_env, apply).await)
+    Ok(remote::sync(&site.path, &state.path(), apply).await)
 }
 
 #[tauri::command]
@@ -429,7 +433,7 @@ fn site_env_needs(state: State<'_, AppState>, site_id: String) -> Result<Option<
 #[tauri::command]
 async fn site_env_save(state: State<'_, AppState>, site_id: String, file: String, values: Vec<(String, String)>) -> Result<sites::Site, String> {
     let site = state.site(&site_id)?;
-    remote::env_save(std::path::Path::new(&site.path), &file, &values, &state.path_env).await?;
+    remote::env_save(std::path::Path::new(&site.path), &file, &values, &state.path()).await?;
     let mut p = state.persisted.lock().unwrap();
     let s = p.sites.iter_mut().find(|s| s.id == site_id).ok_or("unknown site")?;
     s.refresh()?;
@@ -462,7 +466,7 @@ async fn github_sign_in_start(state: State<'_, AppState>) -> Result<clone::Devic
 async fn github_sign_in_wait(state: State<'_, AppState>) -> Result<String, String> {
     let code = state.github_code.lock().unwrap().clone().ok_or("Start the sign-in first.")?;
     let cancel = state.github_cancel.clone();
-    let result = clone::device_wait(&code, &state.path_env, move || cancel.load(std::sync::atomic::Ordering::SeqCst)).await;
+    let result = clone::device_wait(&code, &state.path(), move || cancel.load(std::sync::atomic::Ordering::SeqCst)).await;
     *state.github_code.lock().unwrap() = None;
     result
 }
@@ -485,7 +489,7 @@ fn starter_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
 #[tauri::command]
 async fn dev_start(app: AppHandle, state: State<'_, AppState>, site_id: String) -> Result<devserver::DevInfo, String> {
     let site = state.site(&site_id)?;
-    let info = state.dev.start(app.clone(), site, state.path_env.clone()).await?;
+    let info = state.dev.start(app.clone(), site, state.path()).await?;
     {
         let mut p = state.persisted.lock().unwrap();
         if let Some(s) = p.sites.iter_mut().find(|s| s.id == site_id) {
@@ -524,13 +528,13 @@ async fn publish_run(app: AppHandle, state: State<'_, AppState>, site_id: String
     let site = state.site(&site_id)?;
     let preview = target.as_deref() == Some("preview");
     let cmd = if preview { site.preview.clone().ok_or("No preview command set for this site.")? } else { site.publish.clone().ok_or("No publish command set for this site.")? };
-    sites::run_publish(app, &site, &cmd, &state.path_env).await
+    sites::run_publish(app, &site, &cmd, &state.path()).await
 }
 
 #[tauri::command]
 async fn site_git_push(state: State<'_, AppState>, site_id: String) -> Result<String, String> {
     let site = state.site(&site_id)?;
-    let env = state.path_env.clone();
+    let env = state.path();
     tauri::async_runtime::spawn_blocking(move || sites::git_push(&site.path, &env)).await.map_err(|e| e.to_string())?
 }
 
@@ -576,8 +580,8 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
     // The model picker is the backend picker: an OpenAI model id means a Codex thread. Resuming keeps the
     // backend the id names, whatever the current default. With no model chosen, whichever agent is installed
     // runs the session — people mostly have one — and Claude Code when both are.
-    let claude_path = agent::claude::locate(configured.as_deref(), &state.path_env).await;
-    let codex_path = agent::codex::locate(None, &state.path_env).await;
+    let claude_path = agent::claude::locate(configured.as_deref(), &state.path()).await;
+    let codex_path = agent::codex::locate(None, &state.path()).await;
     let codex = match resume.as_deref() {
         Some(id) => agent::codex::is_codex_session(id),
         None => match model.as_deref() {
@@ -602,7 +606,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
             permission_mode: mode,
             developer_instructions: system,
             codex_path,
-            path_env: state.path_env.clone(),
+            path_env: state.path(),
         };
         let model = opts.model.clone();
         let id = state.codex.start(app.clone(), opts).await?;
@@ -625,7 +629,7 @@ pub(crate) async fn start_agent(app: &AppHandle, site_id: &str, resume: Option<S
         permission_mode: mode,
         system_append: system,
         claude_path,
-        path_env: state.path_env.clone(),
+        path_env: state.path(),
     };
     let model = opts.model.clone();
     state.agents.start(app.clone(), opts).await?;
@@ -713,8 +717,8 @@ async fn sessions_list(app: AppHandle, state: State<'_, AppState>, site_id: Stri
     let path = site.path.clone();
     let claude = tauri::async_runtime::spawn_blocking(move || agent::sessions::list(&path));
     let mut all = Vec::new();
-    if let Some(codex_path) = agent::codex::locate(None, &state.path_env).await {
-        match state.codex.list(&app, &site.id, &site.path, &codex_path, &state.path_env).await {
+    if let Some(codex_path) = agent::codex::locate(None, &state.path()).await {
+        match state.codex.list(&app, &site.id, &site.path, &codex_path, &state.path()).await {
             Ok(list) => all.extend(list),
             Err(e) => eprintln!("codex thread list failed: {e}"),
         }
@@ -729,8 +733,8 @@ async fn sessions_list(app: AppHandle, state: State<'_, AppState>, site_id: Stri
 async fn session_transcript(app: AppHandle, state: State<'_, AppState>, site_id: String, session_id: String) -> Result<Vec<Value>, String> {
     let site = state.site(&site_id)?;
     if agent::codex::is_codex_session(&session_id) {
-        let codex_path = agent::codex::locate(None, &state.path_env).await.ok_or("Codex was not found")?;
-        return state.codex.transcript(&app, &site.id, &site.path, agent::codex::thread_id(&session_id), &codex_path, &state.path_env).await;
+        let codex_path = agent::codex::locate(None, &state.path()).await.ok_or("Codex was not found")?;
+        return state.codex.transcript(&app, &site.id, &site.path, agent::codex::thread_id(&session_id), &codex_path, &state.path()).await;
     }
     tauri::async_runtime::spawn_blocking(move || agent::sessions::transcript(&site.path, &session_id)).await.map_err(|e| e.to_string())?
 }

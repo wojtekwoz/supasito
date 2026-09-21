@@ -217,19 +217,27 @@ export function mockBackend(): Backend {
   return {
     settingsGet: async () => ({ defaultSitesFolder: "/Users/you/Sites", sitesFolder: query.get("sitesFolder") === "unset" ? null : "/Users/you/Sites", ...mockSettings }),
     settingsSet: async (patch) => { Object.assign(mockSettings, patch); },
-    // `?tools=missing|nologin|nonode|oldnode|nogit|nogitpath|nogitid|nopnpm` simulates a Mac that lacks
+    // `?tools=missing|nologin|nonode|oldnode|nogit|nogitpath|nogitid|nopnpm|nopath` simulates a Mac that lacks
     // something, for checking the checklist; `&brew=no` drops Homebrew, which hides the `brew install` lines.
+    // `?tools=nopath` is the 0.2.3 report: node under a version manager, so the PATH we read has
+    // Homebrew and the system and nothing else — three red dots on a Mac that has all three.
     toolchainCheck: async () => {
       const q = new URLSearchParams(location.search);
       const sim = q.get("tools");
       // `?tools=noclaude` is the Codex-only Mac: everything must still work through the GPT models
-      const claude = sim === "missing" || sim === "noclaude" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai", defaults: { model: "claude-fable-5-1[1m]", effort: "high" } };
-      const node = sim === "missing" || sim === "nonode" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/node", version: sim === "oldnode" ? "18.20.4" : "24.4.0" };
-      const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : sim === "nogitpath" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
-      const packageManager = node.ok ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
+      const noPath = sim === "nopath";
+      const claude = sim === "missing" || sim === "noclaude" || noPath ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/claude", version: "2.1.257", loggedIn: sim !== "nologin", authMethod: sim === "nologin" ? "none" : "claude.ai", defaults: { model: "claude-fable-5-1[1m]", effort: "high" } };
+      const node = sim === "missing" || sim === "nonode" || noPath ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/node", version: sim === "oldnode" ? "18.20.4" : "24.4.0" };
+      const git = sim === "missing" || sim === "nogit" ? { ok: false, path: "/usr/bin/git" } : noPath ? { ok: true, path: "/opt/homebrew/bin/git", version: "2.50.1" } : sim === "nogitpath" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/git", version: "2.51.0" };
+      const packageManager = node.ok || noPath ? (sim === "nonode" ? null : { ok: true, name: sim === "nopnpm" ? "npm" : "pnpm", path: "/opt/homebrew/bin/pnpm", version: "10.33.0" }) : null;
       // `?tools=nocodex` hides the optional second agent; `?tools=codexlogin` has it installed but signed out
-      const codex = sim === "missing" || sim === "nocodex" ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/codex", version: mockModels === "fresh" ? "0.154.0" : "0.149.0", loggedIn: sim !== "codexlogin" };
-      return { claude, codex, node, git, packageManager, hasBrew: q.get("brew") !== "no", gitIdentity: git.ok && sim !== "nogitid" };
+      const codex = sim === "missing" || sim === "nocodex" || noPath ? { ok: false } : { ok: true, path: "/opt/homebrew/bin/codex", version: mockModels === "fresh" ? "0.154.0" : "0.149.0", loggedIn: sim !== "codexlogin" };
+      // The folders the check walked. `nopath` is the short list that caused the report; otherwise a
+      // healthy Mac's, so "Where Supasito looked" can be read in both states.
+      const searched = noPath
+        ? ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        : ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/Users/you/Library/pnpm", "/Users/you/.nvm/versions/node/v22.14.0/bin", "/Users/you/.local/bin", "/Users/you/.claude/local"];
+      return { claude, codex, node, git, packageManager, hasBrew: q.get("brew") !== "no", gitIdentity: git.ok && sim !== "nogitid", searched };
     },
     modelsList: async (_siteId, refresh) => {
       if (refresh) { await wait(400); if (mockModels === "fail") throw new Error("codex did not answer model/list in time"); }

@@ -89,7 +89,8 @@ export type ClaudeStatus = Tool & { loggedIn?: boolean | null; authMethod?: stri
  *  `git config user.email` is unset, which would otherwise only surface as a failed Publish. */
 /** Codex CLI, the optional second backend; `loggedIn` from `codex login status`. */
 export type CodexStatus = Tool & { loggedIn?: boolean | null };
-export type Toolchain = { claude: ClaudeStatus; codex?: CodexStatus | null; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null; hasBrew?: boolean; gitIdentity?: boolean };
+/** `searched` is the PATH the check walked, shown under "Where Supasito looked" when something is missing. */
+export type Toolchain = { claude: ClaudeStatus; codex?: CodexStatus | null; node: Tool; git: Tool; packageManager: (Tool & { name: string; path: string }) | null; hasBrew?: boolean; gitIdentity?: boolean; searched?: string[] | null };
 /** `hidden` lists the interface elements switched off in Settings → Interface (keys in src/app/ui.ts).
  *  `updatesEnabled` is the once-a-day check for a newer Supasito, on unless Settings → Updates turns it off. */
 export type Settings = { claudePath?: string | null; model?: string | null; permissionMode?: string | null; effort?: string | null; fastMode?: boolean | null; hidden?: string[] | null; updatesEnabled?: boolean | null;

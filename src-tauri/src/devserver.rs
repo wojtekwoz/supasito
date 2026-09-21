@@ -735,6 +735,10 @@ fn pump_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(reader: R, tx: t
 
 #[cfg(test)]
 mod tests {
+
+    /// The tests below bind real listeners, and `group_listen_port` reports the process group's
+    /// first one — running two of them at once makes either answer for the other.
+    static PORT_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
     #[test]
     fn reads_the_port_the_server_prints() {
@@ -768,6 +772,7 @@ mod tests {
     /// An unnamed conflict is pinned to whichever port is actually busy: ours, or one the command spells out.
     #[test]
     fn unnamed_conflict_is_pinned_to_the_busy_port() {
+        let _guard = PORT_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let l = std::net::TcpListener::bind("[::]:0").unwrap();
         let busy = l.local_addr().unwrap().port();
         let idle = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
@@ -780,8 +785,12 @@ mod tests {
 
     /// The OS knows where a server went even when it never says so: this is the only thing standing
     /// between a dev command that picks its own port and the 90-second timeout.
+    ///
+    /// `group_listen_port` answers with the *first* socket the process group listens on, so a sibling
+    /// test holding a listener of its own would answer for us. The tests that bind take this lock.
     #[test]
     fn finds_the_port_our_own_process_group_listens_on() {
+        let _guard = PORT_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         let out = std::process::Command::new("ps").args(["-o", "pgid=", "-p", &std::process::id().to_string()]).output().unwrap();
@@ -795,6 +804,7 @@ mod tests {
     /// A wildcard listener with SO_REUSEADDR (what Node does, and what std does here) must count as taken.
     #[test]
     fn a_wildcard_listener_makes_the_port_busy() {
+        let _guard = PORT_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let l = std::net::TcpListener::bind("[::]:0").unwrap();
         let port = l.local_addr().unwrap().port();
         assert!(!port_free(port), "port {port} reported free next to a [::] listener");

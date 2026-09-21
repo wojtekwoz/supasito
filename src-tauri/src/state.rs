@@ -69,8 +69,9 @@ pub struct AppState {
     pub dev: devserver::Registry,
     /// Running publish commands by site id (process-group leader pid), so they can be cancelled.
     pub publishes: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
-    /// PATH as seen by the user's login shell, so spawned tools resolve like in a terminal.
-    pub path_env: String,
+    /// PATH as seen by the user's login shell, so spawned tools resolve like in a terminal. Read
+    /// again on "Check again", so a tool installed while Supasito was open is found without a restart.
+    path_env: std::sync::RwLock<String>,
     /// The one clone that may run at a time (clone.rs), for Cancel.
     pub clone_slot: crate::clone::SlotRef,
     /// The GitHub sign-in in progress: its code, and whether the user cancelled the wait.
@@ -103,7 +104,7 @@ impl AppState {
             codex: agent::codex::Registry::new(dir.join("codex-pids.json")),
             dev: devserver::Registry::new(dir.join("dev-pids.json")),
             publishes: tokio::sync::Mutex::new(std::collections::HashMap::new()),
-            path_env: login_shell_path(),
+            path_env: std::sync::RwLock::new(login_shell_path()),
             clone_slot: Default::default(),
             github_code: Mutex::new(None),
             github_cancel: Default::default(),
@@ -126,6 +127,17 @@ impl AppState {
         .ok_or_else(|| "session is not running".to_string())
     }
 
+    /// The PATH to run everything with.
+    pub fn path(&self) -> String {
+        self.path_env.read().unwrap().clone()
+    }
+
+    /// Remember a freshly read PATH. `login_shell_path` spawns a shell, so the async side reads it
+    /// on a blocking thread and hands the result here.
+    pub fn set_path(&self, p: String) {
+        *self.path_env.write().unwrap() = p;
+    }
+
     pub fn site(&self, id: &str) -> Result<Site, String> {
         self.persisted
             .lock()
@@ -140,42 +152,237 @@ impl AppState {
 
 /// Ask the user's login shell for its PATH. GUI apps on macOS start with a minimal PATH
 /// that lacks Homebrew, nvm, pnpm, etc.
+///
+/// The cheap read (`-lc`, about 20 ms) answers for most Macs, and only when it comes back missing
+/// something the app cannot run without do we pay for an interactive shell (about a second here,
+/// more with a plugin-heavy `~/.zshrc`). That is the read that finds a version manager's node —
+/// zsh sources `~/.zshrc` only when interactive, and that is where nvm, fnm, mise, volta and
+/// pnpm's own installer write their PATH lines — so the Mac that needs the second pays it, and
+/// nobody else waits at every start.
 pub fn login_shell_path() -> String {
     // Debug builds can pretend to be a barer Mac: SUPASITO_PATH=/usr/bin:/bin pnpm tauri dev
     #[cfg(debug_assertions)]
     if let Ok(p) = std::env::var("SUPASITO_PATH") { return p; }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = std::process::Command::new(&shell)
-        .args(["-lc", "echo -n \"$PATH\""])
-        .output();
-    let from_shell = out
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
+    let fast = assemble(shell_path(&shell, false));
+    if runs_the_app(&fast) { return fast; }
+    match shell_path(&shell, true) {
+        // A Terminal's own PATH: the honest answer once the cheap one has come up short, whether or
+        // not it completes the set. The checklist says what is still missing and where we looked.
+        Some(p) => assemble(Some(p)),
+        None => fast,
+    }
+}
+
+/// Node and one of the two agents — what Supasito needs to run at all. Anything less and the PATH
+/// is worth a second look before the user is told their Mac is bare.
+fn runs_the_app(path_env: &str) -> bool {
+    let has = |bin: &str| crate::toolchain::which(bin, path_env).is_some();
+    has("node") && (has("claude") || has("codex"))
+}
+
+/// A shell's PATH, plus this process's own, plus the folders things are installed into, in that
+/// order and without repeats.
+fn assemble(from_shell: Option<String>) -> String {
     let base = std::env::var("PATH").unwrap_or_default();
     let mut parts: Vec<String> = Vec::new();
+    let push = |p: String, parts: &mut Vec<String>| {
+        if !p.is_empty() && !parts.iter().any(|x| x == &p) { parts.push(p); }
+    };
     for p in from_shell.unwrap_or_default().split(':').chain(base.split(':')).chain(
         ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].into_iter(),
     ) {
-        if !p.is_empty() && !parts.iter().any(|x| x == p) {
-            parts.push(p.to_string());
-        }
+        push(p.to_string(), &mut parts);
     }
     if let Some(home) = dirs::home_dir() {
         for extra in [".local/bin", ".claude/local", ".bun/bin"] {
-            let p = home.join(extra).to_string_lossy().to_string();
-            if !parts.iter().any(|x| x == &p) {
-                parts.push(p);
-            }
+            push(home.join(extra).to_string_lossy().to_string(), &mut parts);
+        }
+        for p in version_manager_bins(&home) {
+            push(p, &mut parts);
         }
     }
     parts.join(":")
 }
 
+/// `$SHELL -ilc` (or `-lc`) printing its PATH between markers, because an interactive rc file
+/// prints its own things first — a prompt theme, a greeting, `nvm` chatter. The exit status is
+/// ignored for the same reason: an rc file that fails half-way still exported a usable PATH.
+fn shell_path(shell: &str, interactive: bool) -> Option<String> {
+    use std::io::Read;
+    let mut child = std::process::Command::new(shell)
+        .arg(if interactive { "-ilc" } else { "-lc" })
+        .arg("printf '<<<SUPASITO:%s>>>' \"$PATH\"")
+        // An rc file that waits for input reads EOF instead of hanging; its noise goes nowhere.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(30)),
+            _ => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    parse_marked_path(&out)
+}
+
+/// The PATH between the markers `shell_path` asked for, ignoring whatever the rc files printed.
+fn parse_marked_path(out: &str) -> Option<String> {
+    let rest = out.split("<<<SUPASITO:").nth(1)?;
+    let path = rest.split(">>>").next()?.trim().to_string();
+    if path.is_empty() { None } else { Some(path) }
+}
+
+/// Where the version managers keep the binaries they put on the PATH, so a Mac whose shell we
+/// could not read is still not called bare. `node` matters twice over: npm's global installs
+/// (Claude Code, Codex) live beside it, so missing it makes all three go missing at once.
+fn version_manager_bins(home: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for rel in [
+        "Library/pnpm",              // pnpm's own installer
+        ".volta/bin",
+        ".asdf/shims",
+        ".local/share/mise/shims",
+        ".npm-global/bin",           // npm prefix, the usual "don't sudo npm" advice
+        ".npm-packages/bin",
+        ".yarn/bin",
+    ] {
+        let p = home.join(rel);
+        if p.is_dir() { out.push(p.to_string_lossy().to_string()); }
+    }
+    // nvm and fnm keep one folder per installed node; the newest is the best guess at the default.
+    for (root, rel) in [
+        (home.join(".nvm/versions/node"), "bin"),
+        (home.join(".local/share/fnm/node-versions"), "installation/bin"),
+        (home.join("Library/Application Support/fnm/node-versions"), "installation/bin"),
+    ] {
+        if let Some(p) = newest_version_dir(&root) {
+            let bin = p.join(rel);
+            if bin.is_dir() { out.push(bin.to_string_lossy().to_string()); }
+        }
+    }
+    out
+}
+
+/// The `v22.14.0`-style subfolder with the highest version number.
+fn newest_version_dir(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut best: Option<((u32, u32, u32), std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(v) = parse_version(&name) else { continue };
+        if best.as_ref().map(|(b, _)| v > *b).unwrap_or(true) {
+            best = Some((v, entry.path()));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+fn parse_version(name: &str) -> Option<(u32, u32, u32)> {
+    let mut it = name.trim_start_matches('v').split('.');
+    let n = |x: Option<&str>| x.and_then(|s| s.parse::<u32>().ok());
+    Some((n(it.next())?, n(it.next()).unwrap_or(0), n(it.next()).unwrap_or(0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::Persisted;
+
+    /// An interactive rc file prints its own things — a prompt theme, a greeting, nvm chatter — before
+    /// and after our line, and the PATH has to come out of that intact.
+    #[test]
+    fn path_is_read_out_of_whatever_the_rc_files_printed() {
+        assert_eq!(
+            super::parse_marked_path("Welcome!\n\u{1b}[1m<<<SUPASITO:/opt/homebrew/bin:/usr/bin>>>trailing"),
+            Some("/opt/homebrew/bin:/usr/bin".to_string())
+        );
+        assert_eq!(super::parse_marked_path("<<<SUPASITO:>>>"), None);
+        assert_eq!(super::parse_marked_path("nothing at all"), None);
+    }
+
+    /// nvm and fnm keep one folder per installed node; the newest is the best guess at the default,
+    /// and "10" must not beat "9" the way a string sort would have it.
+    #[test]
+    fn newest_node_folder_wins_by_number() {
+        let dir = std::env::temp_dir().join(format!("supasito-nvm-{}", std::process::id()));
+        for v in ["v9.0.0", "v10.2.1", "v22.14.0", "lts", "v22.9.0"] {
+            std::fs::create_dir_all(dir.join(v)).unwrap();
+        }
+        assert_eq!(super::newest_version_dir(&dir).unwrap().file_name().unwrap(), "v22.14.0");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(super::newest_version_dir(&dir), None);
+    }
+
+    /// The PATH the app runs everything with must carry node, or a Mac with node under a version
+    /// manager looks bare and Claude Code, Codex and the dev server all go missing at once.
+    #[test]
+    fn this_mac_resolves_node_without_inheriting_a_path() {
+        let p = super::login_shell_path();
+        assert!(crate::toolchain::which("node", &p).is_some(), "no node on {p}");
+    }
+
+    /// Why the code asks for an *interactive* shell at all, pinned so nobody simplifies it away:
+    /// a PATH line in `~/.zshrc` — where nvm, fnm, mise, volta and pnpm's installer write theirs —
+    /// reaches `zsh -ilc` and never reaches `zsh -lc`. This is the whole bug of 0.2.3, in a fixture.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn only_an_interactive_shell_reads_zshrc() {
+        let home = std::env::temp_dir().join(format!("supasito-home-{}", std::process::id()));
+        let tools = home.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        // What a version manager's line looks like, minus the version manager.
+        std::fs::write(home.join(".zshrc"), format!("export PATH=\"{}:$PATH\"\n", tools.display())).unwrap();
+        std::fs::write(home.join(".zprofile"), "").unwrap();
+        let read = |interactive: bool| {
+            let out = std::process::Command::new("/bin/zsh")
+                .arg(if interactive { "-ilc" } else { "-lc" })
+                .arg("printf '<<<SUPASITO:%s>>>' \"$PATH\"")
+                .env("HOME", &home)
+                .env("PATH", "/usr/bin:/bin")
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            super::parse_marked_path(&String::from_utf8_lossy(&out.stdout)).unwrap_or_default()
+        };
+        let folder = tools.to_string_lossy().to_string();
+        assert!(!read(false).split(':').any(|d| d == folder), "a login shell must not see the .zshrc line");
+        assert!(read(true).split(':').any(|d| d == folder), "an interactive shell must see it — the fix depends on it");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// What decides whether a start pays for an interactive shell: node and one agent is enough,
+    /// anything less is worth the second look that finds a version manager's folders.
+    #[test]
+    fn a_path_without_node_or_an_agent_is_worth_a_second_look() {
+        let dir = std::env::temp_dir().join(format!("supasito-bins-{}", std::process::id()));
+        let bin = |name: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            p
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_string_lossy().to_string();
+        assert!(!super::runs_the_app(&d), "empty folder");
+        bin("node");
+        assert!(!super::runs_the_app(&d), "node alone is not enough to run a turn");
+        bin("codex");
+        assert!(super::runs_the_app(&d), "node and either agent is the bar");
+        std::fs::remove_file(dir.join("node")).unwrap();
+        assert!(!super::runs_the_app(&d), "an agent without node cannot serve a preview");
+        bin("node");
+        bin("claude");
+        assert!(super::runs_the_app(&d));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A state file without `hidden` (a fresh install, or one from before Settings → Interface) loads with the default
     /// set hidden; an explicit `[]` ("Show everything") loads empty; and the list must survive a save/load round trip as

@@ -167,14 +167,14 @@ async fn ports(app: &AppHandle) -> i32 {
     };
 
     eprintln!("[smoke] A: {{port}} command while node holds 4321");
-    let _ = state.dev.start(app.clone(), flexible.clone(), state.path_env.clone()).await;
+    let _ = state.dev.start(app.clone(), flexible.clone(), state.path()).await;
     let a = settle(flexible.id.clone()).await;
     check(a.as_ref().map(|d| d.status == "ready" && d.port != 4321).unwrap_or(false), &format!("skipped the taken port: {:?}", a.as_ref().map(|d| (d.status.clone(), d.port))));
     let _ = state.dev.stop(app, &flexible.id).await;
 
     eprintln!("[smoke] C: forced onto 4321, expect a retry on another port");
     std::env::set_var("SUPASITO_SMOKE_FORCE_PORT", "4321");
-    let _ = state.dev.start(app.clone(), flexible.clone(), state.path_env.clone()).await;
+    let _ = state.dev.start(app.clone(), flexible.clone(), state.path()).await;
     std::env::remove_var("SUPASITO_SMOKE_FORCE_PORT");
     let c = settle(flexible.id.clone()).await;
     let log = state.dev.log(&flexible.id).await;
@@ -183,7 +183,7 @@ async fn ports(app: &AppHandle) -> i32 {
     let _ = state.dev.stop(app, &flexible.id).await;
 
     eprintln!("[smoke] B: fixed-port command, expect a port problem naming node, then free it");
-    let _ = state.dev.start(app.clone(), fixed.clone(), state.path_env.clone()).await;
+    let _ = state.dev.start(app.clone(), fixed.clone(), state.path()).await;
     let b = settle(fixed.id.clone()).await;
     let problem = b.as_ref().and_then(|d| d.problem.clone());
     let named = match &problem { Some(DevProblem::Port { port, holder: Some(h) }) => *port == 4321 && h.pid == holder.id() && h.name == "node", _ => false };
@@ -194,7 +194,7 @@ async fn ports(app: &AppHandle) -> i32 {
     }
     check(holder.try_wait().map(|s| s.is_some()).unwrap_or(false), "node holder is gone");
     let _ = state.dev.stop(app, &fixed.id).await;
-    let _ = state.dev.start(app.clone(), fixed.clone(), state.path_env.clone()).await;
+    let _ = state.dev.start(app.clone(), fixed.clone(), state.path()).await;
     let b2 = settle(fixed.id.clone()).await;
     check(b2.as_ref().map(|d| d.status == "ready" && d.port == 4321).unwrap_or(false), &format!("fixed-port site ready after freeing: {:?}", b2.as_ref().map(|d| (d.status.clone(), d.port))));
 
@@ -209,7 +209,7 @@ async fn ports(app: &AppHandle) -> i32 {
     std::fs::write(p.join("index.html"), "<h1>d</h1>").unwrap();
     let own_port = crate::sites::Site::from_path(p.to_str().unwrap()).unwrap();
     check(own_port.dev.as_deref() == Some("npm run dev"), &format!("no port flag appended to a script we do not recognise: {:?}", own_port.dev));
-    let _ = state.dev.start(app.clone(), own_port.clone(), state.path_env.clone()).await;
+    let _ = state.dev.start(app.clone(), own_port.clone(), state.path()).await;
     let d = settle(own_port.id.clone()).await;
     check(d.as_ref().map(|x| x.status == "ready" && x.port == own).unwrap_or(false), &format!("followed the server to its own port {own}: {:?}", d.as_ref().map(|x| (x.status.clone(), x.port))));
     let served = tokio::process::Command::new("curl").args(["-s", &format!("http://127.0.0.1:{own}/")]).output().await
@@ -229,8 +229,8 @@ pub async fn run(app: AppHandle, prompt: String) {
 
     if std::env::var("SUPASITO_SMOKE_SCENARIO").as_deref() == Ok("tools") {
         let configured = state.persisted.lock().unwrap().claude_path.clone();
-        let t = crate::toolchain::check(configured.as_deref(), &state.path_env).await;
-        eprintln!("[smoke] PATH: {}", state.path_env);
+        let t = crate::toolchain::check(configured.as_deref(), &state.path()).await;
+        eprintln!("[smoke] PATH: {}", state.path());
         eprintln!("[smoke] toolchain: {}", serde_json::to_string_pretty(&t).unwrap_or_default());
         app.exit(0);
         return;
@@ -261,7 +261,7 @@ pub async fn run(app: AppHandle, prompt: String) {
     eprintln!("[smoke] site: {} ({})", site.name, site.path);
 
     app.listen_any("dev://status", |e| eprintln!("[smoke] dev: {}", e.payload()));
-    match state.dev.start(app.clone(), site.clone(), state.path_env.clone()).await {
+    match state.dev.start(app.clone(), site.clone(), state.path()).await {
         Ok(info) => eprintln!("[smoke] dev server starting on {}", info.url),
         Err(e) => eprintln!("[smoke] dev server failed: {e}"),
     }
@@ -435,7 +435,7 @@ pub async fn run(app: AppHandle, prompt: String) {
         "undo" => {
             eprintln!("[smoke] scenario undo: edit a tracked file and create a new one, then undo the turn the way the Undo button does");
             let git = |label: &str| -> Option<crate::sites::GitStatus> {
-                match crate::sites::git_status(&site.path, &state.path_env) {
+                match crate::sites::git_status(&site.path, &state.path()) {
                     Ok(g) => { eprintln!("[smoke] git {label}: {}", if !g.is_git { "not a git repo".to_string() } else if g.files.is_empty() { "clean".to_string() } else { format!("{:?}", g.files) }); Some(g) }
                     Err(e) => { eprintln!("[smoke] git {label}: status failed: {e}"); None }
                 }
@@ -491,11 +491,11 @@ pub async fn run(app: AppHandle, prompt: String) {
             eprintln!("[smoke] scenario history: one turn, then list and replay it");
             let _ = send(&prompt, None).await;
             let r = wait_result(&mut rx, 240).await;
-            let codex_path = agent::codex::locate(None, &state.path_env).await.unwrap_or_default();
-            let list = state.codex.list(&app, &site.id, &site.path, &codex_path, &state.path_env).await;
+            let codex_path = agent::codex::locate(None, &state.path()).await.unwrap_or_default();
+            let list = state.codex.list(&app, &site.id, &site.path, &codex_path, &state.path()).await;
             let mine = list.as_ref().ok().and_then(|l| l.iter().find(|s| s.id == session_id).cloned());
             eprintln!("[smoke] thread list: {} entries, ours = {:?}", list.as_ref().map(|l| l.len()).unwrap_or(0), mine.as_ref().map(|s| (&s.title, s.last_modified, &s.git_branch)));
-            let lines = state.codex.transcript(&app, &site.id, &site.path, agent::codex::thread_id(&session_id), &codex_path, &state.path_env).await;
+            let lines = state.codex.transcript(&app, &site.id, &site.path, agent::codex::thread_id(&session_id), &codex_path, &state.path()).await;
             let kinds: Vec<String> = lines.as_ref().map(|l| l.iter().filter(|m| m["method"] == "item/completed").map(|m| m["params"]["item"]["type"].as_str().unwrap_or("?").to_string()).collect()).unwrap_or_default();
             eprintln!("[smoke] replay: {} lines, items {:?}", lines.as_ref().map(|l| l.len()).unwrap_or(0), kinds);
             let ok = r.is_some() && mine.as_ref().map(|s| s.title.starts_with(&prompt.chars().take(20).collect::<String>())).unwrap_or(false) && kinds.iter().any(|k| k == "agentMessage") && kinds.iter().any(|k| k == "userMessage");
@@ -514,7 +514,7 @@ pub async fn run(app: AppHandle, prompt: String) {
         }
     }
 
-    match crate::sites::git_status(&site.path, &state.path_env) {
+    match crate::sites::git_status(&site.path, &state.path()) {
         Ok(g) => eprintln!("[smoke] changed files: {:?}", g.files),
         Err(e) => eprintln!("[smoke] git status failed: {e}"),
     }

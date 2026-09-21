@@ -675,6 +675,92 @@ Everything below lives in a new `remote.rs`, plus small changes to the store, th
 **Not now.** Pulling while Claude works, choosing branches, showing the remote's commit list, secrets from a host's
 dashboard (`vercel env pull`), and warning that the Vercel preset creates a new project in an unlinked folder.
 
+## 8f. v0.2.3 — the app finds the tools a version manager installed (2026-09-21, reported by a user)
+
+**The report.** A user with Claude Code, Codex *and* Node.js installed opened Supasito and got the
+"Supasito needs Claude Code or Codex" wall: Claude Code "Not found", Codex "Not found", Node.js
+"Not found" — and, in the same list, git 2.50.1 ✅ and pnpm ✅. Three red dots on a Mac that has all
+three, which is the worst possible first run: the app calls the user's machine bare and offers install
+lines for things already installed.
+
+**The cause.** One line, in `state.rs`. `login_shell_path()` asked the shell for its PATH with
+`zsh -lc`, and **zsh reads `~/.zshrc` only for an interactive shell** — `-lc` gets `.zshenv` and
+`.zprofile` and stops. `~/.zshrc` is where nvm, fnm, mise, volta and pnpm's own installer write their
+PATH lines. Reproduced on the dev Mac with a GUI-like environment (`env -i`, bare PATH):
+
+```
+zsh -lc   → /opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:…
+zsh -ilc  → …:~/Library/pnpm:~/.nvm/versions/node/v22.14.0/bin:~/.local/bin:…
+```
+
+That also explains the odd shape of the report — git and pnpm from Homebrew were found, node from a
+version manager was not. And because npm's global installs sit *beside* node, missing node takes
+Claude Code and Codex with it: **one cause, three red dots.**
+
+**Why it matters more than its size.** This is the first screen, on a machine the app cannot run on
+until it is fixed, and the user has no way out from inside the app: "Set the path manually" overrides
+`claude` only, not node or codex. The loop never starts.
+
+### 8f.1 Read the PATH the way a Terminal would — but only pay for it when you must
+
+An interactive shell is the read that finds a version manager's node, and it is not free: measured on
+this Mac, `zsh -lc` costs 35 ms and `zsh -ilc` costs 965 ms, and a plugin-heavy `~/.zshrc` is worse.
+Adding a second to every start, for everyone, to fix a minority's machine is the wrong trade. So:
+
+**the cheap read first, and escalate only when it comes back short.** `login_shell_path()` assembles
+the `-lc` answer, and if that already has node *and* one of the two agents (`runs_the_app`) it stops
+there — 36 ms, and most Macs never spawn an interactive shell at all. If something the app cannot run
+without is missing, it reads again with `-ilc` and uses that: the Mac that needs the second pays it,
+on the one screen where the user is already waiting to be told what's wrong.
+
+The read itself: the PATH comes back between markers, so an rc file's own output — a prompt theme, a
+greeting, nvm chatter — is cut away instead of corrupting it. The exit status is ignored on purpose,
+because an rc that fails half-way still exported a usable PATH. stdin is `/dev/null` so an rc waiting
+for input reads EOF instead of hanging; stderr is discarded; a 10s deadline kills the child.
+
+### 8f.2 Know where the version managers keep things
+
+A floor under the shell read, for the Mac whose shell we still could not read: `~/Library/pnpm`,
+`~/.volta/bin`, `~/.asdf/shims`, `~/.local/share/mise/shims`, `~/.npm-global/bin`, `~/.npm-packages/bin`,
+`~/.yarn/bin`, and the newest installed node under nvm (`~/.nvm/versions/node/*/bin`) and fnm — numeric
+sort, so v10 beats v9. Only folders that exist are added.
+
+### 8f.3 "Check again" re-reads the PATH
+
+The PATH was read once at startup and then frozen for the life of the process, so "install Node, then
+click Check again" could not work for anything a version manager installs — the second check searched
+the same stale list as the first. `path_env` becomes an `RwLock<String>` behind `state.path()`, and the
+checklist's re-check calls `state.refresh_path()` on a blocking thread first. A tool installed a minute
+ago is found without quitting Supasito.
+
+### 8f.4 Say where it looked
+
+`Toolchain` carries the PATH that was searched, and the checklist shows it — folded away under
+"Where Supasito looked" while something is missing. Two jobs: the user sees at a glance that their
+node folder isn't in the list, and the next report arrives with its own evidence instead of a
+screenshot we have to reason backwards from.
+
+### 8f.5 Tests and acceptance
+
+- A fixture home whose `.zshrc` adds a folder: `zsh -lc` must not see it, `zsh -ilc` must. That is the
+  bug itself, pinned, so nobody simplifies the interactive read away later.
+- Marker parsing survives rc noise before and after the line (prompt escape codes, a greeting).
+- `newest_version_dir` sorts numerically — v22.14.0 over v9.0.0, and "lts" (not a version) ignored.
+- `runs_the_app` is the escalation rule: node alone is not enough, an agent alone is not enough.
+- `login_shell_path()` resolves node on this Mac; run under `env -i` it is the real regression test.
+- Mock: `?tools=nopath` — every tool missing with the searched PATH shown, the shape of the report.
+- A1: on a Mac with node under nvm and nothing in `/opt/homebrew`, the checklist comes up all green.
+- A2: `brew install node` with the app open, then Check again → green without a restart.
+- A4: a Mac that already has everything never spawns an interactive shell — the start stays at ~35 ms.
+- A3: the fix reaches the affected user as an update they get from the banner, not a re-download.
+
+### 8f.6 Cut
+
+- Guessing the PATH from `/etc/paths.d`, or parsing `~/.zshrc` ourselves. If an interactive shell and
+  the known install folders both miss it, the honest answer is to show what we searched.
+- A manual path field per tool. §8f.3 and §8f.4 remove the need; three more text inputs on the first
+  screen is exactly the surface the one rule says not to build.
+
 ## 9. Roadmap
 
 Each version is a claim you can make honestly when it ends, not a feature list. The thesis holds:

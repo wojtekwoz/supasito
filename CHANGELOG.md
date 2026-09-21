@@ -601,3 +601,40 @@ Ships 0.2.1's work (never released on its own), paste a GitHub link, continuing 
   a real github.com edit, the private settings dialog on a real site, a git-push Publish building on a host, a pasted
   repository's hooks being ignored until Use them, the 0.2.1 conversation chain end to end, and Sign in to GitHub (no OAuth
   App exists).
+
+### Session 37 (2026-09-21) — the app finds the tools a version manager installed (PLAN §8f)
+Reported by a user: the "Supasito needs Claude Code or Codex" wall on a Mac with Claude Code, Codex *and* Node.js
+installed — three red dots, with git 2.50.1 and pnpm green in the same list. One cause. `login_shell_path()` asked the
+shell for its PATH with `zsh -lc`, and **zsh reads `~/.zshrc` only for an interactive shell**; `~/.zshrc` is where nvm,
+fnm, mise, volta and pnpm's installer write their PATH lines. Reproduced on this Mac with `env -i` and a bare PATH:
+`zsh -lc` returned Homebrew and the system, `zsh -ilc` also returned `~/Library/pnpm` and `~/.nvm/versions/node/v22.14.0/bin`.
+git and pnpm came from Homebrew and were found; node did not, and npm's global installs sit beside node, so Claude Code
+and Codex went with it.
+- **The PATH is read the way a Terminal would — when it has to be.** An interactive shell is what finds a version
+  manager's node, and it costs: measured here, `zsh -lc` is 35 ms and `zsh -ilc` is 965 ms. So the cheap read goes first,
+  and only if it comes back without node *or* without either agent (`runs_the_app`) is it read again interactively. A Mac
+  that has everything never spawns an interactive shell: `login_shell_path()` measured at 36 ms. The Mac that needs the
+  second pays it, on the screen where the user is already waiting to be told what is wrong.
+- **The read itself.** The PATH comes back between markers and is cut out of whatever the rc files printed first (a prompt
+  theme, a greeting, nvm chatter); the exit status is ignored, because an rc that fails half-way still exported a usable
+  PATH. stdin is `/dev/null` so an rc waiting for input reads EOF instead of hanging, stderr is discarded, and a 10 s
+  deadline kills the child and falls through.
+- **The version managers' folders are a floor under that**, for a shell we still could not read: `~/Library/pnpm`,
+  `~/.volta/bin`, `~/.asdf/shims`, `~/.local/share/mise/shims`, `~/.npm-global/bin`, `~/.npm-packages/bin`, `~/.yarn/bin`,
+  and the newest installed node under nvm and fnm (numeric sort, so v10 beats v9). Only folders that exist are added.
+- **"Check again" re-reads the PATH.** It was read once at startup and frozen for the life of the process, so "install
+  Node, then click Check again" could not work for anything a version manager installs. `path_env` is an `RwLock` behind
+  `state.path()`; `toolchain_check` reads the shell again on a blocking thread and stores the result.
+- **The checklist says where it looked.** `Toolchain.searched` carries the PATH that was walked; the checklist folds it
+  away under "Where Supasito looked" while something is missing, and clicking the list copies it. So a user can see their
+  node folder isn't in it, and the next report arrives with its own evidence.
+- **A flaky test, found by the slower suite.** `finds_the_port_our_own_process_group_listens_on` asserts on the process
+  group's *first* listening socket, which a sibling test's listener can be; the three tests that bind now take a lock.
+
+Verified: `pnpm test` green three runs in a row (66 Rust tests); `tsc`. The bug itself is pinned by a fixture home whose
+`.zshrc` adds a folder — `zsh -lc` must not see it and `zsh -ilc` must — so the interactive read cannot be simplified away
+later. Before the escalation was added, the interactive read under `env -i` with a bare PATH resolved
+`~/.nvm/versions/node/v22.14.0/bin`, `~/Library/pnpm` and the mise shims, none of which the old read produced. Timing on
+this Mac: `login_shell_path()` 36 ms (33 folders, no interactive shell spawned), the interactive read 965 ms when it is
+needed. In the mock, `?tools=nopath` reproduces the reported screen and "Where Supasito looked" opens on the short list;
+it stays hidden when nothing is missing.

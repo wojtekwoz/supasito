@@ -81,6 +81,9 @@ pub struct Toolchain {
     pub has_brew: bool,
     /// git knows a `user.email`. Without one the first Publish fails at `git commit`, so say it up front.
     pub git_identity: bool,
+    /// The folders that were searched. Shown when something is missing, so a user whose node lives
+    /// somewhere we never looked can see that at a glance — and say so in a report.
+    pub searched: Vec<String>,
 }
 
 /// First executable named `bin` on `path_env` (a colon-separated PATH).
@@ -200,7 +203,8 @@ pub async fn check(configured_claude: Option<&str>, path_env: &str) -> Toolchain
         _ => false,
     };
     let has_brew = which("brew", path_env).is_some();
-    Toolchain { claude, codex, node, git, package_manager, has_brew, git_identity }
+    let searched = path_env.split(':').filter(|d| !d.is_empty()).map(|d| d.to_string()).collect();
+    Toolchain { claude, codex, node, git, package_manager, has_brew, git_identity, searched }
 }
 
 #[cfg(test)]
